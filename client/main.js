@@ -14,7 +14,7 @@ function init() {
     // Set up the camera
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.z = -1;
-    camera.position.x = -8;
+    camera.position.x = -2;
 
     // Set up the renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -25,7 +25,7 @@ function init() {
     // Add a sphere with a 360-degree background image
     const sphereGeometry = new THREE.SphereGeometry(500, 60, 40);
     const sphereMaterial = new THREE.MeshBasicMaterial({
-        map: new THREE.TextureLoader().load('src/assets/living-room.jpg'),
+        map: new THREE.TextureLoader().load('src/assets/old_field.jpg'),
         side: THREE.BackSide
     });
     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
