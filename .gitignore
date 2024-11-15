@@ -167,3 +167,5 @@ src/extantions/proxies_extension.zip
 package
 *.deb
 installSB.exe
+
+client/node_modules
