@@ -17,3 +17,23 @@ virtualenv venv
 ```bash
 source venv/bin/activate
 ```
+
+
+# 3) RUN docker:
+
+```bash
+docker build -t 3d-spherical-workspace .
+
+docker run -it --rm \
+    --network=host \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    --device /dev/dri \
+    --group-add video \
+    3d-spherical-workspace
+
+
+docker exec -it 3d_world vulkaninfo
+
+docker-compose up -d --build
+```

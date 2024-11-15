@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  3d_world:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DISPLAY=${DISPLAY}
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=America/New_York
+      - XDG_RUNTIME_DIR=/tmp/runtime-root
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /run/user/1000:/run/user/1000 
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    network_mode: host
+    command: tail -f /dev/null
