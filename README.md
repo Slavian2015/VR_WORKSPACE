@@ -37,3 +37,20 @@ project-root/
 ```bash
     npx http-server -p 8080
 ```
+
+
+
+# 4) RUN calculator:
+
+```bash
+    xpra start :100 --start="gnome-calculator" --bind-tcp=0.0.0.0:14500
+
+    netstat -tuln | grep 14500
+
+
+    xpra stop :100
+
+
+    npm run dev
+```
+
