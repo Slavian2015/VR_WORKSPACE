@@ -54,3 +54,16 @@ project-root/
     npm run dev
 ```
 
+
+
+project/
+├── server/                    # Серверная часть WebRTC и Xpra
+│   ├── index.js               # WebRTC сервер на Node.js
+│   ├── xpra-control.sh        # Скрипт для запуска Xpra и приложений
+│   └── package.json           # Зависимости для Node.js
+├── client/                    # Клиентская часть WebXR
+│   ├── index.html             # Веб-приложение с WebXR
+│   ├── app.js                 # Взаимодействие с WebRTC
+│   ├── three.min.js           # Three.js библиотека
+│   └── styles.css             # Стили интерфейса
+└── README.md                  # Инструкции по запуску
