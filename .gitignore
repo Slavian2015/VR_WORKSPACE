@@ -170,3 +170,4 @@ installSB.exe
 
 client/node_modules
 server/node_modules
+client/src/assets/pano.jpg
