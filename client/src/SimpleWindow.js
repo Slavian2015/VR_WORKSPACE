@@ -7,11 +7,12 @@ function createMonitorWindow(position, scene, camera) {
     div.style.width = '1920px';
     div.style.height = '1080px';
     div.style.backgroundColor = 'white';
-    div.style.border = 'none';
+    div.style.border = '2px solid #000';
     div.style.boxShadow = '0 0 2px rgba(0,0,0,0.5)';
     div.style.display = 'flex';
     div.style.alignItems = 'center';
     div.style.justifyContent = 'center';
+    div.style.fontSize = '24px';
 
     div.innerHTML = '<br/><h1>Desktop Monitor</h1><br/><br/>';
     document.body.appendChild(div);
