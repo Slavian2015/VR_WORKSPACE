@@ -7,7 +7,7 @@ import { createMonitorWindow } from './SimpleWindow.js';
 import { createCurvedWindow, planeCurve, windows } from './CurvedWindow.js';
 
 let camera, scene, renderer, cssRenderer, controls, device, context, swapChainFormat;
-
+let sphere2;
 const colors = ["#fff", "#000", "yellow", "red", "blue", "green", "purple", "orange", "pink", "brown"];
 let usedColors = [];
 
@@ -83,42 +83,125 @@ async function init() {
     addSecondSphere();
 }
 
+
 function addSecondSphere() {
     const sphereGeometry = new THREE.SphereGeometry(
-        1000, // radius
-        64, // widthSegments
-        32, // heightSegments
-        0, // phiStart
-        Math.PI * 2, // phiLength
-        0, // thetaStart
-        Math.PI // thetaLength
+        1000, // радиус
+        64, // ширина сегментов
+        32, // высота сегментов
+        1, // phiStart 1
+        2, // phiLength 2
+        4.4, // thetaStart 4.4
+        1 // thetaLength 1
     );
     const sphereMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        side: THREE.BackSide,
+        color: 0x000000,
         wireframe: true,
-        transparent: true,
-        opacity: 0.5
+        transparent: false,
+        opacity: 1
     });
-    const sphere2 = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    sphere2 = new THREE.Mesh(sphereGeometry, sphereMaterial);
     sphere2.position.set(0, 0, 0);
     scene.add(sphere2);
 
-    const cssObject = document.createElement('div');
-    cssObject.style.width = '1000px';
-    cssObject.style.height = '1000px';
-    cssObject.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
-    cssObject.textContent = 'CSS Object';
-    cssObject.style.color = 'white';
-    cssObject.style.display = 'flex';
-    cssObject.style.alignItems = 'center';
-    cssObject.style.justifyContent = 'center';
+    addSphereControls();
+}
 
-    const cssWindow = new CSS3DObject(cssObject);
-    cssWindow.position.set(0, 1000, 0);
-    cssWindow.lookAt(0, 0, 0);
+function addSphereControls() {
+    const controlPanel = document.createElement('div');
+    controlPanel.style.position = 'absolute';
+    controlPanel.style.top = '10px';
+    controlPanel.style.right = '10px';
+    controlPanel.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    controlPanel.style.padding = '10px';
+    controlPanel.style.borderRadius = '5px';
+    controlPanel.style.color = 'white';
 
-    sphere2.add(cssWindow);
+    const createSlider = (labelText, min, max, value, step, onChange) => {
+        const container = document.createElement('div');
+        container.style.marginBottom = '10px';
 
+        const label = document.createElement('label');
+        label.textContent = labelText;
+        label.style.display = 'block';
+
+        const valueLabel = document.createElement('span');
+        valueLabel.textContent = value;
+        valueLabel.style.float = 'right';
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = min;
+        slider.max = max;
+        slider.value = value;
+        slider.step = step;
+        slider.style.width = '100%';
+        slider.addEventListener('input', (event) => {
+            const newValue = parseFloat(event.target.value);
+            valueLabel.textContent = newValue.toFixed(2);
+            onChange(newValue);
+        });
+
+        container.appendChild(label);
+        container.appendChild(valueLabel);
+        container.appendChild(slider);
+        return container;
+    };
+
+    controlPanel.appendChild(createSlider('phiStart', '0', `${Math.PI * 2}`, `1`, `${Math.PI * 0.01}`, (value) => {
+        sphere2.geometry.dispose();
+        sphere2.geometry = new THREE.SphereGeometry(
+            1000, // radius
+            64, // widthSegments
+            32, // heightSegments
+            value, // phiStart
+            sphere2.geometry.parameters.phiLength, // phiLength
+            sphere2.geometry.parameters.thetaStart, // thetaStart
+            sphere2.geometry.parameters.thetaLength // thetaLength
+        );
+    }));
+
+    controlPanel.appendChild(createSlider('phiLength', '0', `${Math.PI * 2}`, `2`, `${Math.PI * 0.01}`, (value) => {
+        sphere2.geometry.dispose();
+        sphere2.geometry = new THREE.SphereGeometry(
+            1000, // radius
+            64, // widthSegments
+            32, // heightSegments
+            sphere2.geometry.parameters.phiStart, // phiStart
+            value, // phiLength
+            sphere2.geometry.parameters.thetaStart, // thetaStart
+            sphere2.geometry.parameters.thetaLength // thetaLength
+        );
+    }));
+
+    controlPanel.appendChild(createSlider('thetaStart', '0', `${Math.PI * 2}`, '4.4', `${Math.PI * 0.01}`, (value) => {
+        sphere2.geometry.dispose();
+        sphere2.geometry = new THREE.SphereGeometry(
+            1000, // radius
+            64, // widthSegments
+            32, // heightSegments
+            sphere2.geometry.parameters.phiStart, // phiStart
+            sphere2.geometry.parameters.phiLength, // phiLength
+            value, // thetaStart
+            sphere2.geometry.parameters.thetaLength // thetaLength
+        );
+    }));
+
+    controlPanel.appendChild(createSlider('thetaLength', '0', `${Math.PI * 2}`, `1`, `${Math.PI * 0.01}`, (value) => {
+        sphere2.geometry.dispose();
+        sphere2.geometry = new THREE.SphereGeometry(
+            1000, // radius
+            64, // widthSegments
+            32, // heightSegments
+            sphere2.geometry.parameters.phiStart, // phiStart
+            sphere2.geometry.parameters.phiLength, // phiLength
+            sphere2.geometry.parameters.thetaStart, // thetaStart
+            value // thetaLength
+        );
+    }));
+
+    document.body.appendChild(controlPanel);
 }
 
 
@@ -137,43 +220,6 @@ function addSimpleButton() {
     });
     document.body.appendChild(simpleButton);
 }
-
-function addCurvedButton() {
-    const curvedButton = document.createElement('button');
-    curvedButton.textContent = 'Open Curved Window';
-    curvedButton.style.position = 'absolute';
-    curvedButton.style.top = '10px';
-    curvedButton.style.right = '10px';
-    curvedButton.addEventListener('click', () => {
-        createCurvedWindow(
-            new THREE.Vector3(10, 0, -900), 
-            scene,
-            camera
-        );
-    });
-    document.body.appendChild(curvedButton);
-}
-
-function addSlider() {
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = '0';
-    slider.max = '150';
-    slider.value = '120';
-    slider.step = '0.5';
-    slider.style.position = 'absolute';
-    slider.style.bottom = '10px';
-    slider.style.left = '90%';
-    slider.style.transform = 'translateX(-50%)';
-    slider.addEventListener('input', (event) => {
-        const value = parseFloat(event.target.value);
-        windows.forEach(windowMesh => {
-            planeCurve(windowMesh.geometry, value);
-        });
-    });
-    document.body.appendChild(slider);
-}
-
 
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
