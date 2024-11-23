@@ -1,15 +1,12 @@
 import * as THREE from 'three';
 import { VRButton } from './../node_modules/three/examples/jsm/webxr/VRButton.js';
 import { OrbitControls } from './../node_modules/three/examples/jsm/controls/OrbitControls.js';
-import { CSS3DRenderer, CSS3DObject } from './../node_modules/three/examples/jsm/renderers/CSS3DRenderer.js';
+import { CSS3DRenderer } from './../node_modules/three/examples/jsm/renderers/CSS3DRenderer.js';
 import { initWebGPU } from './webgpu.js';
 import { createMonitorWindow } from './SimpleWindow.js';
-import { createCurvedWindow, planeCurve, windows } from './CurvedWindow.js';
 
 let camera, scene, renderer, cssRenderer, controls, device, context, swapChainFormat;
 let sphere2;
-const colors = ["#fff", "#000", "yellow", "red", "blue", "green", "purple", "orange", "pink", "brown"];
-let usedColors = [];
 
 init();
 animate();
@@ -17,13 +14,23 @@ animate();
 async function init() {
     scene = new THREE.Scene();
 
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 0);
+    // camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 0);
+    
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, -10);
+
+
+
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, 0);
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.autoClear = false; // Ensure the rendere
+    renderer.setClearColor(0x000000, 1); // Set background color
+
+
     document.body.appendChild(renderer.domElement);
 
     cssRenderer = new CSS3DRenderer();
@@ -34,20 +41,24 @@ async function init() {
     cssRenderer.domElement.style.pointerEvents = 'none';
     document.body.appendChild(cssRenderer.domElement);
 
-    const sphereGeometry = new THREE.SphereGeometry(
-        2000, // radius
+    const sphereGeometry1 = new THREE.SphereGeometry(
+        1920, // radius
         64, // widthSegments
-        32, // heightSegments
+        64, // heightSegments
         0, // phiStart
         Math.PI * 2, // phiLength
         0, // thetaStart
         Math.PI // thetaLength
     );
-    const sphereMaterial = new THREE.MeshBasicMaterial({
+    
+    const sphereMaterial1 = new THREE.MeshBasicMaterial({
         map: new THREE.TextureLoader().load('src/assets/old_field.jpg'),
-        side: THREE.BackSide
+        side: THREE.BackSide,
+        transparent: true,
+        opacity: 0.2,
     });
-    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
+    sphere.renderOrder = 1;
     scene.add(sphere);
 
     controls = new OrbitControls(camera, renderer.domElement);
@@ -80,7 +91,7 @@ async function init() {
     // addCurvedButton();
     // addSlider();
 
-    addSecondSphere();
+    
 }
 
 
@@ -88,27 +99,47 @@ function addSecondSphere() {
     const sphereGeometry = new THREE.SphereGeometry(
         1000, // радиус
         64, // ширина сегментов
-        32, // высота сегментов
-        1, // phiStart 1
+        64, // высота сегментов
+        3.6, // phiStart 1
         2, // phiLength 2
-        4.4, // thetaStart 4.4
+        1, // thetaStart 4.4
         1 // thetaLength 1
     );
-    const sphereMaterial = new THREE.MeshBasicMaterial({
-        side: THREE.BackSide,
-        color: 0x000000,
-        wireframe: true,
-        transparent: false,
-        opacity: 1
+
+    const textureLoader = new THREE.TextureLoader();
+    const texture = textureLoader.load('src/assets/dog.png', () => {
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(1, 1);
     });
+    const sphereMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        transparent: false,
+        opacity: 1,
+        depthTest: true,
+        depthWrite: true
+    });
+
     sphere2 = new THREE.Mesh(sphereGeometry, sphereMaterial);
     sphere2.position.set(0, 0, 0);
+    sphere2.renderOrder = 2;
     scene.add(sphere2);
 
-    addSphereControls();
+    addSphereControls(
+        sphereGeometry.parameters.phiStart,
+        sphereGeometry.parameters.phiLength,
+        sphereGeometry.parameters.thetaStart,
+        sphereGeometry.parameters.thetaLength
+    );
 }
 
-function addSphereControls() {
+function addSphereControls(
+    phiStart = 3.5,
+    phiLength = 2,
+    thetaStart = 2,
+    thetaLength = 1
+) {
     const controlPanel = document.createElement('div');
     controlPanel.style.position = 'absolute';
     controlPanel.style.top = '10px';
@@ -149,7 +180,7 @@ function addSphereControls() {
         return container;
     };
 
-    controlPanel.appendChild(createSlider('phiStart', '0', `${Math.PI * 2}`, `1`, `${Math.PI * 0.01}`, (value) => {
+    controlPanel.appendChild(createSlider('phiStart', '0', `${Math.PI * 2}`, phiStart, `${Math.PI * 0.01}`, (value) => {
         sphere2.geometry.dispose();
         sphere2.geometry = new THREE.SphereGeometry(
             1000, // radius
@@ -162,7 +193,7 @@ function addSphereControls() {
         );
     }));
 
-    controlPanel.appendChild(createSlider('phiLength', '0', `${Math.PI * 2}`, `2`, `${Math.PI * 0.01}`, (value) => {
+    controlPanel.appendChild(createSlider('phiLength', '0', `${Math.PI * 2}`, phiLength, `${Math.PI * 0.01}`, (value) => {
         sphere2.geometry.dispose();
         sphere2.geometry = new THREE.SphereGeometry(
             1000, // radius
@@ -175,7 +206,7 @@ function addSphereControls() {
         );
     }));
 
-    controlPanel.appendChild(createSlider('thetaStart', '0', `${Math.PI * 2}`, '4.4', `${Math.PI * 0.01}`, (value) => {
+    controlPanel.appendChild(createSlider('thetaStart', '0', `${Math.PI * 2}`, thetaStart, `${Math.PI * 0.01}`, (value) => {
         sphere2.geometry.dispose();
         sphere2.geometry = new THREE.SphereGeometry(
             1000, // radius
@@ -188,7 +219,7 @@ function addSphereControls() {
         );
     }));
 
-    controlPanel.appendChild(createSlider('thetaLength', '0', `${Math.PI * 2}`, `1`, `${Math.PI * 0.01}`, (value) => {
+    controlPanel.appendChild(createSlider('thetaLength', '0', `${Math.PI * 2}`, thetaLength, `${Math.PI * 0.01}`, (value) => {
         sphere2.geometry.dispose();
         sphere2.geometry = new THREE.SphereGeometry(
             1000, // radius
@@ -212,11 +243,7 @@ function addSimpleButton() {
     simpleButton.style.top = '10px';
     simpleButton.style.left = '10px';
     simpleButton.addEventListener('click', () => {
-        createMonitorWindow(
-            new THREE.Vector3(0, 0, -1920), 
-            scene,
-            camera
-        );
+        addSecondSphere();
     });
     document.body.appendChild(simpleButton);
 }
@@ -233,6 +260,7 @@ function animate() {
 
 function render() {
     controls.update();
+    renderer.clear();
     renderer.render(scene, camera);
     cssRenderer.render(scene, camera);
 }
