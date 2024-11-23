@@ -1,27 +1,24 @@
-const THREE = require('three');
-// import * as THREE from './node_modules/three/build/three.module.js';
-const { OrbitControls } = await import('./node_modules/three/examples/jsm/controls/OrbitControls.js');
-const { VRButton } = await import('./node_modules/three/examples/jsm/webxr/VRButton.js');
-const { CSS3DRenderer } = await import('./node_modules/three/examples/jsm/renderers/CSS3DRenderer.js');
 
+import * as THREE from "three";
 
 let camera, scene, renderer, controls, cssRenderer;
 
-initWebXR();
-animate();
+init().then(() => {
+    animate();
+});
 
-function initWebXR() {
-
+async function init() {
+    const { OrbitControls } = await import('./node_modules/three/examples/jsm/controls/OrbitControls.js');
+    const { CSS3DRenderer } = await import('./node_modules/three/examples/jsm/renderers/CSS3DRenderer.js');
+    const { VRButton } = await import('./node_modules/three/examples/jsm/webxr/VRButton.js');
+    
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, -10);
+
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, 0);
 
-
-    const canvas = document.getElementById('xr-canvas');
-    let gl = canvas.getContext('webgl2', { xrCompatible: true });
-
-    renderer = new THREE.WebGLRenderer({ antialias: true, canvas: canvas, context: gl });
+    renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -38,7 +35,7 @@ function initWebXR() {
     cssRenderer.domElement.style.pointerEvents = 'none';
     document.body.appendChild(cssRenderer.domElement);
 
-    const geometry = new THREE.SphereGeometry(
+    const sphereGeometry1 = new THREE.SphereGeometry(
         1920, // radius
         64, // widthSegments
         64, // heightSegments
@@ -47,14 +44,14 @@ function initWebXR() {
         0, // thetaStart
         Math.PI // thetaLength
     );
-
-    const material = new THREE.MeshBasicMaterial({
+    
+    const sphereMaterial1 = new THREE.MeshBasicMaterial({
         map: new THREE.TextureLoader().load('./assets/old_field.jpg'),
         side: THREE.BackSide,
-        transparent: false,
-        opacity: 1,
+        transparent: true,
+        opacity: 0.2,
     });
-    const sphere = new THREE.Mesh(geometry, material);
+    const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
     sphere.renderOrder = 1;
     scene.add(sphere);
 
@@ -74,30 +71,21 @@ function initWebXR() {
     }
 
     window.addEventListener('resize', onWindowResize, false);
-
-    console.log('initialized successfully.');
 }
 
 function onWindowResize() {
-    if (camera && renderer) {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    }
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 function animate() {
     renderer.setAnimationLoop(render);
 }
 
-function render() {
-    if (controls) {
-        controls.update();
-    }
+function render() {    
+    controls.update();
     renderer.clear();
     renderer.render(scene, camera);
-
-    if (cssRenderer) {
-        cssRenderer.render(scene, camera);
-    }
+    cssRenderer.render(scene, camera);
 }

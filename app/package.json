@@ -5,6 +5,10 @@
   "scripts": {
     "start": "electron ."
   },
+  "dependencies": {
+    "@types/three": "^0.170.0",
+    "three": "^0.170.0"
+  },
   "devDependencies": {
     "electron": "^33.2.0"
   }

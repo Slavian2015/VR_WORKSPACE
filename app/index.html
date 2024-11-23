@@ -1,13 +1,22 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <title>Linux App Manager</title>
-  </head>
-  <body>
-    <h1>Linux App Manager</h1>
-    <button onclick="launchApp('gnome-clocks')">Launch Clock</button>
-    <button onclick="launchApp('gnome-calculator')">Launch Calculator</button>
-  </body>
 
-  <script src="renderer.js"></script>
+<head>
+    <meta charset="UTF-8">
+    <title>Electron WebXR 3D Workspace</title>
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="./styles.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./node_modules/three/build/three.module.js"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <canvas id="xr-canvas" style="display: none;"></canvas>
+    <script type="module" src="./sphere.js"></script>
+</body>
 </html>

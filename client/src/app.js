@@ -27,8 +27,8 @@ async function init() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.autoClear = false; // Ensure the rendere
-    renderer.setClearColor(0x000000, 1); // Set background color
+    renderer.autoClear = false;
+    renderer.setClearColor(0x000000, 1);
 
 
     document.body.appendChild(renderer.domElement);
