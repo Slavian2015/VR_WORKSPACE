@@ -18,7 +18,10 @@ async function init() {
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, 0);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    const canvas = document.getElementById('xr-canvas');
+    let gl = canvas.getContext('webgl2', { xrCompatible: true });
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, canvas: canvas, context: gl });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -67,7 +70,7 @@ async function init() {
     if (navigator.xr) {
         document.body.appendChild(VRButton.createButton(renderer));
     } else {
-        console.warn('WebXR not supported');
+        console.error('WebXR not supported');
     }
 
     window.addEventListener('resize', onWindowResize, false);
