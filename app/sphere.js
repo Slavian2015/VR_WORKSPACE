@@ -1,5 +1,7 @@
 
 import * as THREE from "three";
+import { addSecondSphere } from './windows/second-sphere.js';
+
 
 let camera, scene, renderer, controls, cssRenderer;
 
@@ -51,8 +53,8 @@ async function init() {
     const sphereMaterial1 = new THREE.MeshBasicMaterial({
         map: new THREE.TextureLoader().load('./assets/old_field.jpg'),
         side: THREE.BackSide,
-        transparent: true,
-        opacity: 0.2,
+        transparent: false,
+        opacity: 1,
     });
     const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
     sphere.renderOrder = 1;
@@ -74,6 +76,20 @@ async function init() {
     }
 
     window.addEventListener('resize', onWindowResize, false);
+    addSimpleButton();
+    
+}
+
+function addSimpleButton() {
+    const simpleButton = document.createElement('button');
+    simpleButton.textContent = 'Open Window';
+    simpleButton.style.position = 'absolute';
+    simpleButton.style.top = '10px';
+    simpleButton.style.left = '10px';
+    simpleButton.addEventListener('click', () => {
+        scene.add(addSecondSphere());
+    });
+    document.body.appendChild(simpleButton);
 }
 
 function onWindowResize() {
