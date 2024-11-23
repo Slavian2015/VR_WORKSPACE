@@ -1,8 +1,11 @@
 import * as THREE from "three";
-let sphere2;
+
+import { addSphereControls } from "./../components/sphere-controls.js";
+
+let sphere;
 
 
-function addSecondSphere() {
+function addSecondSphere(renderOrder) {
     const sphereGeometry = new THREE.SphereGeometry(
         1000, // радиус
         64, // ширина сегментов
@@ -28,17 +31,18 @@ function addSecondSphere() {
         depthWrite: true
     });
 
-    sphere2 = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    sphere2.position.set(0, 0, 0);
-    sphere2.renderOrder = 2;
-    return sphere2;
+    sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    sphere.position.set(0, 0, 0);
+    sphere.renderOrder = renderOrder;
 
-    // addSphereControls(
-    //     sphereGeometry.parameters.phiStart,
-    //     sphereGeometry.parameters.phiLength,
-    //     sphereGeometry.parameters.thetaStart,
-    //     sphereGeometry.parameters.thetaLength
-    // );
+    addSphereControls(
+        sphereGeometry.parameters.phiStart,
+        sphereGeometry.parameters.phiLength,
+        sphereGeometry.parameters.thetaStart,
+        sphereGeometry.parameters.thetaLength,
+        sphere
+    );
+    return sphere;
 }
 
 export { addSecondSphere };
