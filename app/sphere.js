@@ -5,6 +5,8 @@ import { addSecondSphere } from './windows/second-sphere.js';
 
 let camera, scene, renderer, controls, cssRenderer;
 
+let spheres = [];
+
 init().then(() => {
     animate();
 });
@@ -41,7 +43,7 @@ async function init() {
     document.body.appendChild(cssRenderer.domElement);
 
     const sphereGeometry1 = new THREE.SphereGeometry(
-        1920, // radius
+        5000, // radius
         64, // widthSegments
         64, // heightSegments
         0, // phiStart
@@ -60,14 +62,14 @@ async function init() {
     sphere.renderOrder = 1;
     scene.add(sphere);
 
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.25;
-    controls.screenSpacePanning = false;
-    controls.minDistance = 2000;
-    controls.maxDistance = 5000;
-    controls.enableZoom = true;
-    controls.enablePan = true;
+    // controls = new OrbitControls(camera, renderer.domElement);
+    // controls.enableDamping = false;
+    // controls.dampingFactor = 0.25;
+    // controls.screenSpacePanning = false;
+    // controls.minDistance = 0;
+    // controls.maxDistance = 5000;
+    // controls.enableZoom = false;
+    // controls.enablePan = false;
 
     if (navigator.xr) {
         document.body.appendChild(VRButton.createButton(renderer));
@@ -87,7 +89,9 @@ function addSimpleButton() {
     simpleButton.style.top = '10px';
     simpleButton.style.left = '10px';
     simpleButton.addEventListener('click', () => {
-        scene.add(addSecondSphere());
+        const additional_sphere = addSecondSphere(spheres.length+1, scene, camera);
+        spheres.push(additional_sphere);
+        scene.add(additional_sphere);
     });
     document.body.appendChild(simpleButton);
 }
@@ -103,7 +107,7 @@ function animate() {
 }
 
 function render() {    
-    controls.update();
+    // controls.update();
     renderer.clear();
     renderer.render(scene, camera);
     cssRenderer.render(scene, camera);
