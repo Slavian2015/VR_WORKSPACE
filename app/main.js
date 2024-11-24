@@ -4,7 +4,7 @@ let mainWindow;
 
 app.on('ready', () => {
     mainWindow = new BrowserWindow({
-        width: 1400,
+        width: 1980,
         height: 1300,
         webPreferences: {
             nodeIntegration: true,
@@ -17,7 +17,7 @@ app.on('ready', () => {
     });
 
     mainWindow.loadFile('index.html');
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
 });
 
 app.on('window-all-closed', () => {
