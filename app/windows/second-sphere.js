@@ -6,9 +6,9 @@ let isDragging = false;
 let previousMousePosition = { x: 0, y: 0 };
 
 
-function addSecondSphere(renderOrder) {
+function addSecondSphere(renderRadius) {
     const sphereGeometry = new THREE.SphereGeometry(
-        1000, // radius
+        renderRadius, // radius
         64, // widthSegments
         64, // heightSegments
         4.4, // phiStart 4.5
@@ -28,32 +28,52 @@ function addSecondSphere(renderOrder) {
         side: THREE.DoubleSide,
         transparent: false,
         opacity: 1,
-        depthTest: true,
-        depthWrite: true
     });
 
     sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
     sphere.position.set(0, 0, 0);
-    sphere.renderOrder = renderOrder;
+    // sphere.renderOrder = renderOrder;
 
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('wheel', zoomSphere);
 
-    addSphereControls(
-        sphereGeometry.parameters.phiStart,
-        sphereGeometry.parameters.phiLength,
-        sphereGeometry.parameters.thetaStart,
-        sphereGeometry.parameters.thetaLength,
-        sphere
-    );
+    // addSphereControls(
+    //     sphereGeometry.parameters.phiStart,
+    //     sphereGeometry.parameters.phiLength,
+    //     sphereGeometry.parameters.thetaStart,
+    //     sphereGeometry.parameters.thetaLength,
+    //     sphere
+    // );
 
     return sphere;
 }
 
+const zoomSphere = (event) => {
+
+    if (event.ctrlKey) {
+        const delta = event.wheelDelta ? event.wheelDelta : -event.detail;
+        const zoomFactor = 0.1;
+        const scale = delta > 0 ? 1 + zoomFactor : 1 - zoomFactor;
+        
+        const newPhiStart = sphere.geometry.parameters.phiStart - (sphere.geometry.parameters.phiLength * (scale - 1)) / 2;
+        const newThetaStart = sphere.geometry.parameters.thetaStart - (sphere.geometry.parameters.thetaLength * (scale - 1)) / 2;
+
+        sphere.geometry = new THREE.SphereGeometry(
+            sphere.geometry.parameters.radius,
+            sphere.geometry.parameters.widthSegments,
+            sphere.geometry.parameters.heightSegments,
+            newPhiStart,
+            sphere.geometry.parameters.phiLength * scale,
+            newThetaStart,
+            sphere.geometry.parameters.thetaLength * scale
+        );
+    }
+};
+
 
 const onMouseDown = (event) => {
-    console.log('mouse DOwN');
     isDragging = true;
     previousMousePosition = {
         x: event.clientX,
@@ -79,7 +99,6 @@ const onMouseMove = (event) => {
 };
 
 const onMouseUp = () => {
-    console.log('mouse up');
     isDragging = false;
 };
 

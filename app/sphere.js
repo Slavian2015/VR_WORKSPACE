@@ -19,7 +19,7 @@ async function init() {
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, -10);
 
-    camera.position.set(0, 0, 5);
+    camera.position.set(0, 0, 0);
     camera.lookAt(0, 0, 0);
 
     const canvas = document.getElementById('xr-canvas');
@@ -78,7 +78,10 @@ async function init() {
     }
 
     window.addEventListener('resize', onWindowResize, false);
-    addSimpleButton();
+    // addSimpleButton();
+
+    scene.add(addSecondSphere(4900, scene, camera));
+    scene.add(addSecondSphere(4800, scene, camera));
     
 }
 
