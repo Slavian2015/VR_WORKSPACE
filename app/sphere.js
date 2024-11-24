@@ -60,24 +60,33 @@ async function init() {
         Math.PI // thetaLength
     );
 
+
+    // beach  cyber castle utopia skysraper
+    const texture = new THREE.TextureLoader().load('./assets/beach.png');
+    texture.colorSpace = THREE.SRGBColorSpace;
     const sphereMaterial1 = new THREE.MeshBasicMaterial({
-        map: new THREE.TextureLoader().load('./assets/old_field.jpg'),
+        map: texture,
         side: THREE.BackSide,
         transparent: false,
-        opacity: 1,
+        opacity: 1
     });
+
+
     const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
     sphere.renderOrder = 1;
+
+    // Rotate the sphere by 180 degrees around the Y-axis
+    sphere.rotation.y = Math.PI;
     scene.add(sphere);
 
-    // controls = new OrbitControls(camera, renderer.domElement);
-    // controls.enableDamping = false;
-    // controls.dampingFactor = 0.25;
-    // controls.screenSpacePanning = false;
-    // controls.minDistance = 0;
-    // controls.maxDistance = 5000;
-    // controls.enableZoom = false;
-    // controls.enablePan = false;
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = false;
+    controls.dampingFactor = 0.25;
+    controls.screenSpacePanning = false;
+    controls.minDistance = 0;
+    controls.maxDistance = 5000;
+    controls.enableZoom = false;
+    controls.enablePan = false;
 
     if (navigator.xr) {
         document.body.appendChild(VRButton.createButton(renderer));
@@ -97,6 +106,8 @@ async function init() {
     const sphere2 = addSecondSphere(4900, './assets/dog2.png');
     const sphere4 = addSecondSphere(4900, './assets/dog2.png');
 
+
+    spheres.push(sphere);
     spheres.push(sphere1);
     spheres.push(sphere2);
     spheres.push(sphere3);
@@ -238,7 +249,7 @@ function animate() {
 }
 
 function render() {
-    // controls.update();
+    controls.update();
     renderer.clear();
     renderer.render(scene, camera);
     cssRenderer.render(scene, camera);
