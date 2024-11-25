@@ -9,6 +9,8 @@ import { addSecondSphere } from 'addSecondSphere';
 
 let camera, scene, renderer, controls, cssRenderer;
 
+let mainRadius = 5000;
+
 let spheres = [];
 let raycaster = new THREE.Raycaster();
 let mouse = new THREE.Vector2();
@@ -51,7 +53,7 @@ async function init() {
     document.body.appendChild(cssRenderer.domElement);
 
     const sphereGeometry1 = new THREE.SphereGeometry(
-        5000, // radius
+        mainRadius, // radius
         64, // widthSegments
         64, // heightSegments
         0, // phiStart
@@ -101,10 +103,10 @@ async function init() {
     document.addEventListener('wheel', zoomSphere);
 
 
-    const sphere1 = addSecondSphere(4950, './assets/dog.png');
-    const sphere3 = addSecondSphere(4950, './assets/dog.png');
-    const sphere2 = addSecondSphere(4900, './assets/dog2.png');
-    const sphere4 = addSecondSphere(4900, './assets/dog2.png');
+    const sphere1 = addSecondSphere(mainRadius-50, './assets/dog.png');
+    const sphere3 = addSecondSphere(mainRadius-150, './assets/dog.png');
+    const sphere2 = addSecondSphere(mainRadius-100, './assets/dog2.png');
+    const sphere4 = addSecondSphere(mainRadius-200, './assets/dog2.png');
 
 
     // spheres.push(sphere);
@@ -117,7 +119,7 @@ async function init() {
     scene.add(sphere3);   
     scene.add(sphere4);   
     
-    focusSphere(sphere1);
+    lastFocusedSphere = sphere4;
 }
 
 
@@ -144,32 +146,10 @@ function zoomSphere(event) {
 };
 
 
-function focusSphere(sphere) {
-
-    if (lastFocusedSphere && lastFocusedSphere !== sphere) {
-        lastFocusedSphere.geometry.dispose();
-        lastFocusedSphere.geometry = new THREE.SphereGeometry(
-            lastFocusedSphereRadius, // radius
-            lastFocusedSphere.geometry.parameters.widthSegments, // widthSegments
-            lastFocusedSphere.geometry.parameters.heightSegments, // heightSegments
-            lastFocusedSphere.geometry.parameters.phiStart, // phiStart
-            lastFocusedSphere.geometry.parameters.phiLength, // phiLength
-            lastFocusedSphere.geometry.parameters.thetaStart, // thetaStart
-            lastFocusedSphere.geometry.parameters.thetaLength // thetaLength
-        );
-    }
-
-    if (lastFocusedSphereRadius && lastFocusedSphereRadius === sphere.geometry.parameters.radius) {
-        return;
-    }
-
-    const minRadius = Math.min(...spheres.map(s => s.geometry.parameters.radius)) - 100;
-
-    lastFocusedSphereRadius = sphere.geometry.parameters.radius;
+function changeSphereRadius(sphere, radius) {
     sphere.geometry.dispose();
-
     sphere.geometry = new THREE.SphereGeometry(
-        minRadius, // radius
+        radius, // radius
         sphere.geometry.parameters.widthSegments, // widthSegments
         sphere.geometry.parameters.heightSegments, // heightSegments
         sphere.geometry.parameters.phiStart, // phiStart
@@ -177,15 +157,25 @@ function focusSphere(sphere) {
         sphere.geometry.parameters.thetaStart, // thetaStart
         sphere.geometry.parameters.thetaLength // thetaLength
     );
+}
 
-    lastFocusedSphere = sphere;
-};
 
-// function focusSphere(sphere) {
-//     if (lastFocusedSphere && lastFocusedSphere !== sphere) {
-//     }
-// }
+function focusSphere(sphere) {
+    if (lastFocusedSphere !== sphere) {
 
+        let minRadius = Math.min(...spheres.map(s => s.geometry.parameters.radius));
+        changeSphereRadius(sphere, minRadius);
+
+        let remainingSpheres = spheres.filter(s => s !== sphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
+
+        remainingSpheres.forEach((s, index) => {
+            changeSphereRadius(s, mainRadius - (index + 1) * 50);
+        });
+
+        lastFocusedSphere = sphere;
+
+    }
+}
 
 
 function onMouseDown(event) {
