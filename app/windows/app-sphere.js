@@ -1,8 +1,7 @@
 import * as THREE from "three";
-// import { addSphereControls } from "./../components/sphere-controls.js";
 
 
-function addSecondSphere(renderRadius, picture) {
+function addAppSphere(renderRadius, picture) {
     const sphereGeometry = new THREE.SphereGeometry(
         renderRadius, // radius
         64, // widthSegments
@@ -31,15 +30,6 @@ function addSecondSphere(renderRadius, picture) {
 
     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
     sphere.position.set(0, 0, renderRadius/2000);
-    // sphere.renderOrder = renderOrder;
-
-    // addSphereControls(
-    //     sphereGeometry.parameters.phiStart,
-    //     sphereGeometry.parameters.phiLength,
-    //     sphereGeometry.parameters.thetaStart,
-    //     sphereGeometry.parameters.thetaLength,
-    //     sphere
-    // );
 
     return sphere;
 }
@@ -47,5 +37,4 @@ function addSecondSphere(renderRadius, picture) {
 
 
 
-
-export { addSecondSphere };
+export { addAppSphere };

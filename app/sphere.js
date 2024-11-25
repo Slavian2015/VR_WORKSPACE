@@ -4,7 +4,8 @@ import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
 import { VRButton } from "VRButton";
 
-import { addSecondSphere } from 'addSecondSphere';
+import { addAppSphere } from 'addAppSphere';
+// import { addSecondSphere } from 'addSecondSphere';
 
 
 let camera, scene, renderer, controls, cssRenderer;
@@ -18,7 +19,6 @@ let isDragging = false;
 let draggedSphere = null;
 let previousMousePosition = { x: 0, y: 0 };
 let lastFocusedSphere = null;
-let lastFocusedSphereRadius = null;
 
 
 init().then(() => {
@@ -76,8 +76,6 @@ async function init() {
 
     const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
     sphere.renderOrder = 1;
-
-    // Rotate the sphere by 180 degrees around the Y-axis
     sphere.rotation.y = Math.PI;
     scene.add(sphere);
 
@@ -86,7 +84,7 @@ async function init() {
     controls.dampingFactor = 0.25;
     controls.screenSpacePanning = false;
     controls.minDistance = 0;
-    controls.maxDistance = 5000;
+    controls.maxDistance = mainRadius;
     controls.enableZoom = false;
     controls.enablePan = false;
 
@@ -103,23 +101,23 @@ async function init() {
     document.addEventListener('wheel', zoomSphere);
 
 
-    const sphere1 = addSecondSphere(mainRadius-50, './assets/dog.png');
-    const sphere3 = addSecondSphere(mainRadius-150, './assets/dog.png');
-    const sphere2 = addSecondSphere(mainRadius-100, './assets/dog2.png');
-    const sphere4 = addSecondSphere(mainRadius-200, './assets/dog2.png');
+    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png');
+    const sphere3 = addAppSphere(mainRadius-250, './assets/dog.png');
+    // const sphere2 = addAppSphere(mainRadius-100, './assets/dog2.png');
+    // const sphere4 = addAppSphere(mainRadius-200, './assets/dog2.png');
 
 
     // spheres.push(sphere);
     spheres.push(sphere1);
-    spheres.push(sphere2);
+    // spheres.push(sphere2);
     spheres.push(sphere3);
-    spheres.push(sphere4);
+    // spheres.push(sphere4);
     scene.add(sphere1);
-    scene.add(sphere2);   
+    // scene.add(sphere2);   
     scene.add(sphere3);   
-    scene.add(sphere4);   
+    // scene.add(sphere4);   
     
-    lastFocusedSphere = sphere4;
+    lastFocusedSphere = sphere3;
 }
 
 
@@ -149,13 +147,13 @@ function zoomSphere(event) {
 function changeSphereRadius(sphere, radius) {
     sphere.geometry.dispose();
     sphere.geometry = new THREE.SphereGeometry(
-        radius, // radius
-        sphere.geometry.parameters.widthSegments, // widthSegments
-        sphere.geometry.parameters.heightSegments, // heightSegments
-        sphere.geometry.parameters.phiStart, // phiStart
-        sphere.geometry.parameters.phiLength, // phiLength
-        sphere.geometry.parameters.thetaStart, // thetaStart
-        sphere.geometry.parameters.thetaLength // thetaLength
+        radius,
+        sphere.geometry.parameters.widthSegments,
+        sphere.geometry.parameters.heightSegments,
+        sphere.geometry.parameters.phiStart,
+        sphere.geometry.parameters.phiLength,
+        sphere.geometry.parameters.thetaStart,
+        sphere.geometry.parameters.thetaLength
     );
 }
 
@@ -169,7 +167,7 @@ function focusSphere(sphere) {
         let remainingSpheres = spheres.filter(s => s !== sphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
 
         remainingSpheres.forEach((s, index) => {
-            changeSphereRadius(s, mainRadius - (index + 1) * 50);
+            changeSphereRadius(s, mainRadius - (index + 1) * 100);
         });
 
         lastFocusedSphere = sphere;
@@ -193,6 +191,8 @@ function onMouseDown(event) {
             y: event.clientY
         };
         focusSphere(draggedSphere);
+
+        draggedSphere.material.opacity = 0.8;
     }
 };
 
@@ -216,6 +216,10 @@ function onMouseMove(event) {
 function onMouseUp() {
     isDragging = false;
     draggedSphere = null;
+
+    if (lastFocusedSphere) {
+        lastFocusedSphere.material.opacity = 1;
+    }
 };
 
 
