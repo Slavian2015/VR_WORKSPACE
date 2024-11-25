@@ -1,15 +1,70 @@
 {
-  "name": "electron-app",
+  "name": "vr-workspace",
   "version": "1.0.0",
+  "homepage":"./",
+  "includeSubNodeModules": "true",
+  "description": "A VR OS workspace application",
+  "author": "Kushnirenko VA <slavaku2014@gmail.com>",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder"
   },
   "dependencies": {
     "@types/three": "^0.170.0",
     "three": "^0.170.0"
   },
   "devDependencies": {
-    "electron": "^33.2.0"
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "open-source-ideas.vr-workspace",
+    "includeSubNodeModules": "true",
+    "productName": "VR Workspace",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      {
+        "from": ".",
+        "to": "."
+      },
+      {
+        "from": "windows",
+        "to": "windows"
+      },
+      {
+        "from": "components",
+        "to": "components"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
+      },
+      {
+        "from": "capture-apps",
+        "to": "capture-apps"
+      }
+    ],
+    "extraResources": [
+      "icons/**/*",
+      "windows/**/*",
+      "components/**/*",
+      "assets/**/*",
+      "capture-apps/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/**/*",
+      "windows/**/*",
+      "components/**/*",
+      "assets/**/*",
+      "capture-apps/**/*"
+    ],
+    "linux": {
+      "target": "AppImage",
+      "icon": "icons/icon.png",
+      "category": "Utility"
+    }
   }
 }

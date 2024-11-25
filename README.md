@@ -55,6 +55,13 @@ project-root/
 ```
 
 
+# 5) BUILD App
+
+```bash
+    npm run build
+```
+
+
 
 project/
 ├── server/                    # Серверная часть WebRTC и Xpra

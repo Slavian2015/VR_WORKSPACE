@@ -1,6 +1,10 @@
 
 import * as THREE from "three";
-import { addSecondSphere } from './windows/second-sphere.js';
+import { OrbitControls } from "OrbitControls";
+import { CSS3DRenderer } from "CSS3DRenderer";
+import { VRButton } from "VRButton";
+
+import { addSecondSphere } from 'addSecondSphere';
 
 
 let camera, scene, renderer, controls, cssRenderer;
@@ -20,10 +24,6 @@ init().then(() => {
 });
 
 async function init() {
-    const { OrbitControls } = await import('./node_modules/three/examples/jsm/controls/OrbitControls.js');
-    const { CSS3DRenderer } = await import('./node_modules/three/examples/jsm/renderers/CSS3DRenderer.js');
-    const { VRButton } = await import('./node_modules/three/examples/jsm/webxr/VRButton.js');
-
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, -10);
 
@@ -107,7 +107,7 @@ async function init() {
     const sphere4 = addSecondSphere(4900, './assets/dog2.png');
 
 
-    spheres.push(sphere);
+    // spheres.push(sphere);
     spheres.push(sphere1);
     spheres.push(sphere2);
     spheres.push(sphere3);
@@ -180,6 +180,11 @@ function focusSphere(sphere) {
 
     lastFocusedSphere = sphere;
 };
+
+// function focusSphere(sphere) {
+//     if (lastFocusedSphere && lastFocusedSphere !== sphere) {
+//     }
+// }
 
 
 
