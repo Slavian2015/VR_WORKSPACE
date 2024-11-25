@@ -19,6 +19,7 @@ let isDragging = false;
 let draggedSphere = null;
 let previousMousePosition = { x: 0, y: 0 };
 let lastFocusedSphere = null;
+let mainSphere = null;
 
 
 init().then(() => {
@@ -75,9 +76,12 @@ async function init() {
 
 
     const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
+    sphere.userData.isInnerSphere = false;
     sphere.renderOrder = 1;
     sphere.rotation.y = Math.PI;
     scene.add(sphere);
+
+    mainSphere = sphere;
 
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false;
@@ -101,23 +105,13 @@ async function init() {
     document.addEventListener('wheel', zoomSphere);
 
 
-    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png');
-    const sphere3 = addAppSphere(mainRadius-250, './assets/dog.png');
-    // const sphere2 = addAppSphere(mainRadius-100, './assets/dog2.png');
-    // const sphere4 = addAppSphere(mainRadius-200, './assets/dog2.png');
+    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png', renderer, scene);
 
-
-    // spheres.push(sphere);
+    spheres.push(sphere);
     spheres.push(sphere1);
-    // spheres.push(sphere2);
-    spheres.push(sphere3);
-    // spheres.push(sphere4);
-    scene.add(sphere1);
-    // scene.add(sphere2);   
-    scene.add(sphere3);   
-    // scene.add(sphere4);   
+    scene.add(sphere1);  
     
-    lastFocusedSphere = sphere3;
+    lastFocusedSphere = sphere1;
 }
 
 
@@ -159,15 +153,15 @@ function changeSphereRadius(sphere, radius) {
 
 
 function focusSphere(sphere) {
-    if (lastFocusedSphere !== sphere) {
+    if (lastFocusedSphere !== sphere && lastFocusedSphere !== mainSphere) {
 
         let minRadius = Math.min(...spheres.map(s => s.geometry.parameters.radius));
         changeSphereRadius(sphere, minRadius);
 
-        let remainingSpheres = spheres.filter(s => s !== sphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
+        let remainingSpheres = spheres.filter(s => s !== sphere && s !== mainSphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
 
         remainingSpheres.forEach((s, index) => {
-            changeSphereRadius(s, mainRadius - (index + 1) * 100);
+            changeSphereRadius(s, mainRadius - (index + 1) * 200);
         });
 
         lastFocusedSphere = sphere;
@@ -183,9 +177,11 @@ function onMouseDown(event) {
     raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(spheres);
 
-    if (intersects.length > 0) {
+    if (intersects.length > 0 && intersects[0].object.userData.isInnerSphere === false) {
         isDragging = true;
         draggedSphere = intersects[0].object;
+
+        console.log("sphere.userData.isInnerSphere", draggedSphere.userData.isInnerSphere);
         previousMousePosition = {
             x: event.clientX,
             y: event.clientY

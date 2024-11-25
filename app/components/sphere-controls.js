@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 
 function addSphereControls(
+    radius = 1000,
     phiStart = 3.5,
     phiLength = 2,
     thetaStart = 2,
@@ -51,7 +52,7 @@ function addSphereControls(
     controlPanel.appendChild(createSlider('phiStart', '0', `${Math.PI * 2}`, phiStart, `${Math.PI * 0.01}`, (value) => {
         sphere.geometry.dispose();
         sphere.geometry = new THREE.SphereGeometry(
-            1000, // radius
+            radius, // radius
             64, // widthSegments
             32, // heightSegments
             value, // phiStart
