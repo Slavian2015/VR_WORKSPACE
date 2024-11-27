@@ -1,27 +1,7 @@
 import * as THREE from "three";
-import { addSphereControls } from "./../components/sphere-controls.js";
-import { CSS3DObject } from "CSS3DRenderer";
 
 
-function getCloseButtonSphere(radius) {
-    // const div = document.createElement('div');
-    // div.style.width = '100px';
-    // div.style.height = '100px';
-    // div.style.backgroundColor = 'red';
-    // div.style.color = 'black';
-    // div.style.border = 'none';
-    // div.style.borderRadius = '50%';
-    // div.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)';
-    // div.style.display = 'flex';
-    // div.style.alignItems = 'center';
-    // div.style.justifyContent = 'center';
-    // div.style.textAlign = 'center';
-    // div.style.padding = '0';
-    // div.style.margin = '0';
-    // div.style.fontSize = '80px';
-    // div.style.cursor = 'pointer';
-    // div.innerHTML = '<span>X</span>';
-    // document.body.appendChild(div);
+function getCloseButtonSphere(radius, phiStart, thetaStart) {
 
     const canvas = document.createElement('canvas');
     canvas.width = 100;
@@ -53,98 +33,20 @@ function getCloseButtonSphere(radius) {
         radius, 
         64, // widthSegments
         64, // heightSegments
-        4.46, // phiStart
+        phiStart, // phiStart
         0.03, // phiLength
-        1.29, // thetaStart 
+        thetaStart - 0.05, // thetaStart 
         0.03 // thetaLength
     );
-
-
     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-
     sphere.userData.isInnerSphere = true;
     sphere.userData.isCloseButton = true;
     sphere.position.set(0, 0, radius / 2000);
-
-
     return sphere;
 };
 
 
-function getCloseButtonPlane(radius, phiStart, thetaStart) {
-
-    const x = radius * Math.sin(thetaStart) * Math.cos(phiStart);
-    const y = radius * Math.sin(thetaStart) * Math.sin(phiStart);
-    const z = radius * Math.cos(thetaStart);
-
-
-    console.log(`radius * Math.sin(thetaStart): ${radius * Math.sin(thetaStart)}`);
-
-    console.log(`x: ${x}, y: ${y}, z: ${z}`);
-
-    // const position = new THREE.Vector3(x, y, z);
-    const position = new THREE.Vector3(-150, 1400, -radius);
-
-    // const div = document.createElement('div');
-    // div.style.width = '100px';
-    // div.style.height = '100px';
-    // div.style.backgroundColor = 'red';
-    // div.style.color = 'black';
-    // div.style.border = 'none';
-    // div.style.borderRadius = '50%';
-    // div.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)';
-    // div.style.display = 'flex';
-    // div.style.alignItems = 'center';
-    // div.style.justifyContent = 'center';
-    // div.style.textAlign = 'center';
-    // div.style.padding = '0';
-    // div.style.margin = '0';
-    // div.style.fontSize = '80px';
-    // div.style.cursor = 'pointer';
-    // div.innerHTML = '<span>X</span>';
-    // document.body.appendChild(div);
-
-    // const cssObject = new CSS3DObject(div);
-    // cssObject.position.set(position.x, position.y, position.z);
-
-
-    const button = document.createElement('button');
-    button.style.position = 'absolute';
-    button.style.width = '100px';
-    button.style.height = '100px';
-    button.style.backgroundColor = 'red';
-    button.style.border = 'none';
-    button.style.borderRadius = '50%';
-    button.style.cursor = 'pointer';
-    button.style.fontSize = '80px';
-    button.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)';
-    button.innerHTML = '<span>X</span>';
-    button.style.transform = `translate3d(${position.x}px, ${position.y}px, ${position.z}px)`;
-
-    button.addEventListener('click', function () {
-        console.log("Button clicked!");
-    });
-
-    document.body.appendChild(button);
-
-    const cssObject = new CSS3DObject(button);
-    cssObject.position.set(position.x, position.y, position.z);
-
-    return cssObject;
-}
-
-
-
-function addAppSphere(renderRadius, picture, scene) {
-    const sphereGeometry = new THREE.SphereGeometry(
-        renderRadius, // radius
-        64, // widthSegments
-        64, // heightSegments
-        4.55, // phiStart 4.5
-        0.2, // phiLength 0.25
-        1.8, // thetaStart 10% less
-        0.02 // thetaLength 10% less
-    );
+function addAppSphere(renderRadius, picture) {
 
     const textureLoader = new THREE.TextureLoader();
 
@@ -155,12 +57,46 @@ function addAppSphere(renderRadius, picture, scene) {
         texture.colorSpace = THREE.SRGBColorSpace;
     });
 
+    const innerSphereGeometry = new THREE.SphereGeometry(
+        renderRadius,
+        64, // widthSegments
+        64, // heightSegments
+        4.44, // phiStart
+        0.42, // phiLength
+        1.33, // thetaStart
+        0.44 // thetaLength
+    );
+
     const sphereMaterial = new THREE.MeshBasicMaterial({
         map: texture,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,
     });
+
+    const innerSphere = new THREE.Mesh(innerSphereGeometry, sphereMaterial);
+    innerSphere.userData.isInnerSphere = true;
+    innerSphere.userData.isWindow = true;
+    innerSphere.userData.isCloseButton = false;
+    innerSphere.position.set(0, 0, renderRadius / 2000);
+    const button = getCloseButtonSphere(
+        renderRadius, 
+        innerSphereGeometry.parameters.phiStart, 
+        innerSphereGeometry.parameters.thetaStart
+    );
+
+    const sphereGeometry = new THREE.SphereGeometry(
+        renderRadius, // radius
+        64, // widthSegments
+        64, // heightSegments
+
+        innerSphereGeometry.parameters.phiStart + 0.11, // phiStart 10% less
+        // 4.55, // phiStart 4.5
+        0.2, // phiLength 0.25
+        // innerSphereGeometry.parameters.thetaStart + 0.01, // thetaStart 10% less
+        1.8, // thetaStart 10% less
+        0.02 // thetaLength 10% less
+    );
 
     const paddingMaterial = new THREE.MeshBasicMaterial({
         color: 0x000000,
@@ -174,37 +110,10 @@ function addAppSphere(renderRadius, picture, scene) {
     sphere.userData.isCloseButton = false;
     sphere.position.set(0, 0, renderRadius / 2000);
 
-    const innerSphereGeometry = new THREE.SphereGeometry(
-        renderRadius,
-        64, // widthSegments
-        64, // heightSegments
-        4.44, // phiStart
-        0.42, // phiLength
-        1.33, // thetaStart
-        0.44 // thetaLength
-    );
-
-    const innerSphere = new THREE.Mesh(innerSphereGeometry, sphereMaterial);
-    innerSphere.userData.isInnerSphere = true;
-    innerSphere.userData.isCloseButton = false;
-    innerSphere.position.set(0, 0, renderRadius / 2000);
-
-    // addSphereControls(
-    //     innerSphereGeometry.parameters.radius,
-    //     innerSphereGeometry.parameters.phiStart,
-    //     innerSphereGeometry.parameters.phiLength,
-    //     innerSphereGeometry.parameters.thetaStart,
-    //     innerSphereGeometry.parameters.thetaLength,
-    //     innerSphere
-    // );
-
-    const button = getCloseButtonSphere(renderRadius);
     sphere.add(button);
     sphere.add(innerSphere);
     return sphere;
 }
-
-
 
 
 export { addAppSphere };

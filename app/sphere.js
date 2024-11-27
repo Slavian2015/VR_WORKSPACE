@@ -3,13 +3,10 @@ import * as THREE from "three";
 import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
 import { VRButton } from "VRButton";
-
 import { addAppSphere } from 'addAppSphere';
-// import { addSecondSphere } from 'addSecondSphere';
 
 
 let camera, scene, renderer, controls, cssRenderer;
-
 let mainRadius = 5000;
 
 let spheres = [];
@@ -106,13 +103,15 @@ async function init() {
     document.addEventListener('wheel', zoomSphere);
 
 
-    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png', scene);
+    const sphere1 = addAppSphere(mainRadius - 100, './assets/dog.png', scene);
 
     spheres.push(sphere);
     spheres.push(sphere1);
     scene.add(sphere1);  
     
     lastFocusedSphere = sphere1;
+
+    addSimpleButton();
 }
 
 
@@ -122,17 +121,41 @@ function zoomSphere(event) {
         const delta = event.wheelDelta ? event.wheelDelta : -event.detail;
         const zoomFactor = 0.1;
         const scale = delta > 0 ? 1 + zoomFactor : 1 - zoomFactor;
+        const windowSphere = lastFocusedSphere.children.find(child => child.userData.isWindow);
+        const closeButton = lastFocusedSphere.children.find(child => child.userData.isCloseButton);
         
-        const newPhiStart = lastFocusedSphere.geometry.parameters.phiStart - (lastFocusedSphere.geometry.parameters.phiLength * (scale - 1)) / 2;
-        const newThetaStart = lastFocusedSphere.geometry.parameters.thetaStart - (lastFocusedSphere.geometry.parameters.thetaLength * (scale - 1)) / 2;
+        const newPhiStart = windowSphere.geometry.parameters.phiStart - (windowSphere.geometry.parameters.phiLength * (scale - 1)) / 2;
+        const newThetaStart = windowSphere.geometry.parameters.thetaStart - (windowSphere.geometry.parameters.thetaLength * (scale - 1)) / 2;
+
+        windowSphere.geometry = new THREE.SphereGeometry(
+            windowSphere.geometry.parameters.radius,
+            windowSphere.geometry.parameters.widthSegments,
+            windowSphere.geometry.parameters.heightSegments,
+            newPhiStart,
+            windowSphere.geometry.parameters.phiLength * scale,
+            newThetaStart,
+            windowSphere.geometry.parameters.thetaLength * scale
+        );
+
+        closeButton.geometry = new THREE.SphereGeometry(
+            closeButton.geometry.parameters.radius,
+            closeButton.geometry.parameters.widthSegments,
+            closeButton.geometry.parameters.heightSegments,
+            newPhiStart,
+            closeButton.geometry.parameters.phiLength,
+            newThetaStart - 0.05,
+            closeButton.geometry.parameters.thetaLength
+        );
+
+        const lastFocusedSphereNewPhiStart = lastFocusedSphere.geometry.parameters.phiStart - (lastFocusedSphere.geometry.parameters.phiLength * (scale - 1)) / 2;
 
         lastFocusedSphere.geometry = new THREE.SphereGeometry(
             lastFocusedSphere.geometry.parameters.radius,
             lastFocusedSphere.geometry.parameters.widthSegments,
             lastFocusedSphere.geometry.parameters.heightSegments,
-            newPhiStart,
+            lastFocusedSphereNewPhiStart,
             lastFocusedSphere.geometry.parameters.phiLength * scale,
-            newThetaStart,
+            windowSphere.geometry.parameters.thetaLength + windowSphere.geometry.parameters.thetaStart + 0.02,
             lastFocusedSphere.geometry.parameters.thetaLength * scale
         );
     }
@@ -150,22 +173,44 @@ function changeSphereRadius(sphere, radius) {
         sphere.geometry.parameters.thetaStart,
         sphere.geometry.parameters.thetaLength
     );
+
+    sphere.children.forEach(child => {
+        child.geometry.dispose();
+        child.geometry = new THREE.SphereGeometry(
+            radius,
+            child.geometry.parameters.widthSegments,
+            child.geometry.parameters.heightSegments,
+            child.geometry.parameters.phiStart,
+            child.geometry.parameters.phiLength,
+            child.geometry.parameters.thetaStart,
+            child.geometry.parameters.thetaLength
+        );
+    });
 }
 
 
-function focusSphere(sphere) {
-    if (lastFocusedSphere !== sphere && lastFocusedSphere !== mainSphere) {
+function addFocusSphere(focusSphere) {
+
+    console.log('mainSphere radius : ', mainSphere.geometry.parameters.radius);
+    if (lastFocusedSphere !== focusSphere && focusSphere !== mainSphere) {
 
         let minRadius = Math.min(...spheres.map(s => s.geometry.parameters.radius));
-        changeSphereRadius(sphere, minRadius);
 
-        let remainingSpheres = spheres.filter(s => s !== sphere && s !== mainSphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
+
+        changeSphereRadius(focusSphere, minRadius);
+
+
+        console.log('mainSphere radius 2 : ', mainSphere.geometry.parameters.radius);
+
+        let remainingSpheres = spheres.filter(s => s !== focusSphere && s !== mainSphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
 
         remainingSpheres.forEach((s, index) => {
-            changeSphereRadius(s, mainRadius - (index + 1) * 200);
+            changeSphereRadius(s, mainRadius - (index + 1) * 100);
         });
 
-        lastFocusedSphere = sphere;
+
+        console.log('mainSphere radius 3 : ', mainSphere.geometry.parameters.radius);
+        lastFocusedSphere = focusSphere;
     }
 }
 
@@ -200,9 +245,14 @@ function onMouseDown(event) {
                 x: event.clientX,
                 y: event.clientY
             };
-            focusSphere(draggedSphere);
+            addFocusSphere(draggedSphere);
 
             draggedSphere.material.opacity = 0.8;
+
+            const childrenToRemove = draggedSphere.children.slice();
+            childrenToRemove.forEach(child => {
+                child.material.opacity = 0.8;
+            });
         }
     }
 };
@@ -230,6 +280,10 @@ function onMouseUp() {
 
     if (lastFocusedSphere) {
         lastFocusedSphere.material.opacity = 1;
+        const childrenToRemove = lastFocusedSphere.children.slice();
+        childrenToRemove.forEach(child => {
+            child.material.opacity = 1;
+        });
     }
 };
 
@@ -241,9 +295,10 @@ function addSimpleButton() {
     simpleButton.style.top = '10px';
     simpleButton.style.left = '10px';
     simpleButton.addEventListener('click', () => {
-        const additional_sphere = addSecondSphere(spheres.length + 1, scene, camera);
+        const additional_sphere = addAppSphere(mainRadius - (spheres.length) * 100, './assets/dog.png');
         spheres.push(additional_sphere);
         scene.add(additional_sphere);
+        lastFocusedSphere = additional_sphere;
     });
     document.body.appendChild(simpleButton);
 }
