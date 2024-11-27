@@ -1,4 +1,3 @@
-
 import * as THREE from "three";
 import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
@@ -147,13 +146,11 @@ function zoomSphere(event) {
             closeButton.geometry.parameters.thetaLength
         );
 
-        const lastFocusedSphereNewPhiStart = lastFocusedSphere.geometry.parameters.phiStart - (lastFocusedSphere.geometry.parameters.phiLength * (scale - 1)) / 2;
-
         lastFocusedSphere.geometry = new THREE.SphereGeometry(
             lastFocusedSphere.geometry.parameters.radius,
             lastFocusedSphere.geometry.parameters.widthSegments,
             lastFocusedSphere.geometry.parameters.heightSegments,
-            lastFocusedSphereNewPhiStart,
+            lastFocusedSphere.geometry.parameters.phiStart - (lastFocusedSphere.geometry.parameters.phiLength * (scale - 1)) / 2,
             lastFocusedSphere.geometry.parameters.phiLength * scale,
             windowSphere.geometry.parameters.thetaLength + windowSphere.geometry.parameters.thetaStart + 0.02,
             lastFocusedSphere.geometry.parameters.thetaLength * scale
@@ -190,26 +187,13 @@ function changeSphereRadius(sphere, radius) {
 
 
 function addFocusSphere(focusSphere) {
-
-    console.log('mainSphere radius : ', mainSphere.geometry.parameters.radius);
     if (lastFocusedSphere !== focusSphere && focusSphere !== mainSphere) {
-
         let minRadius = Math.min(...spheres.map(s => s.geometry.parameters.radius));
-
-
         changeSphereRadius(focusSphere, minRadius);
-
-
-        console.log('mainSphere radius 2 : ', mainSphere.geometry.parameters.radius);
-
         let remainingSpheres = spheres.filter(s => s !== focusSphere && s !== mainSphere).sort((a, b) => b.geometry.parameters.radius - a.geometry.parameters.radius);
-
         remainingSpheres.forEach((s, index) => {
             changeSphereRadius(s, mainRadius - (index + 1) * 100);
         });
-
-
-        console.log('mainSphere radius 3 : ', mainSphere.geometry.parameters.radius);
         lastFocusedSphere = focusSphere;
     }
 }

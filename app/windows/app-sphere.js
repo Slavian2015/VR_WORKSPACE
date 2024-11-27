@@ -89,13 +89,10 @@ function addAppSphere(renderRadius, picture) {
         renderRadius, // radius
         64, // widthSegments
         64, // heightSegments
-
-        innerSphereGeometry.parameters.phiStart + 0.11, // phiStart 10% less
-        // 4.55, // phiStart 4.5
-        0.2, // phiLength 0.25
-        // innerSphereGeometry.parameters.thetaStart + 0.01, // thetaStart 10% less
-        1.8, // thetaStart 10% less
-        0.02 // thetaLength 10% less
+        innerSphereGeometry.parameters.phiStart + 0.11, // phiStart
+        0.2, // phiLength
+        1.8, // thetaStart
+        0.02 // thetaLength
     );
 
     const paddingMaterial = new THREE.MeshBasicMaterial({
