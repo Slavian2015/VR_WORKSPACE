@@ -77,6 +77,7 @@ async function init() {
 
     const sphere = new THREE.Mesh(sphereGeometry1, sphereMaterial1);
     sphere.userData.isInnerSphere = false;
+    sphere.userData.isCloseButton = false;
     sphere.renderOrder = 1;
     sphere.rotation.y = Math.PI;
     scene.add(sphere);
@@ -105,7 +106,7 @@ async function init() {
     document.addEventListener('wheel', zoomSphere);
 
 
-    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png', renderer, scene);
+    const sphere1 = addAppSphere(mainRadius-100, './assets/dog.png', scene);
 
     spheres.push(sphere);
     spheres.push(sphere1);
@@ -165,7 +166,6 @@ function focusSphere(sphere) {
         });
 
         lastFocusedSphere = sphere;
-
     }
 }
 
@@ -177,18 +177,33 @@ function onMouseDown(event) {
     raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(spheres);
 
-    if (intersects.length > 0 && intersects[0].object.userData.isInnerSphere === false) {
-        isDragging = true;
-        draggedSphere = intersects[0].object;
+    if (intersects.length > 0) {
+        if (intersects[0].object.userData.isInnerSphere === true) {
 
-        console.log("sphere.userData.isInnerSphere", draggedSphere.userData.isInnerSphere);
-        previousMousePosition = {
-            x: event.clientX,
-            y: event.clientY
-        };
-        focusSphere(draggedSphere);
+            if (intersects[0].object.userData.isCloseButton === true) {
 
-        draggedSphere.material.opacity = 0.8;
+                const parentSphere = intersects[0].object.parent;
+                const childrenToRemove = parentSphere.children.slice();
+                childrenToRemove.forEach(child => {
+                    parentSphere.remove(child);
+                    scene.remove(child);
+                    spheres = spheres.filter(s => s !== child);
+                });
+                scene.remove(parentSphere);
+                spheres = spheres.filter(s => s !== parentSphere);
+            }
+
+        } else {
+            isDragging = true;
+            draggedSphere = intersects[0].object;
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+            focusSphere(draggedSphere);
+
+            draggedSphere.material.opacity = 0.8;
+        }
     }
 };
 
