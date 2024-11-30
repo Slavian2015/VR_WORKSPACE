@@ -1,7 +1,7 @@
 {
   "name": "vr-workspace",
   "version": "1.0.0",
-  "homepage":"./",
+  "homepage": "./",
   "includeSubNodeModules": "true",
   "description": "A VR OS workspace application",
   "author": "Kushnirenko VA <slavaku2014@gmail.com>",
@@ -12,11 +12,15 @@
   },
   "dependencies": {
     "@types/three": "^0.170.0",
-    "three": "^0.170.0"
+    "simple-peer": "^9.11.1",
+    "three": "^0.170.0",
+    "wrtc": "^0.4.7",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "xpra-html5-client": "^2.3.0"
   },
   "build": {
     "appId": "open-source-ideas.vr-workspace",

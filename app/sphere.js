@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
+import { CSS3DObject } from "CSS3DObject";
 import { VRButton } from "VRButton";
-import { addAppSphere } from 'addAppSphere';
+import { addVideoSphere } from 'addVideoSphere';
+// const { ipcRenderer } = require('electron');
 
 
 let camera, scene, renderer, controls, cssRenderer;
@@ -101,16 +103,11 @@ async function init() {
     window.addEventListener('mouseup', onMouseUp, false);
     document.addEventListener('wheel', zoomSphere);
 
-
-    const sphere1 = addAppSphere(mainRadius - 100, './assets/dog.png', scene);
-
     spheres.push(sphere);
-    spheres.push(sphere1);
-    scene.add(sphere1);  
-    
-    lastFocusedSphere = sphere1;
-
+    lastFocusedSphere = sphere;
     addSimpleButton();
+
+    addSimpleWebDiv();
 }
 
 
@@ -122,7 +119,7 @@ function zoomSphere(event) {
         const scale = delta > 0 ? 1 + zoomFactor : 1 - zoomFactor;
         const windowSphere = lastFocusedSphere.children.find(child => child.userData.isWindow);
         const closeButton = lastFocusedSphere.children.find(child => child.userData.isCloseButton);
-        
+
         const newPhiStart = windowSphere.geometry.parameters.phiStart - (windowSphere.geometry.parameters.phiLength * (scale - 1)) / 2;
         const newThetaStart = windowSphere.geometry.parameters.thetaStart - (windowSphere.geometry.parameters.thetaLength * (scale - 1)) / 2;
 
@@ -211,6 +208,7 @@ function onMouseDown(event) {
 
             if (intersects[0].object.userData.isCloseButton === true) {
 
+                // ipcRenderer.send('close-app', 'gnome-calculator');
                 const parentSphere = intersects[0].object.parent;
                 const childrenToRemove = parentSphere.children.slice();
                 childrenToRemove.forEach(child => {
@@ -271,6 +269,20 @@ function onMouseUp() {
     }
 };
 
+function addSimpleWebDiv() {
+    const div = document.createElement('div');
+    div.style.width = '4000px';
+    div.style.height = '2000px';
+    div.style.backgroundColor = 'white';
+    div.style.border = '1px solid black';
+    div.style.zIndex = '1000';
+    div.style.overflow = 'auto';
+
+    const cssObject = new CSS3DObject(div);
+    cssObject.position.set(0, 0, -mainRadius + 10);
+    scene.add(cssObject);
+}
+
 
 function addSimpleButton() {
     const simpleButton = document.createElement('button');
@@ -279,7 +291,9 @@ function addSimpleButton() {
     simpleButton.style.top = '10px';
     simpleButton.style.left = '10px';
     simpleButton.addEventListener('click', () => {
-        const additional_sphere = addAppSphere(mainRadius - (spheres.length) * 100, './assets/dog.png');
+
+        // ipcRenderer.send('launch-calc');
+        const additional_sphere = addVideoSphere(mainRadius - (spheres.length) * 100, 'gnome-calculator', 14500);
         spheres.push(additional_sphere);
         scene.add(additional_sphere);
         lastFocusedSphere = additional_sphere;

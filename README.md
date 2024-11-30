@@ -43,15 +43,19 @@ project-root/
 # 4) RUN calculator:
 
 ```bash
+
+    xpra start --bind-ws=0.0.0.0:14501 --html=off --start-child=gnome-calculator --exit-with-children=yes
     xpra start :100 --start="gnome-calculator" --bind-tcp=0.0.0.0:14500
-
     netstat -tuln | grep 14500
-
-
     xpra stop :100
-
-
     npm run dev
+
+
+    sudo lsof -i :14500
+    sudo kill -9 63840
+
+    Upgrade Required
+
 ```
 
 
