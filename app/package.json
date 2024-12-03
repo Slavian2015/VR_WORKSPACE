@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@types/three": "^0.170.0",
+    "jquery": "^3.7.1",
     "simple-peer": "^9.11.1",
     "three": "^0.170.0",
     "wrtc": "^0.4.7",

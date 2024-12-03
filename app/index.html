@@ -3,9 +3,53 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="description" content="Electron WebXR 3D Workspace" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Electron WebXR 3D Workspace</title>
     <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
     <link rel="stylesheet" href="./styles.css">
+
+    <!-- Load jQuery first -->
+    <script type="text/javascript" src="./js/lib/jquery.js"></script>
+    <script>
+        window.jQuery || document.write('<script src="./js/lib/jquery.js"><\/script>')
+    </script>
+        
+    <!-- Then load jQuery UI -->
+
+    <script type="text/javascript" src="./js/lib/jquery-ui.js"></script>
+    <script type="text/javascript" src="./js/lib/jquery.ba-throttle-debounce.js"></script>
+    <script type="text/javascript" src="./js/lib/jquery-transform-draggable.js"></script>
+
+    <script type="text/javascript" src="./js/lib/rencode.js"></script>
+    <script type="text/javascript" src="./js/lib/lz4.js"></script>
+    <script type="text/javascript" src="./js/lib/brotli_decode.js"></script>
+
+    <script type="text/javascript" src="./js/MediaSourceUtil.js"></script>
+
+    <script type="text/javascript" src="./js/lib/jsmpeg.js"></script>
+    <script type="text/javascript" src="./js/lib/aurora/aurora.js"></script>
+    <script type="text/javascript" src="./js/lib/aurora/aurora-xpra.js"></script>
+
+    <script type="text/javascript" src="./js/lib/web-streams-ponyfill.es6.js"></script>
+    <script type="text/javascript" src="./js/lib/StreamSaver.js"></script>
+    <script type="text/javascript" src="./js/lib/FileSaver.js"></script>
+    <script type="text/javascript" src="./js/lib/detect-zoom.js"></script>
+    
+    <!-- 
+    <script type="text/javascript" src="js/Utilities.js"></script>
+    <script type="text/javascript" src="js/Keycodes.js"></script>
+    <script type="text/javascript" src="js/Protocol.js"></script>
+    <script type="text/javascript" src="js/WebTransport.js"></script>
+    <script type="text/javascript" src="js/Constants.js"></script>
+    <script type="text/javascript" src="js/Window.js"></script>
+    <script type="text/javascript" src="js/Notifications.js"></script>
+    <script type="text/javascript" src="js/RgbHelpers.js"></script>
+    <script type="text/javascript" src="js/VideoDecoder.js"></script>
+    <script type="text/javascript" src="js/OffscreenDecodeWorkerHelper.js"></script>
+    <script type="text/javascript" src="js/Client.js"></script> -->
+
+
     <script type="importmap">
         {
             "imports": {
@@ -16,13 +60,25 @@
                 "VRButton": "./node_modules/three/examples/jsm/webxr/VRButton.js",
                 "addSecondSphere": "./windows/second-sphere.js",
                 "addAppSphere": "./windows/app-sphere.js",
-                "addVideoSphere": "./windows/video-sphere.js"
+                "addVideoSphere": "./windows/video-sphere.js",
+                "divWindow": "./windows/div-window.js",
+                "windowClient": "./windows/window-client.js",
+                "Utilities": "./js/Utilities.js",
+                "xpra-client": "./js/XpraClient.js",
+                "LightXpraClient": "./components/XpraClient.js",
+                "keycodes": "./js/Keycodes.js",
+                "protocol": "./js/Protocol.js"
             }
         }
     </script>
 </head>
 
 <body>
+    <script type="text/javascript">
+        $(document).ready(function() {
+            console.log("jQuery and jQuery UI are loaded");
+        });
+    </script>
     <canvas id="xr-canvas"></canvas>
     <script type="module" src="./sphere.js"></script>
 </body>

@@ -4,6 +4,7 @@ import { CSS3DRenderer } from "CSS3DRenderer";
 import { CSS3DObject } from "CSS3DObject";
 import { VRButton } from "VRButton";
 import { addVideoSphere } from 'addVideoSphere';
+import { divWindow } from 'divWindow';
 // const { ipcRenderer } = require('electron');
 
 
@@ -270,17 +271,7 @@ function onMouseUp() {
 };
 
 function addSimpleWebDiv() {
-    const div = document.createElement('div');
-    div.style.width = '4000px';
-    div.style.height = '2000px';
-    div.style.backgroundColor = 'white';
-    div.style.border = '1px solid black';
-    div.style.zIndex = '1000';
-    div.style.overflow = 'auto';
-
-    const cssObject = new CSS3DObject(div);
-    cssObject.position.set(0, 0, -mainRadius + 10);
-    scene.add(cssObject);
+    scene.add(divWindow(mainRadius));
 }
 
 

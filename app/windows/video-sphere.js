@@ -58,17 +58,17 @@ function addVideoSphere(renderRadius, appName, streamPort) {
         1.33, // thetaStart
         0.44 // thetaLength
     );
-    const textureLoader = new THREE.TextureLoader();
-    const texture = textureLoader.load('./assets/dog.png', () => {
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1, 1);
-        texture.colorSpace = THREE.SRGBColorSpace;
-    });
+
+
+    const videoTexture = new THREE.VideoTexture();
+    videoTexture.wrapS = THREE.RepeatWrapping;
+    videoTexture.wrapT = THREE.RepeatWrapping;
+    videoTexture.repeat.set(1, 1);
+    videoTexture.colorSpace = THREE.SRGBColorSpace;
     
 
     const sphereMaterial = new THREE.MeshBasicMaterial({
-        map: texture,
+        map: videoTexture,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,
