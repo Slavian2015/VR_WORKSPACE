@@ -1,4 +1,3 @@
-import { CSS3DObject } from "CSS3DObject";
 
 
 function divWindow(mainRadius) {
@@ -39,12 +38,8 @@ function divWindow(mainRadius) {
 
     document.body.appendChild(div); // Ensure the div is added to the DOM
 
-    const cssObject = new CSS3DObject(div);
-    cssObject.position.set(0, 0, -mainRadius + 100);
-
-
-
-    return cssObject;
+    return { element: div, context: context };
+    // return cssObject;
 }
 
 export { divWindow };

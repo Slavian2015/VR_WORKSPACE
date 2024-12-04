@@ -1,10 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
-import { CSS3DObject } from "CSS3DObject";
 import { VRButton } from "VRButton";
 import { addVideoSphere } from 'addVideoSphere';
-import { divWindow } from 'divWindow';
+import { CustomClientProtocol } from 'CustomClientProtocol';
 // const { ipcRenderer } = require('electron');
 
 
@@ -271,7 +270,10 @@ function onMouseUp() {
 };
 
 function addSimpleWebDiv() {
-    scene.add(divWindow(mainRadius));
+    const serverUri = 'ws://0.0.0.0:14501';
+    const client = new CustomClientProtocol(scene, serverUri, mainRadius);
+    client.connect();
+
 }
 
 
