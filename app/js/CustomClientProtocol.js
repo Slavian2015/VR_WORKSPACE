@@ -1,16 +1,34 @@
-import { XpraProtocol, XpraProtocolWorkerHost } from "protocol";
-import { XpraWebTransportProtocol } from "XpraWebTransportProtocol";
 import { divWindow } from 'divWindow';
 import { CSS3DObject } from "CSS3DObject";
-import { Utilities } from "Utilities";
+import { capabilities } from "CustomCapabilities";
 
 
+const XPRA_CLIENT_FORCE_NO_WORKER = false;
+
+const CLIPBOARD_IMAGES = true;
+const CLIPBOARD_EVENT_DELAY = 100;
 const DECODE_WORKER = !!window.createImageBitmap;
+const SHOW_START_MENU = true;
+const FILE_SIZE_LIMIT = 4 * 1024 * 1024 * 1024; //are we even allowed to allocate this much memory?
+const FILE_CHUNKS_SIZE = 128 * 1024;
+const MAX_CONCURRENT_FILES = 5;
+const CHUNK_TIMEOUT = 10 * 1000;
+
 const TEXT_PLAIN = "text/plain";
 const UTF8_STRING = "UTF8_STRING";
 const TEXT_HTML = "text/html";
 const TRY_GPU_TRIGGER = true;
 
+const BELL_SOUND = "data:audio/wav;base64,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qJrx4KOQjahZxWbcZgztj2c49nKmkId44S71j0c8eV9yDK6uPRzx5X18eDvjvQ6yKo9ZSS6l//8elePK/Lf//IInrOF/FvDoADYAGBMGb7FtErm5MXMlmPAJQVgWta7Zx2go+8xJ0UiCb8LHHdftWyLJE0QIAIsI+UbXu67dZMjmgDGCGl1H+vpF4NSDckSIkk7Vd+sxEhBQMRU8j/12UIRhzSaUdQ+rQU5kGeFxm+hb1oh6pWWmv3uvmReDl0UnvtapVaIzo1jZbf/pD6ElLqSX+rUmOQNpJFa/r+sa4e/pBlAABoAAAAA3CUgShLdGIxsY7AUABPRrgCABdDuQ5GC7DqPQCgbbJUAoRSUj+NIEig0YfyWUho1VBBBA//uQZB4ABZx5zfMakeAAAAmwAAAAF5F3P0w9GtAAACfAAAAAwLhMDmAYWMgVEG1U0FIGCBgXBXAtfMH10000EEEEEECUBYln03TTTdNBDZopopYvrTTdNa325mImNg3TTPV9q3pmY0xoO6bv3r00y+IDGid/9aaaZTGMuj9mpu9Mpio1dXrr5HERTZSmqU36A3CumzN/9Robv/Xx4v9ijkSRSNLQhAWumap82WRSBUqXStV/YcS+XVLnSS+WLDroqArFkMEsAS+eWmrUzrO0oEmE40RlMZ5+ODIkAyKAGUwZ3mVKmcamcJnMW26MRPgUw6j+LkhyHGVGYjSUUKNpuJUQoOIAyDvEyG8S5yfK6dhZc0Tx1KI/gviKL6qvvFs1+bWtaz58uUNnryq6kt5RzOCkPWlVqVX2a/EEBUdU1KrXLf40GoiiFXK///qpoiDXrOgqDR38JB0bw7SoL+ZB9o1RCkQjQ2CBYZKd/+VJxZRRZlqSkKiws0WFxUyCwsKiMy7hUVFhIaCrNQsKkTIsLivwKKigsj8XYlwt/WKi2N4d//uQRCSAAjURNIHpMZBGYiaQPSYyAAABLAAAAAAAACWAAAAApUF/Mg+0aohSIRobBAsMlO//Kk4soosy1JSFRYWaLC4qZBYWFRGZdwqKiwkNBVmoWFSJkWFxX4FFRQWR+LsS4W/rFRb/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////VEFHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAU291bmRib3kuZGUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMjAwNGh0dHA6Ly93d3cuc291bmRib3kuZGUAAAAAAAAAACU=";
+
+const METADATA_SUPPORTED = [
+    "fullscreen", "maximized",
+    "iconic", "above", "below",
+    "title", "size-hints",
+    "class-instance", "transient-for", "window-type",
+    "has-alpha", "decorations", "override-redirect",
+    "tray", "modal", "opacity",
+]
 
 class CustomClientProtocol {
     constructor(scene, serverUri, mainRadius) {
@@ -19,20 +37,50 @@ class CustomClientProtocol {
         this.canvas = null;
         this.scene = scene;
 
+        console.log('START Connecting to XPRA server');
+        const { element, context } = divWindow(this.mainRadius);
+        this.container = element;
+        const cssObject = new CSS3DObject(element);
+        cssObject.position.set(0, 0, -this.mainRadius + 100);
+        this.scene.add(cssObject);
+
+        this.canvas = { element, context };
+        document.body.appendChild(this.canvas.element);
+
+        this.protocol = null;
         this.init_settings();
         this.init_state();
 
         this.init_packet_handlers();
-
-        this.protocol = null;
     }
 
     init_settings() {
+
+
+        this.webtransport = false;
+        this.username = "";
+        this.passwords = [];
+        this.packet_encoder = null;
+        this.debug_categories = [];
+
+
         this.scale = 1;
         this.vrefresh = -1;
         this.bandwidth_limit = 0;
         this.start_new_session = null;
+
+        this.clipboard_enabled = false;
+        this.clipboard_poll = false;
+        this.clipboard_preferred_format = TEXT_PLAIN;
+        this.file_transfer = false;
+        this.remote_file_size_limit = 0;
+        this.remote_file_chunks = 0;
+        this.send_chunks_in_progress = new Map();
+        this.receive_chunks_in_progress = new Map();
         this.keyboard_layout = null;
+        this.printing = false;
+        this.key_packets = [];
+        this.clipboard_delayed_event_time = 0;
 
         this.reconnect = true;
         this.reconnect_count = 5;
@@ -140,16 +188,72 @@ class CustomClientProtocol {
     init_state() {
         // state
         this.connected = false;
+
+        this.desktop_width = 0;
+        this.desktop_height = 0;
         this.server_remote_logging = false;
         this.server_start_time = -1;
         this.client_start_time = new Date();
 
         // some client stuff
         this.capabilities = {};
+        this.capabilities2 = capabilities;
         this.RGB_FORMATS = ["RGBX", "RGBA", "RGB"];
         this.disconnect_reason = null;
         this.password_prompt_fn = null;
         this.keycloak_prompt_fn = null;
+
+        // audio
+        this.audio = null;
+        this.audio_enabled = false;
+        this.audio_mediasource_enabled = MediaSourceUtil.getMediaSourceClass() != undefined;
+        this.audio_aurora_enabled = typeof AV !== "undefined" &&
+            AV != undefined &&
+            AV.Decoder != undefined &&
+            AV.Player.fromXpraSource != undefined;
+        this.audio_codecs = {};
+        this.audio_framework = null;
+        this.audio_aurora_ctx = null;
+        this.audio_codec = null;
+        this.audio_context = new AudioContext();
+        this.audio_state = null;
+        this.aurora_codecs = {};
+        this.mediasource_codecs = {};
+
+        // encryption
+        this.encryption = false;
+        this.encryption_key = null;
+        this.cipher_in_caps = null;
+        this.cipher_out_caps = null;
+
+        // detect locale change:
+        this.browser_language = Utilities.getFirstBrowserLanguage();
+        this.browser_language_change_embargo_time = 0;
+        this.key_layout = null;
+        this.last_keycode_pressed = 0;
+        this.last_key_packet = [];
+        // mouse
+        this.buttons_pressed = new Set();
+        this.last_button_event = [-1, false, -1, -1];
+        this.mousedown_event = null;
+        this.last_mouse_x = null;
+        this.last_mouse_y = null;
+        this.wheel_delta_x = 0;
+        this.wheel_delta_y = 0;
+        this.mouse_grabbed = false;
+        this.scroll_reverse_x = false;
+        this.scroll_reverse_y = "auto";
+        // clipboard
+        this.clipboard_direction = "both";
+        this.clipboard_datatype = null;
+        this.clipboard_buffer = "";
+        this.clipboard_server_buffers = {};
+        this.clipboard_pending = false;
+        this.clipboard_targets = [TEXT_HTML, UTF8_STRING, "TEXT", "STRING", TEXT_PLAIN];
+        // printing / file-transfer:
+        this.remote_printing = false;
+        this.remote_file_transfer = false;
+        this.remote_open_files = false;
 
         // hello
         this.hello_timer = null;
@@ -192,11 +296,23 @@ class CustomClientProtocol {
         const me = this;
     }
 
+    init(ignore_blacklist) {
+        this.init_audio(ignore_blacklist);
+        // this.init_packet_handlers();
+        // // this.init_keyboard();
+        // if (this.scale !== 1) {
+        //   this.container.style.width = `${100 * this.scale}%`;
+        //   this.container.style.height = `${100 * this.scale}%`;
+        //   this.container.style.transform = `scale(${1 / this.scale})`;
+        //   this.container.style.transformOrigin = "top left";
+        // }
+      }
+
     init_packet_handlers() {
         this.packet_handlers = {
             //   [PACKET_TYPES.ack_file_chunk]: this._process_ack_file_chunk,
             [PACKET_TYPES.bell]: this._process_bell,
-            // [PACKET_TYPES.challenge]: this._process_challenge,
+            [PACKET_TYPES.challenge]: this._process_challenge,
             //   [PACKET_TYPES.clipboard_request]: this._process_clipboard_request,
             //   [PACKET_TYPES.clipboard_token]: this._process_clipboard_token,
             [PACKET_TYPES.close]: this._process_close,
@@ -206,7 +322,7 @@ class CustomClientProtocol {
             [PACKET_TYPES.disconnect]: this._process_disconnect,
             //   [PACKET_TYPES.draw]: this._process_draw,
             [PACKET_TYPES.encodings]: this._process_encodings,
-            //   [PACKET_TYPES.eos]: this._process_eos,
+            [PACKET_TYPES.eos]: this._process_eos,
             [PACKET_TYPES.error]: this._process_error,
             [PACKET_TYPES.hello]: this._process_hello,
             //   [PACKET_TYPES.info_response]: this._process_info_response,
@@ -361,6 +477,36 @@ class CustomClientProtocol {
         }
     }
 
+
+    _get_screen_sizes() {
+        const dpi = this._get_DPI();
+        const screen_size = [this.container.clientWidth, this.container.clientHeight];
+        const wmm = Math.round((screen_size[0] * 25.4) / dpi);
+        const hmm = Math.round((screen_size[1] * 25.4) / dpi);
+        const monitor = ["Canvas", 0, 0, screen_size[0], screen_size[1], wmm, hmm];
+        let name = "HTML";
+        if (navigator.userAgentData) {
+            const brands = navigator.userAgentData.brands;
+            if (brands.length > 0) {
+                name = brands[0].brand + " " + brands[0].version;
+            }
+        }
+        const screen = [
+            name,
+            screen_size[0],
+            screen_size[1],
+            wmm,
+            hmm,
+            [monitor],
+            0,
+            0,
+            screen_size[0],
+            screen_size[1],
+        ];
+        //just a single screen:
+        return [screen];
+    }
+
     _update_capabilities(appendobj) {
         for (const attribute in appendobj) {
             this.capabilities[attribute] = appendobj[attribute];
@@ -441,7 +587,7 @@ class CustomClientProtocol {
         // make the base hello
         this._make_hello_base();
         // handle a challenge if we need to
-        if (!challenge_response) {
+        if (this.passwords.length > 0 && !challenge_response) {
             // tell the server we expect a challenge (this is a partial hello)
             this.capabilities["challenge"] = true;
             this.clog("sending partial hello");
@@ -450,25 +596,28 @@ class CustomClientProtocol {
             // finish the hello
             this._make_hello();
         }
+
         if (challenge_response) {
             this._update_capabilities({ "challenge_response": challenge_response });
             if (client_salt) {
                 this._update_capabilities({ "challenge_client_salt": client_salt });
             }
         }
-        this.clog("sending hello capabilities", this.capabilities);
+        this.clog("sending hello capabilities", this.capabilities2);
         // verify:
-        for (const key in this.capabilities) {
-            if (key == undefined) {
-                throw new Error("invalid null key in hello packet data");
-            }
-            const value = this.capabilities[key];
-            if (value == undefined) {
-                throw new Error(`invalid null value for key ${key} in hello packet data`);
-            }
-        }
+        // for (const key in this.capabilities) {
+        //     if (key == undefined) {
+        //         throw new Error("invalid null key in hello packet data");
+        //     }
+        //     const value = this.capabilities[key];
+        //     if (value == undefined) {
+        //         throw new Error(`invalid null value for key ${key} in hello packet data`);
+        //     }
+        // }
         // send the packet
-        this.send([PACKET_TYPES.hello, this.capabilities]);
+        this.send([PACKET_TYPES.hello, this.capabilities2]);
+
+        this.clog("MY Hello sent");
         this.schedule_hello_timer();
     }
 
@@ -482,7 +631,7 @@ class CustomClientProtocol {
             "platform": this._get_platform_caps(),
             "session-type": Utilities.getSimpleUserAgentString(),
             "session-type.full": navigator.userAgent,
-            "username": null,
+            "username": this.username,
             "uuid": this.uuid,
             "argv": [window.location.href],
             "share": false,
@@ -495,6 +644,12 @@ class CustomClientProtocol {
             "xdg-menu": true,
         });
         this._update_capabilities(this._get_network_caps());
+        if (this.encryption) {
+            this.cipher_in_caps = this._get_cipher_caps()
+            this._update_capabilities({ "encryption": this.cipher_in_caps });
+            console.info("setting cipher in caps=", JSON.stringify(this.cipher_in_caps));
+            this.protocol.set_cipher_in(this.cipher_in_caps, this.encryption_key);
+        }
         if (this.start_new_session) {
             this._update_capabilities({
                 "start-new-session": this.start_new_session,
@@ -519,7 +674,10 @@ class CustomClientProtocol {
                 "packet": true,
             },
             "encoding": this._get_encoding_caps(),
+            "audio": this._get_audio_caps(),
+            "clipboard": this._get_clipboard_caps(),
             "keymap": this._get_keymap_caps(),
+            "file": this._get_file_caps(),
             "wants": [],
             // encoding stuff
             windows: true,
@@ -528,7 +686,7 @@ class CustomClientProtocol {
             keyboard: true,
             desktop_size: [this.desktop_width, this.desktop_height],
             desktop_mode_size: [this.desktop_width, this.desktop_height],
-            // screen_sizes: this._get_screen_sizes(),
+            screen_sizes: this._get_screen_sizes(),
             dpi: {
                 "x": this._get_DPI(),
                 "y": this._get_DPI(),
@@ -542,6 +700,25 @@ class CustomClientProtocol {
             //we cannot handle this (GTK only):
             named_cursors: false,
         });
+
+        console.log("Encodings sent:", {
+            "": this.supported_encodings,
+            "core": this.supported_encodings,
+            "rgb_formats": this.RGB_FORMATS,
+            "window-icon": ["png"],
+            "cursor": ["png"],
+            "packet": true,
+        });
+    }
+
+
+    _get_file_caps() {
+        return {
+            "enabled": true,
+            "printing": this.printing,
+            "open-url": this.open_url,
+            "size-limit": 32 * 1024 * 1024,
+        }
     }
 
     _get_network_caps() {
@@ -580,6 +757,17 @@ class CustomClientProtocol {
         return digests;
     }
 
+    _get_keycodes() {
+        //keycodes.append((nn(keyval), nn(name), nn(keycode), nn(group), nn(level)))
+        const keycodes = [];
+        let kc;
+        for (const keycode in CHARCODE_TO_NAME) {
+            kc = Number.parseInt(keycode);
+            keycodes.push([kc, CHARCODE_TO_NAME[keycode], kc, 0, 0]);
+        }
+        return keycodes;
+    }
+
     _get_DPI() {
         // const dpi_div = document.querySelector("#dpi");
         // if (dpi_div != undefined && dpi_div.offsetWidth > 0 && dpi_div.offsetHeight > 0) {
@@ -591,6 +779,43 @@ class CustomClientProtocol {
         // }
         // //default:
         return 96;
+    }
+
+
+    _get_clipboard_caps() {
+        let selections;
+        if (navigator.clipboard && navigator.clipboard.readText && navigator.clipboard.writeText) {
+            //we don't need the primary contents,
+            //we can use the async clipboard
+            selections = ["CLIPBOARD"];
+            this.log("using new navigator.clipboard");
+        } else {
+            selections = ["CLIPBOARD", "PRIMARY"];
+            this.log("legacy clipboard");
+        }
+        this.log("clipboard polling: ", this.clipboard_poll);
+
+        this.clipboard_targets = [this.clipboard_preferred_format];
+        for (const target of [TEXT_HTML, UTF8_STRING, "TEXT", "STRING", TEXT_PLAIN]) {
+            if (target != this.clipboard_preferred_format) {
+                this.clipboard_targets.push(target);
+            }
+        }
+        if (CLIPBOARD_IMAGES && navigator.clipboard && Object.hasOwn(navigator.clipboard, "write")) {
+            this.clipboard_targets.push("image/png");
+        } else {
+            this.log("no clipboard write support: no images, navigator.clipboard=", navigator.clipboard);
+        }
+        this.log("clipboard targets: ", this.clipboard_targets);
+        this.log("clipboard preferred format: ", this.clipboard_preferred_format);
+
+        return {
+            "enabled": this.clipboard_enabled,
+            "want_targets": true,
+            "greedy": true,
+            "selections": selections,
+            "preferred-targets": this.clipboard_targets,
+        }
     }
 
     _process_error(packet) {
@@ -608,6 +833,8 @@ class CustomClientProtocol {
         }
         this.packet_disconnect_reason(packet);
         if (!reconnect) {
+
+            this.clog("MY closing connection !reconnect");
             this.close();
         }
     }
@@ -649,6 +876,7 @@ class CustomClientProtocol {
             }
             else {
                 this.disconnect_reason = "failed to open connection";
+                this.clog("MY closing failed to open connection");
                 this.close();
             }
         }, this.OPEN_TIMEOUT);
@@ -685,6 +913,7 @@ class CustomClientProtocol {
         this.cancel_hello_timer();
         this.hello_timer = setTimeout(() => {
             this.disconnect_reason = "Did not receive hello before timeout reached, not an Xpra server?";
+            this.clog("MY closing schedule_hello_timer");
             this.close();
         }, this.HELLO_TIMEOUT);
     }
@@ -735,11 +964,11 @@ class CustomClientProtocol {
     remove_window() {
         //* Remove div window from the scene and destroy it
 
-        // for (const wid in this.id_to_window) {
-        //   const win = this.id_to_window[wid];
-        //   window.removeWindowListItem(win.wid);
-        //   win.destroy();
-        // }
+        for (const wid in this.id_to_window) {
+            const win = this.id_to_window[wid];
+            //   window.removeWindowListItem(win.wid);
+            win.destroy();
+        }
     }
 
     _process_close(packet) {
@@ -755,12 +984,14 @@ class CustomClientProtocol {
             this.reconnect_attempt++;
             this.do_reconnect();
         } else {
+            this.clog("MY _process_close packet: ", packet);
             this.close();
         }
     }
 
     disconnect(reason) {
         this.disconnect_reason = reason || "unknown";
+        this.clog("MY disconnect reason: ", reason);
         this.close();
     }
 
@@ -786,6 +1017,8 @@ class CustomClientProtocol {
         }
         // save the disconnect reason
         this.packet_disconnect_reason(packet);
+
+        this.clog("MY _process_disconnect packet: ", packet);
         this.close();
         // call the client's close callback
         this.callback_close(this.disconnect_reason);
@@ -805,6 +1038,7 @@ class CustomClientProtocol {
     }
 
     _process_hello(packet) {
+        this.clog("MY Hello received  _process_hello");
         this.cancel_open_timer();
         this.cancel_hello_timer();
         const hello = packet[1];
@@ -829,12 +1063,15 @@ class CustomClientProtocol {
             const vparts = version.split(".");
             const vno = vparts.map((x) => Number.parseInt(x));
             if (vno[0] <= 0 && vno[1] < 10) {
+
+                this.clog(`MY unsupported version: ${version}`);
                 this.disconnect(`unsupported version: ${version}`);
                 this.close();
                 return;
             }
         } catch {
             this.disconnect(`error parsing version number '${version}'`);
+            this.clog(`MY error parsing version number '${version}'`);
             this.close();
             return;
         }
@@ -897,10 +1134,10 @@ class CustomClientProtocol {
 
         console.log("_process_window_metadata   wid : ", wid);
         console.log("metadata : ", metadata);
-        // const win = this.id_to_window[wid];
-        // if (win != undefined) {
-        //     win.update_metadata(metadata);
-        // }
+        const win = this.id_to_window[wid];
+        if (win != undefined) {
+            win.update_metadata(metadata);
+        }
     }
 
     _process_desktop_size(packet) {
@@ -947,7 +1184,7 @@ class CustomClientProtocol {
             "rgb32",
             "rgb24",
             "scroll",
-            "void",
+            "void"
         ];
         // detect websocket in webworker support and degrade gracefully
         if (!window.Worker) {
@@ -1062,6 +1299,7 @@ class CustomClientProtocol {
             this.protocol = new XpraWebTransportProtocol();
         }
         else {
+            this.clog("MY _do_connect with_worker: ", with_worker);
             const use_worker = with_worker && !XPRA_CLIENT_FORCE_NO_WORKER;
             this.protocol = use_worker ? new XpraProtocolWorkerHost() : new XpraProtocol();
         }
@@ -1077,6 +1315,7 @@ class CustomClientProtocol {
     _route_packet(packet) {
         const packet_type = Utilities.s(packet[0]);
         this.debug("network", "received a", packet_type, "packet");
+        this.clog("MY _route_packet packet_type: ", "network", "received a", packet_type, "packet");
         const function_ = this.packet_handlers[packet_type];
         if (function_ == undefined) {
             this.cerror("no packet handler for ", packet_type);
@@ -1087,18 +1326,139 @@ class CustomClientProtocol {
     }
 
     onOpen() {
-        console.log('Connected to XPRA server');
-        const { element, context } = divWindow(this.mainRadius);
-        const cssObject = new CSS3DObject(element);
-        cssObject.position.set(0, 0, -this.mainRadius + 100);
-        this.scene.add(cssObject);
+        // console.log('Connected to XPRA server');
+        // const { element, context } = divWindow(this.mainRadius);
+        // const cssObject = new CSS3DObject(element);
+        // cssObject.position.set(0, 0, -this.mainRadius + 100);
+        // this.scene.add(cssObject);
 
-        this.canvas = { element, context };
-        document.body.appendChild(this.canvas.element);
+        // this.canvas = { element, context };
+        // document.body.appendChild(this.canvas.element);
     }
 
     on_connect() {
         //this hook can be overriden
+    }
+
+    _process_challenge(packet) {
+        this.cancel_open_timer();
+        this.cancel_hello_timer();
+        if (this.encryption) {
+            if (packet.length >= 3) {
+                this.cipher_out_caps = packet[2];
+                this.protocol.set_cipher_out(this.cipher_out_caps, this.encryption_key);
+            } else {
+                this.disconnect("challenge does not contain encryption details to use for the response");
+                return;
+            }
+        }
+        const digest = packet[3];
+        const server_salt = Uint8ToString(packet[1]);
+        const salt_digest = packet[4] || "xor";
+        const prompt = (packet[5] || "password").replace(/[^\d+,. /:a-z]/gi, "");
+        this.clog("process challenge:", digest);
+        const client = this;
+        function call_do_process_challenge(password) {
+            if (!client || !client.protocol) {
+                return;
+            }
+            if (password == undefined) {
+                client.disconnect("password prompt cancelled");
+                return;
+            }
+            client.do_process_challenge(digest, server_salt, salt_digest, password);
+        }
+        if (this.passwords.length > 0) {
+            if (!this.is_digest_safe(digest)) {
+                this.disconnect("refusing to send a password over an insecure connection");
+                return;
+            }
+            const password = this.passwords.shift();
+            call_do_process_challenge(password);
+            return;
+        }
+        if (digest.startsWith("keycloak") && this.keycloak_prompt_fn) {
+            this.keycloak_prompt_fn(server_salt, call_do_process_challenge);
+            return;
+        }
+        if (this.password_prompt_fn && this.is_digest_safe(digest)) {
+            if (!this.is_digest_safe(digest)) {
+                this.disconnect("refusing to prompt for a password over an insecure connection");
+                return;
+            }
+            const address = `${client.host}:${client.port}`;
+            this.password_prompt_fn(`The server at ${address} requires a ${prompt}`, call_do_process_challenge);
+            return;
+        }
+        this.disconnect("No password specified for authentication challenge");
+    }
+
+
+    is_digest_safe(digest) {
+        return digest != "xor" || this.ssl || this.encryption || this.insecure || Utilities.isSafeHost(this.host);
+    }
+
+    do_process_challenge(digest, server_salt, salt_digest, password) {
+        let client_salt = null;
+        let l = server_salt.length;
+        //don't use xor over unencrypted connections unless explicitly allowed:
+        if (!this.is_digest_safe(digest)) {
+            this.disconnect(`server requested digest xor, cowardly refusing to use it without encryption with ${this.host}`);
+            return;
+        }
+
+        if (salt_digest == "xor") {
+            if (l < 16 || l > 256) {
+                this.disconnect(`invalid server salt length for xor digest:${l}`);
+                return;
+            }
+        } else {
+            //other digest, 32 random bytes is enough:
+            l = 32;
+        }
+        const challenge_digest = digest.startsWith("keycloak") ? "xor" : digest;
+        this.clog("challenge using digest", challenge_digest);
+        client_salt = Utilities.getSecureRandomString(l);
+        this.clog("challenge using salt digest", salt_digest);
+        this._gendigest(salt_digest, client_salt, server_salt)
+            .then(salt => {
+                this._gendigest(challenge_digest, password, salt)
+                    .then(challenge_response => {
+                        this.do_send_hello(arrayhex(challenge_response), client_salt)
+                    })
+                    .catch(err => this.disconnect("failed to generate challenge response: " + err));
+            })
+            .catch(err => this.disconnect("failed to generate salt: " + err));
+    }
+
+    _gendigest(digest, password, salt) {
+        if (digest == "xor") {
+            const trimmed_salt = salt.slice(0, password.length);
+            return new Promise(function (resolve, reject) {
+                resolve(Utilities.xorString(trimmed_salt, password));
+            });
+        }
+        if (!digest.startsWith("hmac")) {
+            return new Promise(function (resolve, reject) {
+                reject(new Error("unsupported digest " + digest));
+            });
+        }
+        let hash = "SHA-1";
+        if (digest.indexOf("+") > 0) {
+            // "hmac+sha512" -> "sha512"
+            hash = digest.split("+")[1];
+        }
+        hash = hash.toUpperCase();
+        if (hash.startsWith("SHA") && !hash.startsWith("SHA-")) {
+            hash = "SHA-" + hash.substring(3);
+        }
+        this.clog("hmac using hash", hash);
+        const u8pass = u8(password);
+        const u8salt = u8(salt);
+        const u8src = new Uint8Array(u8pass.length + u8salt.length);
+        u8src.set(u8pass, 0);
+        u8src.set(u8salt, u8pass.length);
+        return window.crypto.subtle.digest({ name: hash }, u8src);
     }
 
     _send_ping() {
@@ -1180,6 +1540,26 @@ class CustomClientProtocol {
         return this.encoding_options;
     }
 
+    _get_cipher_caps() {
+        const enc = this.encryption.split("-")[0];
+        if (enc != "AES") {
+            throw `invalid encryption specified: '${enc}'`;
+        }
+        const mode = this.encryption.split("-")[1] || "CBC";
+        return {
+            "cipher": enc,
+            "mode": mode,
+            "iv": Utilities.getSecureRandomString(16),
+            "key_salt": Utilities.getSecureRandomBytes(64),
+            "key_size": 32, //256 bits
+            "key_hash": "SHA1",
+            "key_stretch_iterations": 1000,
+            "padding.options": ["PKCS#7"],
+            "always-pad": true,
+            "stream": false,
+        }
+    }
+
     _get_build_caps() {
         return {
             "revision": Utilities.REVISION,
@@ -1197,10 +1577,115 @@ class CustomClientProtocol {
         }
     }
 
+    _get_audio_caps() {
+        return {
+            "receive": true,
+            "send": true,
+            "decoders": Object.keys(this.audio_codecs),
+        }
+    }
+
     _get_keymap_caps() {
         return {
             "layout": this.key_layout,
             "keycodes": this._get_keycodes(),
+        }
+    }
+
+    /**
+     * Window Painting
+     */
+    _process_draw(packet) {
+        //ensure that the pixel data is in a byte array:
+        const coding = Utilities.s(packet[6]);
+        let img_data = packet[7];
+        const raw_buffers = [];
+        const now = performance.now();
+        if (coding != "scroll") {
+            raw_buffers.push(img_data.buffer);
+        }
+        if (this.decode_worker) {
+            this.decode_worker.postMessage(
+                { cmd: "decode", packet, start: now },
+                raw_buffers
+            );
+            //the worker draw event will call do_process_draw
+        } else {
+            this.do_process_draw(packet, now);
+        }
+    }
+
+    _process_eos(packet) {
+        this.do_process_draw(packet, 0);
+        const wid = packet[1];
+        if (this.decode_worker) {
+            this.decode_worker.postMessage({ cmd: "eos", wid });
+        }
+    }
+
+    do_process_draw(packet, start) {
+        this.clog("MYYYYYYYYYYYYYY do_process_draw packet: ", packet);
+        if (!packet) {
+            //no valid draw packet, likely handle errors for that here
+            return;
+        }
+        const ptype = packet[0];
+        const wid = packet[1];
+        const win = this.id_to_window[wid];
+        if (ptype == "eos") {
+            this.debug("draw", "eos for window", wid);
+            if (win) {
+                win.eos();
+            }
+            return;
+        }
+
+        const width = packet[4];
+        const height = packet[5];
+        const coding = Utilities.s(packet[6]);
+        const packet_sequence = packet[8];
+        const options = packet[10] || {};
+        const protocol = this.protocol;
+        if (!protocol) {
+            return;
+        }
+        const me = this;
+        function send_damage_sequence(decode_time, message) {
+            me.do_send_damage_sequence(packet_sequence, wid, width, height, decode_time, message);
+        }
+        const client = this;
+        function decode_result(error) {
+            const flush = options["flush"] || 0;
+            let decode_time = Math.round(1000 * performance.now() - 1000 * start);
+            if (flush == 0) {
+                client.request_redraw(win);
+            }
+            if (error || start == 0) {
+                this.request_redraw(win);
+                decode_time = -1;
+            }
+            client.debug("draw", "decode time for ", coding, " sequence ", packet_sequence, ": ", decode_time, ", flush=", flush);
+            send_damage_sequence(decode_time, error || "");
+        }
+        if (!win) {
+            this.debug("draw", "cannot paint, window not found:", wid);
+            send_damage_sequence(-1, `window ${wid} not found`);
+            return;
+        }
+        if (coding == "offscreen-painted") {
+            const decode_time = options["decode_time"];
+            send_damage_sequence(decode_time || 0, "");
+            return;
+        }
+        try {
+            win.paint(packet, decode_result);
+        } catch (error) {
+            this.exc(error, "error painting", coding, "sequence no", packet_sequence);
+            send_damage_sequence(-1, String(error));
+            //there may be other screen updates pending:
+            win.paint_pending = 0;
+            win.may_paint_now();
+            this.request_redraw(win);
         }
     }
 }

@@ -1,6 +1,6 @@
 
 
-function divWindow(mainRadius) {
+function divWindow() {
 
     const div = document.createElement("div");
     div.style.width = "4000px";
@@ -20,26 +20,23 @@ function divWindow(mainRadius) {
     div.style.justifyContent = "center";
     div.style.alignItems = "center";
     div.style.position = "absolute";
-
     div.style.zIndex = '1000';
 
-    const canvas = document.createElement('canvas');
-    $(canvas).addClass("gpu-trigger");
 
-    // Transfer control to offscreen before getting the 2d context
-    const offscreen = canvas.transferControlToOffscreen();
-    const context = offscreen.getContext("2d");
-    context.imageSmoothingEnabled = false;
+    // div.innerHTML = "<h1>Hello World</h1>";
 
-    offscreen.width = 4000; // Set the width of the offscreen canvas
-    offscreen.height = 2000; // Set the height of the offscreen canvas
+    // Create an iframe element
+    const iframe = document.createElement("iframe");
+    iframe.style.width = "100%";
+    iframe.style.height = "100%";
+    iframe.style.border = "none";
+    iframe.src = "http://0.0.0.0:14501";
 
-    div.appendChild(canvas);
+    // Append the iframe to the div
+    div.appendChild(iframe);
 
-    document.body.appendChild(div); // Ensure the div is added to the DOM
-
-    return { element: div, context: context };
-    // return cssObject;
+    document.body.appendChild(div);
+    return div;
 }
 
 export { divWindow };

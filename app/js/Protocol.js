@@ -15,7 +15,6 @@
  *  brotli_decode.js
  */
 
-const WebSocket = require('ws');
 const CONNECT_TIMEOUT = 15_000;
 
 /*
@@ -737,5 +736,3 @@ if (
   // tell host we are ready
   postMessage({ c: "r" });
 }
-
-export { XpraProtocolWorkerHost, XpraProtocol };

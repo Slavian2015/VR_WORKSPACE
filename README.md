@@ -1,16 +1,3 @@
-project-root/
-├── index.html          # Entry point for the application
-├── main.js             # Main WebXR application logic
-├── cheerpx/
-│   ├── app.html        # Container for virtualized applications
-│   ├── cheerpx_loader.js  # CheerpX WebVM loader
-├── assets/             # Static resources (models, textures)
-│   └── sphere_bg.jpg   # Background for VR sphere
-├── css/
-│   └── styles.css      # VR workspace styling
-└── package.json        # Node.js dependencies
-
-
 ## To create and start a virtual environment, follow these steps in the terminal:
 
 # 1) Install virtualenv (if it's not installed):
@@ -44,7 +31,13 @@ project-root/
 
 ```bash
 
-    xpra start :100 --start=gnome-calculator --bind-ws=0.0.0.0:14501 --auth=allow --html=on
+    xpra start :100 --bind-ws=0.0.0.0:14501  --daemon=no --speaker=off --webcam=no --mdns=no --pulseaudio=no --html=on --start-child=gnome-calculator --exit-with-children=yes
+
+    xpra start :100 --bind-ws=0.0.0.0:14501  --daemon=no --speaker=off --webcam=no --mdns=no --pulseaudio=no --html=on --start-child=libreoffice --exit-with-children=yes
+
+    gnome-terminal
+
+    vlc
 
 
     xpra start :100 --bind-ws=0.0.0.0:14501 --html=on --start-child=gnome-calculator --exit-with-children=yes --auth=allow
@@ -67,17 +60,3 @@ project-root/
 ```bash
     npm run build
 ```
-
-
-
-project/
-├── server/                    # Серверная часть WebRTC и Xpra
-│   ├── index.js               # WebRTC сервер на Node.js
-│   ├── xpra-control.sh        # Скрипт для запуска Xpra и приложений
-│   └── package.json           # Зависимости для Node.js
-├── client/                    # Клиентская часть WebXR
-│   ├── index.html             # Веб-приложение с WebXR
-│   ├── app.js                 # Взаимодействие с WebRTC
-│   ├── three.min.js           # Three.js библиотека
-│   └── styles.css             # Стили интерфейса
-└── README.md                  # Инструкции по запуску

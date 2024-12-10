@@ -3,10 +3,13 @@ import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
 import { VRButton } from "VRButton";
 import { addVideoSphere } from 'addVideoSphere';
-import { CustomClientProtocol } from 'CustomClientProtocol';
+
+import { CSS3DObject } from "CSS3DObject";
+import { divWindow } from 'divWindow';
+// import { CustomClientProtocol } from 'CustomClientProtocol';
 // const { ipcRenderer } = require('electron');
 
-
+let default_settings = {};
 let camera, scene, renderer, controls, cssRenderer;
 let mainRadius = 5000;
 
@@ -245,7 +248,7 @@ function onMouseMove(event) {
             x: event.clientX - previousMousePosition.x,
             y: event.clientY - previousMousePosition.y
         };
-        
+
         draggedSphere.rotation.y += deltaMove.x * -0.001;
         draggedSphere.rotation.x += deltaMove.y * -0.001;
 
@@ -270,11 +273,54 @@ function onMouseUp() {
 };
 
 function addSimpleWebDiv() {
-    const serverUri = 'ws://0.0.0.0:14501';
-    const client = new CustomClientProtocol(scene, serverUri, mainRadius);
-    client.connect();
-
+    const div = divWindow();
+    const cssObject = new CSS3DObject(div);
+    cssObject.position.set(0, 0, -mainRadius + 100);
+    scene.add(cssObject);
 }
+
+
+
+// function addSimpleWebDiv() {
+//     const serverUri = 'ws://0.0.0.0:14501';
+//     const video = Utilities.is_64bit()
+
+//     const client = new CustomClientProtocol(scene, serverUri, mainRadius);
+
+//     if (video) {
+//         // VPX checks. Will only succeed if we can use VideoDecoder.js
+//         client.check_encodings.push("h264");
+//         client.check_encodings.push("vp8");
+//         client.check_encodings.push("vp9");
+
+//         if (JSMpeg && JSMpeg.Renderer && JSMpeg.Decoder) {
+//             //TODO: should be moved to 'check_encodings'
+//             //and added to the decode worker:
+//             client.supported_encodings.push("mpeg1");
+//         }
+
+//     }
+
+//     for (const key of [
+//         "scaling.control",
+//         "initial_quality",
+//         "initial_speed",
+//         "auto_refresh_delay",
+//         "speed",
+//         "min-speed",
+//         "quality",
+//         "min-quality",
+//     ]) {
+//         const v = getintparam(key, -1);
+//         if (v >= 0) {
+//             client.set_encoding_option(key, v);
+//         }
+//     }
+//     client.offscreen_api = true;
+
+//     client.connect();
+
+// }
 
 
 function addSimpleButton() {

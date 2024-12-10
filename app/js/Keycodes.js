@@ -1775,12 +1775,3 @@ function get_event_modifiers(event) {
   }
   return modifiers;
 }
-
-export {
-  KEYSYM_TO_UNICODE,
-  CHAR_TO_NAME,
-  KEYSYM_TO_LAYOUT,
-  CHARCODE_TO_NAME,
-  CHARCODE_TO_NAME_SHIFTED,
-  get_event_modifiers,
-};

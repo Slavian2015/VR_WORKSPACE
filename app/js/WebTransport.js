@@ -349,5 +349,3 @@ class XpraWebTransportProtocol {
     throw "not supported with WebTransport";
   }
 }
-
-export { XpraWebTransportProtocol };
