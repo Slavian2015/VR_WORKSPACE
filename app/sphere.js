@@ -273,12 +273,8 @@ function onMouseUp() {
 };
 
 function addSimpleWebDiv() {
-    const div = divWindow();
-    const cssObject = new CSS3DObject(div);
-    cssObject.position.set(0, 0, -mainRadius + 100);
-    scene.add(cssObject);
-
-    fetch('./path/to/your/local/file.html')
+    // fetch('./xpra/index.html')
+    fetch('./xpra/test.html')
     .then(response => response.text())
     .then(html => {
         const div = document.createElement('div');

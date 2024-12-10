@@ -12,9 +12,10 @@
     <link rel="stylesheet" href="./css/spinner.css">
 
     <!-- Load jQuery first -->
-    <script type="text/javascript" src="./js/lib/jquery.js"></script>
+    <script type="text/javascript" src="./node_modules/jquery/dist/jquery.min.js"></script>
+
     <script>
-        window.jQuery || document.write('<script src="./js/lib/jquery.js"><\/script>')
+        window.jQuery || document.write('<script src="./node_modules/jquery/dist/jquery.min.js"><\/script>')
     </script>
 
     <!-- Then load jQuery UI -->
@@ -59,7 +60,6 @@
     <link rel="stylesheet" type="text/css" href="./css/icon.css" />
 
 
-
     <script type="importmap">
         {
             "imports": {
@@ -71,10 +71,7 @@
                 "addSecondSphere": "./windows/second-sphere.js",
                 "addAppSphere": "./windows/app-sphere.js",
                 "addVideoSphere": "./windows/video-sphere.js",
-                "divWindow": "./windows/div-window.js",
-                "windowClient": "./windows/window-client.js",
-                "CustomClientProtocol": "./js/CustomClientProtocol.js",
-                "CustomCapabilities": "./js/CustomCapabilities.js"
+                "divWindow": "./windows/div-window.js"
             }
         }
     </script>
