@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 
 <head>
     <meta charset="UTF-8">
@@ -8,48 +8,56 @@
     <title>Electron WebXR 3D Workspace</title>
     <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./css/client.css">
+    <link rel="stylesheet" href="./css/spinner.css">
 
     <!-- Load jQuery first -->
     <script type="text/javascript" src="./js/lib/jquery.js"></script>
     <script>
         window.jQuery || document.write('<script src="./js/lib/jquery.js"><\/script>')
     </script>
-        
+
     <!-- Then load jQuery UI -->
+
+    <script type="text/javascript" src="./js/lib/es6-shim.js"></script>
+    <script type="text/javascript" src="./js/lib/AudioContextMonkeyPatch.js"></script>
 
     <script type="text/javascript" src="./js/lib/jquery-ui.js"></script>
     <script type="text/javascript" src="./js/lib/jquery.ba-throttle-debounce.js"></script>
-    <script type="text/javascript" src="./js/lib/jquery-transform-draggable.js"></script>
 
-    <script type="text/javascript" src="./js/lib/rencode.js"></script>
+    <script type="text/javascript" src="./js/lib/bencode.js"></script>
+    <script type="text/javascript" src="./js/lib/zlib.js"></script>
     <script type="text/javascript" src="./js/lib/lz4.js"></script>
     <script type="text/javascript" src="./js/lib/brotli_decode.js"></script>
-
-    <script type="text/javascript" src="./js/MediaSourceUtil.js"></script>
+    <script type="text/javascript" src="./js/lib/forge.js"></script>
 
     <script type="text/javascript" src="./js/lib/jsmpeg.js"></script>
+    <script type="text/javascript" src="./js/lib/broadway/Decoder.js"></script>
     <script type="text/javascript" src="./js/lib/aurora/aurora.js"></script>
+    <!--
+		<script type="text/javascript" src="js/lib/aurora/mp3.js"></script>
+		<script type="text/javascript" src="js/lib/aurora/flac.js"></script>
+		<script type="text/javascript" src="js/lib/aurora/aac.js"></script>
+		-->
     <script type="text/javascript" src="./js/lib/aurora/aurora-xpra.js"></script>
 
-    <script type="text/javascript" src="./js/lib/web-streams-ponyfill.es6.js"></script>
-    <script type="text/javascript" src="./js/lib/StreamSaver.js"></script>
     <script type="text/javascript" src="./js/lib/FileSaver.js"></script>
-    <script type="text/javascript" src="./js/lib/detect-zoom.js"></script>
-    <script type="text/javascript" src="./js/RgbHelpers.js"></script>
+    <script type="text/javascript" src="./js/lib/jszip.js"></script>
 
-    <script type="text/javascript" src="./js/Constants.js"></script>
-    <script type="text/javascript" src="./js/VideoDecoder.js"></script>
-    <script type="text/javascript" src="./js/OffscreenDecodeWorkerHelper.js"></script>
-
-    <script type="text/javascript" src="./js/Utilities.js"></script>
     <script type="text/javascript" src="./js/Keycodes.js"></script>
     <script type="text/javascript" src="./js/Protocol.js"></script>
-    <script type="text/javascript" src="./js/WebTransport.js"></script>
-    
-    <!-- 
-    <script type="text/javascript" src="js/Window.js"></script>
-    <script type="text/javascript" src="js/Notifications.js"></script>
-    <script type="text/javascript" src="js/Client.js"></script> -->
+    <script type="text/javascript" src="./js/Window.js"></script>
+    <script type="text/javascript" src="./js/Notifications.js"></script>
+    <script type="text/javascript" src="./js/Utilities.js"></script>
+    <script type="text/javascript" src="./js/MediaSourceUtil.js"></script>
+    <script type="text/javascript" src="./js/Client.js"></script>
+
+    <link rel="stylesheet" type="text/css" href="./css/menu.css" />
+    <script type="application/javascript" src="./js/Menu.js"></script>
+    <script type="application/javascript" src="./js/Menu-custom.js"></script>
+    <link rel="stylesheet" type="text/css" href="./css/menu-skin.css" />
+    <link rel="stylesheet" type="text/css" href="./css/icon.css" />
+
 
 
     <script type="importmap">
@@ -74,11 +82,12 @@
 
 <body>
     <script type="text/javascript">
-        $(document).ready(function() {
+        $(document).ready(function () {
             console.log("jQuery and jQuery UI are loaded");
         });
     </script>
     <canvas id="xr-canvas"></canvas>
     <script type="module" src="./sphere.js"></script>
 </body>
+
 </html>
