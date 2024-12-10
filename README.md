@@ -30,8 +30,7 @@
 # 4) RUN calculator:
 
 ```bash
-
-    xpra start :100 --bind-ws=0.0.0.0:14501  --daemon=no --speaker=off --webcam=no --mdns=no --pulseaudio=no --html=on --start-child=gnome-calculator --exit-with-children=yes
+    xpra start :100 --bind-ws=0.0.0.0:14501 --daemon=no --speaker=off --webcam=no --mdns=no --pulseaudio=no --html=on --start-child=gnome-calculator --exit-with-children=yes --notifications=no
 
     xpra start :100 --bind-ws=0.0.0.0:14501  --daemon=no --speaker=off --webcam=no --mdns=no --pulseaudio=no --html=on --start-child=libreoffice --exit-with-children=yes
 

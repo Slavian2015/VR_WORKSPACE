@@ -273,19 +273,24 @@ function onMouseUp() {
 };
 
 function addSimpleWebDiv() {
+    const div = divWindow();
+    const cssObject = new CSS3DObject(div);
+    cssObject.position.set(0, 0, -mainRadius + 100);
+    scene.add(cssObject);
+
     // fetch('./xpra/index.html')
-    fetch('./xpra/test.html')
-    .then(response => response.text())
-    .then(html => {
-        const div = document.createElement('div');
-        div.innerHTML = html;
-        const cssObject = new CSS3DObject(div);
-        cssObject.position.set(0, 0, -mainRadius + 100);
-        scene.add(cssObject);
-    })
-    .catch(error => {
-        console.error('Error loading local HTML file:', error);
-    });
+    // fetch('./xpra/test.html')
+    // .then(response => response.text())
+    // .then(html => {
+    //     const div = document.createElement('div');
+    //     div.innerHTML = html;
+    //     const cssObject = new CSS3DObject(div);
+    //     cssObject.position.set(0, 0, -mainRadius + 100);
+    //     scene.add(cssObject);
+    // })
+    // .catch(error => {
+    //     console.error('Error loading local HTML file:', error);
+    // });
 }
 
 
