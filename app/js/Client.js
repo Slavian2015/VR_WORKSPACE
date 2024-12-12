@@ -25,6 +25,8 @@ function XpraClient(container) {
 	if (!this.container) {
 		throw new Error("invalid container element");
 	}
+
+	console.log("XpraClient container FOUND");
 	// assign callback for window resize event
 	if (window.jQuery) {
 		var me = this;
@@ -1823,11 +1825,12 @@ XpraClient.prototype._process_hello = function(packet, ctx) {
 }
 
 XpraClient.prototype.process_xdg_menu = function() {
-	this.log("received xdg start menu data");
 	var key;
+
 	//remove current menu:
 	$('#startmenu li').remove();
 	var startmenu = document.getElementById("startmenu");
+
 	for(key in this.xdg_menu){
 		var category = this.xdg_menu[key];
 		var li = document.createElement("li");
@@ -1856,6 +1859,7 @@ XpraClient.prototype.process_xdg_menu = function() {
 		var xdg_menu_cats = category.Entries;
 		for(key in xdg_menu_cats){
 			var entry = xdg_menu_cats[key];
+
 			var li2 = document.createElement("li");
 			var a2 = document.createElement("a");
 
@@ -2178,6 +2182,18 @@ XpraClient.prototype.reconfigure_all_trays = function() {
  * Windows
  */
 XpraClient.prototype._new_window = function(wid, x, y, w, h, metadata, override_redirect, client_properties) {
+
+	var app_name = "gnome-calculator";
+
+	if (!metadata["class-instance"].includes(app_name)) {
+		console.log("Not a calculator");
+		return;
+	}
+
+	console.log("Metadata SIZES: ", metadata["size-constraints"]);
+	console.log("Metadata SIZES: ", metadata["size-constraints"]["minimum-size"]);
+	console.log("x, y, w, h: ", x, y, w, h);
+
 	// each window needs their own DIV that contains a canvas
 	var mydiv = document.createElement("div");
 	mydiv.id = String(wid);

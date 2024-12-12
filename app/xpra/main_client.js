@@ -12,8 +12,6 @@ var clog = function () {
     Utilities.clog.apply(Utilities, arguments);
 }
 
-console.log("START  loading client.js");
-
 if (!getboolparam("floating_menu", true)) {
     $("#float_menu").hide();
 }
@@ -47,6 +45,7 @@ function connection_lost() {
     cleanup_dialogs();
     $("button.menu-button").prop('disabled', true);
 }
+
 document.addEventListener('connection-established', connection_established);
 document.addEventListener('connection-lost', connection_lost);
 
@@ -120,10 +119,12 @@ document.addEventListener('info-response', function (e) {
 }, false);
 
 var touchaction_scroll = true;
+
 function toggle_touchaction() {
     touchaction_scroll = !touchaction_scroll;
     set_touchaction();
 }
+
 function set_touchaction() {
     var touchaction, label;
     if (touchaction_scroll) {
@@ -147,7 +148,6 @@ function init_client() {
         window.alert("Incomplete Xpra HTML5 client installation: jQuery is missing, cannot continue.");
         return;
     }
-    var https = document.location.protocol == "https:";
 
     // look at url parameters
     var username = getparam("username") || null;
@@ -160,7 +160,7 @@ function init_client() {
     var submit = getboolparam("submit", true);
     var server = getparam("server") || "localhost";
     var port = getparam("port") || "14501";
-    var ssl = getboolparam("ssl", https);
+    var ssl = false;
     var path = getparam("path") || '/';
     var encryption = getparam("encryption") || null;
     var key = getparam("key") || null;
@@ -676,16 +676,27 @@ function toggle_fullscreen() {
 }
 
 function expand_float_menu() {
-    var expanded_width = (float_menu_item_size * 4);
-    document.getElementById('float_menu').style.width = expanded_width + 'px';
-    $('#float_menu').children().show();
-    if (client) {
-        client.reconfigure_all_trays();
+    var floatMenu = document.getElementById('float_menu');
+    if (floatMenu) {
+        var expanded_width = (float_menu_item_size * 4);
+        floatMenu.style.width = expanded_width + 'px';
+        $('#float_menu').children().show();
+        if (client) {
+            client.reconfigure_all_trays();
+        }
+    } else {
+        console.error("expand_float_menu Element with ID 'float_menu' not found.");
     }
 }
 
 function retract_float_menu() {
-    document.getElementById('float_menu').style.width = '0px'; $('#float_menu').children().hide();
+    var floatMenu = document.getElementById('float_menu');
+    if (floatMenu) {
+        floatMenu.style.width = '0px';
+        $('#float_menu').children().hide();
+    } else {
+        console.error("retract_float_menu Element with ID 'float_menu' not found.");
+    }
 }
 
 if (getboolparam("autohide", false)) {

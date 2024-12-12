@@ -1,55 +1,4 @@
-
-
-function divWindow() {
-
-    const div = document.createElement("div");
-    div.style.width = "4000px";
-    div.style.height = "2000px";
-    div.style.backgroundColor = "white";
-
-
-    div.style.border = "2px solid black";
-    div.style.borderRadius = "10px";
-    div.style.padding = "20px";
-    div.style.textAlign = "center";
-    div.style.fontSize = "100px";
-    div.style.fontFamily = "Arial";
-    div.style.color = "black";
-    div.style.overflow = "hidden";
-    div.style.display = "flex";
-    div.style.justifyContent = "center";
-    div.style.alignItems = "center";
-    div.style.position = "absolute";
-    div.style.zIndex = '1000';
-
-
-    // Create and append elements programmatically
-    const dpiDiv = document.createElement("div");
-    dpiDiv.id = "dpi";
-    dpiDiv.style.width = "1in";
-    dpiDiv.style.height = "1in";
-    dpiDiv.style.left = "-100%";
-    dpiDiv.style.top = "-100%";
-    dpiDiv.style.position = "absolute";
-    div.appendChild(dpiDiv);
-
-    const progressDiv = document.createElement("div");
-    progressDiv.id = "progress";
-    progressDiv.className = "overlay";
-    progressDiv.style.display = "none";
-    const progressLabel = document.createElement("p");
-    progressLabel.id = "progress-label";
-    const progressDetails = document.createElement("p");
-    progressDetails.id = "progress-details";
-    const progressBar = document.createElement("progress");
-    progressBar.id = "progress-bar";
-    progressBar.max = 100;
-    progressBar.value = 10;
-    progressDiv.appendChild(progressLabel);
-    progressDiv.appendChild(progressDetails);
-    progressDiv.appendChild(progressBar);
-    div.appendChild(progressDiv);
-
+function addScreenDiv(div) {
     const screenDiv = document.createElement("div");
     screenDiv.id = "screen";
     screenDiv.style.width = "100%";
@@ -213,6 +162,74 @@ function divWindow() {
 
     screenDiv.appendChild(floatMenuDiv);
 
+    div.appendChild(screenDiv);
+}
+
+
+function divWindow() {
+
+    const div = document.createElement("div");
+    div.id = "xpra_screen_div";
+    div.style.width = "4000px";
+    div.style.height = "2000px";
+    div.style.backgroundColor = "white";
+
+
+    div.style.border = "2px solid black";
+    div.style.borderRadius = "10px";
+    div.style.padding = "20px";
+    div.style.textAlign = "center";
+    div.style.fontSize = "100px";
+    div.style.fontFamily = "Arial";
+    div.style.color = "black";
+    div.style.overflow = "hidden";
+    div.style.display = "flex";
+    div.style.justifyContent = "center";
+    div.style.alignItems = "center";
+    div.style.position = "absolute";
+    div.style.zIndex = '1000';
+
+
+    // Create and append elements programmatically
+    const dpiDiv = document.createElement("div");
+    dpiDiv.id = "dpi";
+    dpiDiv.style.width = "1in";
+    dpiDiv.style.height = "1in";
+    dpiDiv.style.left = "-100%";
+    dpiDiv.style.top = "-100%";
+    dpiDiv.style.position = "absolute";
+    div.appendChild(dpiDiv);
+
+    const progressDiv = document.createElement("div");
+    progressDiv.id = "progress";
+    progressDiv.className = "overlay";
+    progressDiv.style.display = "none";
+    const progressLabel = document.createElement("p");
+    progressLabel.id = "progress-label";
+    const progressDetails = document.createElement("p");
+    progressDetails.id = "progress-details";
+    const progressBar = document.createElement("progress");
+    progressBar.id = "progress-bar";
+    progressBar.max = 100;
+    progressBar.value = 10;
+    progressDiv.appendChild(progressLabel);
+    progressDiv.appendChild(progressDetails);
+    progressDiv.appendChild(progressBar);
+    div.appendChild(progressDiv);
+
+
+
+
+    const screenDiv = document.createElement("div");
+    screenDiv.id = "screen";
+    screenDiv.style.width = "100%";
+    screenDiv.style.height = "100%";
+    fetch('./xpra/float_menu.html')
+        .then(response => response.text())
+        .then(data => {
+            screenDiv.innerHTML = data;
+        })
+        .catch(error => console.error('Error loading float_menu.html:', error));
     div.appendChild(screenDiv);
 
 

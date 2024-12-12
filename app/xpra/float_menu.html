@@ -1,0 +1,58 @@
+<div id="float_menu">
+    <ul class="Menu -horizontal">
+        <li class="-hasSubmenu -noChevron">
+            <a href="#" title="Xpra" class="noDrag" data-icon="menu"></a>
+            <ul id="menu_list">
+                <li class="-hasSubmenu">
+                    <a data-icon="apps" href="#">Start</a>
+                    <ul id="startmenu">
+                    </ul>
+                </li>
+                <li class="-hasSubmenu">
+                    <a href="#" data-icon="kitchen">Server</a>
+                    <ul>
+                        <li id="clock_menu_entry"><a href="#" data-icon="access_time" onclick="return false"
+                                id="clock_menu_text"></a></li>
+                        <li><a href="#" data-icon="cloud_upload"
+                                onclick="upload_file(event); return false">Upload file</a></li>
+                        <li><a href="#" data-icon="exit_to_app"
+                                onclick="confirm_shutdown_server(event); return false">Shutdown Server</a>
+                        </li>
+                    </ul>
+                </li>
+                <!--
+                <li class="-hasSubmenu">
+                    <a href="#" data-icon="list">Features</a>
+                    <ul>
+                        <li><a href="#" data-icon="message">Notifications</a></li>
+                    </ul>
+                </li>
+                -->
+                <li class="-hasSubmenu">
+                    <a href="#" data-icon="info">Information</a>
+                    <ul>
+                        <li><a href="#" data-icon="info" onclick="show_about(event); return false">About
+                                Xpra</a></li>
+                        <li><a href="#" data-icon="trending_up"
+                                onclick="show_sessioninfo(event); return false">Session Info</a></li>
+                    </ul>
+                </li>
+                <li><a href="#" data-icon="exit_to_app"
+                        onclick="client.disconnect_reason='User request'; client.close(); return false">Disconnect</a>
+                </li>
+            </ul>
+        </li>
+        <li class="-hasSubmenu -noChevron">
+            <a href="#" title="Open Windows" data-icon="filter"></a>
+            <ul id="open_windows_list">
+            </ul>
+        </li>
+        <li class="-hasSubmenu -noChevron">
+            <a href="#" id="fullscreen_button" title="Fullscreen" data-icon="fullscreen"></a>
+        </li>
+        <li class="-hasSubmenu -noChevron">
+            <a href="#" id="sound_button" title="Audio" data-icon="volume_off"></a>
+        </li>
+    </ul>
+    <div id="float_tray" class="menu-divright"></div>
+</div>

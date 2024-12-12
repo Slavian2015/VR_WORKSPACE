@@ -108,7 +108,7 @@ async function init() {
 
     spheres.push(sphere);
     lastFocusedSphere = sphere;
-    addSimpleButton();
+    // addSimpleButton();
 
     addSimpleWebDiv();
 }
