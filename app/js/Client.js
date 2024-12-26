@@ -2190,7 +2190,7 @@ XpraClient.prototype._new_window = function(wid, x, y, w, h, metadata, override_
 		return;
 	}
 
-	console.log("Metadata SIZES: ", metadata["size-constraints"]);
+
 	console.log("Metadata SIZES: ", metadata["size-constraints"]["minimum-size"]);
 	console.log("x, y, w, h: ", x, y, w, h);
 

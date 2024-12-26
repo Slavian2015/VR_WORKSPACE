@@ -2,12 +2,9 @@ import * as THREE from "three";
 import { OrbitControls } from "OrbitControls";
 import { CSS3DRenderer } from "CSS3DRenderer";
 import { VRButton } from "VRButton";
-import { addVideoSphere } from 'addVideoSphere';
+import { addSecondSphere } from 'addSecondSphere';
 
-import { CSS3DObject } from "CSS3DObject";
-import { divWindow } from 'divWindow';
-// import { CustomClientProtocol } from 'CustomClientProtocol';
-// const { ipcRenderer } = require('electron');
+
 
 let default_settings = {};
 let camera, scene, renderer, controls, cssRenderer;
@@ -108,9 +105,8 @@ async function init() {
 
     spheres.push(sphere);
     lastFocusedSphere = sphere;
-    // addSimpleButton();
 
-    addSimpleWebDiv();
+    addSimpleButton();
 }
 
 
@@ -272,71 +268,6 @@ function onMouseUp() {
     }
 };
 
-function addSimpleWebDiv() {
-    const div = divWindow();
-    const cssObject = new CSS3DObject(div);
-    cssObject.position.set(0, 0, -mainRadius + 100);
-    scene.add(cssObject);
-
-    // fetch('./xpra/index.html')
-    // fetch('./xpra/test.html')
-    // .then(response => response.text())
-    // .then(html => {
-    //     const div = document.createElement('div');
-    //     div.innerHTML = html;
-    //     const cssObject = new CSS3DObject(div);
-    //     cssObject.position.set(0, 0, -mainRadius + 100);
-    //     scene.add(cssObject);
-    // })
-    // .catch(error => {
-    //     console.error('Error loading local HTML file:', error);
-    // });
-}
-
-
-
-// function addSimpleWebDiv() {
-//     const serverUri = 'ws://0.0.0.0:14501';
-//     const video = Utilities.is_64bit()
-
-//     const client = new CustomClientProtocol(scene, serverUri, mainRadius);
-
-//     if (video) {
-//         // VPX checks. Will only succeed if we can use VideoDecoder.js
-//         client.check_encodings.push("h264");
-//         client.check_encodings.push("vp8");
-//         client.check_encodings.push("vp9");
-
-//         if (JSMpeg && JSMpeg.Renderer && JSMpeg.Decoder) {
-//             //TODO: should be moved to 'check_encodings'
-//             //and added to the decode worker:
-//             client.supported_encodings.push("mpeg1");
-//         }
-
-//     }
-
-//     for (const key of [
-//         "scaling.control",
-//         "initial_quality",
-//         "initial_speed",
-//         "auto_refresh_delay",
-//         "speed",
-//         "min-speed",
-//         "quality",
-//         "min-quality",
-//     ]) {
-//         const v = getintparam(key, -1);
-//         if (v >= 0) {
-//             client.set_encoding_option(key, v);
-//         }
-//     }
-//     client.offscreen_api = true;
-
-//     client.connect();
-
-// }
-
-
 function addSimpleButton() {
     const simpleButton = document.createElement('button');
     simpleButton.textContent = 'Open Window';
@@ -346,13 +277,14 @@ function addSimpleButton() {
     simpleButton.addEventListener('click', () => {
 
         // ipcRenderer.send('launch-calc');
-        const additional_sphere = addVideoSphere(mainRadius - (spheres.length) * 100, 'gnome-calculator', 14500);
+        const additional_sphere = addSecondSphere(mainRadius - (spheres.length) * 100, './assets/dog.png');
         spheres.push(additional_sphere);
         scene.add(additional_sphere);
         lastFocusedSphere = additional_sphere;
     });
     document.body.appendChild(simpleButton);
 }
+
 
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;

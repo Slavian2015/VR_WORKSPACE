@@ -126,73 +126,73 @@ function XpraWindow(client, canvas_state, wid, x, y, w, h, metadata, override_re
 	}
 	else if((this.windowtype == "") || (this.windowtype == "NORMAL") || (this.windowtype == "DIALOG") || (this.windowtype == "UTILITY")) {
 		this.resizable = true;
-		jQuery(this.div).addClass("border");
-		// add a title bar to this window if we need to
-		// create header
-		jQuery(this.div).prepend('<div id="head' + String(wid) + '" class="windowhead"> '+
-				'<span class="windowicon"><img id="windowicon' + String(wid) + '" /></span> '+
-				'<span class="windowtitle" id="title' + String(wid) + '">' + this.title + '</span> '+
-				'<span class="windowbuttons"> '+
-				'<span id="minimize' + String(wid) + '"><img src="icons/minimize.png" /></span> '+
-				'<span id="maximize' + String(wid) + '"><img src="icons/maximize.png" /></span> '+
-				'<span id="close' + String(wid) + '"><img src="icons/close.png" /></span> '+
-				'</span></div>');
+		// jQuery(this.div).addClass("border");
+		// // add a title bar to this window if we need to
+		// // create header
+		// jQuery(this.div).prepend('<div id="head' + String(wid) + '" class="windowhead"> '+
+		// 		'<span class="windowicon"><img id="windowicon' + String(wid) + '" /></span> '+
+		// 		'<span class="windowtitle" id="title' + String(wid) + '">' + this.title + '</span> '+
+		// 		'<span class="windowbuttons"> '+
+		// 		'<span id="minimize' + String(wid) + '"><img src="icons/minimize.png" /></span> '+
+		// 		'<span id="maximize' + String(wid) + '"><img src="icons/maximize.png" /></span> '+
+		// 		'<span id="close' + String(wid) + '"><img src="icons/close.png" /></span> '+
+		// 		'</span></div>');
 		// make draggable
-		jQuery(this.div).draggable({ cancel: "canvas" });
-		jQuery(this.div).on("dragstart",function(ev,ui){
-			client.do_window_mouse_click(ev, me, false);
-			client.mouse_grabbed = true;
-			me.set_focus_cb(me);
-		});
-		jQuery(this.div).on("dragstop",function(ev,ui){
-			client.mouse_grabbed = false;
-			me.handle_moved(ui);
-		});
+		// jQuery(this.div).draggable({ cancel: "canvas" });
+		// jQuery(this.div).on("dragstart",function(ev,ui){
+		// 	client.do_window_mouse_click(ev, me, false);
+		// 	client.mouse_grabbed = true;
+		// 	me.set_focus_cb(me);
+		// });
+		// jQuery(this.div).on("dragstop",function(ev,ui){
+		// 	client.mouse_grabbed = false;
+		// 	me.handle_moved(ui);
+		// });
 		// attach resize handles
-		jQuery(this.div).resizable({ helper: "ui-resizable-helper", "handles": "n, e, s, w, ne, se, sw, nw" });
+		// jQuery(this.div).resizable({ helper: "ui-resizable-helper", "handles": "n, e, s, w, ne, se, sw, nw" });
 		//jQuery(this.div).on("resize",jQuery.debounce(50, function(ev,ui) {
 		//  	me.handle_resized(ui);
 		//}));
-		jQuery(this.div).on("resizestart",function(ev,ui){
-			client.do_window_mouse_click(ev, me, false);
-			client.mouse_grabbed = true;
-		});
-		jQuery(this.div).on("resizestop",function(ev,ui){
-		  	me.handle_resized(ui);
-		  	me.set_focus_cb(me);
-			client.mouse_grabbed = false;
-			//workaround for the window going blank,
-			//just force a refresh:
-			setTimeout(function() {
-				me.client.request_refresh(me.wid);
-			}, 200);
-		});
-		this.d_header = '#head' + String(wid);
-		this.d_closebtn = '#close' + String(wid);
-		this.d_maximizebtn = '#maximize' + String(wid);
-		this.d_minimizebtn = '#minimize' + String(wid);
-		if (this.resizable) {
-			jQuery(this.d_header).dblclick(function() {
-				me.toggle_maximized();
-			});
-			jQuery(this.d_closebtn).click(function() {
-				window_closed_cb(me);
-			});
-			jQuery(this.d_maximizebtn).click(function() {
-				me.toggle_maximized();
-			});
-			jQuery(this.d_minimizebtn).click(function() {
-				me.toggle_minimized();
-			});
-		}
-		else {
-			jQuery(this.d_closebtn).hide();
-			jQuery(this.d_maximizebtn).hide();
-			jQuery('#windowlistitemmax' + String(wid)).hide();
-			jQuery(this.d_minimizebtn).hide();
-		}
+		// jQuery(this.div).on("resizestart",function(ev,ui){
+		// 	client.do_window_mouse_click(ev, me, false);
+		// 	client.mouse_grabbed = true;
+		// });
+		// jQuery(this.div).on("resizestop",function(ev,ui){
+		//   	me.handle_resized(ui);
+		//   	me.set_focus_cb(me);
+		// 	client.mouse_grabbed = false;
+		// 	//workaround for the window going blank,
+		// 	//just force a refresh:
+		// 	setTimeout(function() {
+		// 		me.client.request_refresh(me.wid);
+		// 	}, 200);
+		// });
+		// this.d_header = '#head' + String(wid);
+		// this.d_closebtn = '#close' + String(wid);
+		// this.d_maximizebtn = '#maximize' + String(wid);
+		// this.d_minimizebtn = '#minimize' + String(wid);
+		// if (this.resizable) {
+		// 	jQuery(this.d_header).dblclick(function() {
+		// 		me.toggle_maximized();
+		// 	});
+		// 	jQuery(this.d_closebtn).click(function() {
+		// 		window_closed_cb(me);
+		// 	});
+		// 	jQuery(this.d_maximizebtn).click(function() {
+		// 		me.toggle_maximized();
+		// 	});
+		// 	jQuery(this.d_minimizebtn).click(function() {
+		// 		me.toggle_minimized();
+		// 	});
+		// }
+		// else {
+		// 	jQuery(this.d_closebtn).hide();
+		// 	jQuery(this.d_maximizebtn).hide();
+		// 	jQuery('#windowlistitemmax' + String(wid)).hide();
+		// 	jQuery(this.d_minimizebtn).hide();
+		// }
 		// adjust top offset
-		this.topoffset = this.topoffset + parseInt(jQuery(this.d_header).css('height'), 10);
+		// this.topoffset = this.topoffset + parseInt(jQuery(this.d_header).css('height'), 10);
 		// stop propagation if we're over the window:
 		jQuery(this.div).mousedown(function (e) {
 			e.stopPropagation();
@@ -203,9 +203,9 @@ function XpraWindow(client, canvas_state, wid, x, y, w, h, metadata, override_re
 		//	e.stopPropagation();
 		//});
 		// assign some interesting callbacks
-		jQuery(this.d_header).click(function() {
-			me.client._window_set_focus(me);
-		});
+		// jQuery(this.d_header).click(function() {
+		// 	me.client._window_set_focus(me);
+		// });
 	}
 
 	// create the spinner overlay div
@@ -548,17 +548,14 @@ XpraWindow.prototype.apply_size_constraints = function() {
 	if (!this.resizable) {
 		return;
 	}
-	if (this.maximized) {
-		jQuery(this.div).draggable('disable');
-	}
-	else {
-		jQuery(this.div).draggable('enable');
-	}
+	// if (this.maximized) {
+	// 	jQuery(this.div).draggable('disable');
+	// }
+	// else {
+	// 	jQuery(this.div).draggable('enable');
+	// }
 	var hdec = 0, wdec = 0;
-	if (this.decorations) {
-		//adjust for header
-		hdec = jQuery('#head' + this.wid).outerHeight(true);
-	}
+
 	var min_size = null, max_size = null;
 	var size_constraints = this.metadata["size-constraints"];
 	if (size_constraints) {
@@ -575,25 +572,8 @@ XpraWindow.prototype.apply_size_constraints = function() {
 		maxw = max_size[0]+wdec;
 		maxh = max_size[1]+hdec;
 	}
-	if(minw>0 && minw==maxw && minh>0 && minh==maxh) {
-		jQuery(this.d_maximizebtn).hide();
-		jQuery('#windowlistitemmax' + String(this.wid)).hide();
-		jQuery(this.div).resizable('disable');
-	} else {
-		jQuery(this.d_maximizebtn).show();
-		if (!this.maximized) {
-			jQuery(this.div).resizable('enable');
-		}
-		else {
-			jQuery(this.div).resizable('disable');
-		}
-	}
-	if (!this.maximized) {
-		jQuery(this.div).resizable("option", "minWidth", minw);
-		jQuery(this.div).resizable("option", "minHeight", minh);
-		jQuery(this.div).resizable("option", "maxWidth", maxw);
-		jQuery(this.div).resizable("option", "maxHeight", maxh);
-	}
+
+
 	//TODO: aspectRatio, grid
 }
 
@@ -728,21 +708,21 @@ XpraWindow.prototype.set_fullscreen = function(fullscreen) {
 
 
 XpraWindow.prototype._set_decorated = function(decorated) {
-	this.topoffset = parseInt(jQuery(this.div).css('border-top-width'), 10);
-	if (decorated) {
-		jQuery('#head' + this.wid).show();
-		jQuery(this.div).removeClass("undecorated");
-		jQuery(this.div).addClass("window");
-		if (this.d_header) {
-			this.topoffset = this.topoffset + parseInt(jQuery(this.d_header).css('height'), 10);
-			this.debug("geometry", "_set_decorated(", decorated, ") new topoffset=", self.topoffset);
-		}
-	}
-	else {
-		jQuery('#head' + this.wid).hide();
-		jQuery(this.div).removeClass("window");
-		jQuery(this.div).addClass("undecorated");
-	}
+	// this.topoffset = parseInt(jQuery(this.div).css('border-top-width'), 10);
+	// if (decorated) {
+	// 	jQuery('#head' + this.wid).show();
+	// 	jQuery(this.div).removeClass("undecorated");
+	// 	jQuery(this.div).addClass("window");
+	// 	if (this.d_header) {
+	// 		this.topoffset = this.topoffset + parseInt(jQuery(this.d_header).css('height'), 10);
+	// 		this.debug("geometry", "_set_decorated(", decorated, ") new topoffset=", self.topoffset);
+	// 	}
+	// }
+	// else {
+	// 	jQuery('#head' + this.wid).hide();
+	// 	jQuery(this.div).removeClass("window");
+	// 	jQuery(this.div).addClass("undecorated");
+	// }
 }
 
 /**
@@ -824,26 +804,27 @@ XpraWindow.prototype.handle_moved = function(e) {
  * if it is fullscreen or maximized.
  */
 XpraWindow.prototype.screen_resized = function() {
-	this.debug("geometry", "screen_resized() server_is_desktop=", this.client.server_is_desktop, ", server_is_shadow=", this.client.server_is_shadow);
-	if (this.client.server_is_desktop) {
-		this.match_screen_size();
-	}
-	if (this.client.server_is_shadow) {
-		//note: when this window is created,
-		// it may not have been added to the client's list yet
-		var ids = Object.keys(this.client.id_to_window);
-		if (ids.length==0 || ids[0]==this.wid) {
-			//single window, recenter it:
-			this.recenter();
-		}
-	}
-	if (this.fullscreen || this.maximized) {
-		this.fill_screen();
-		this.handle_resized();
-	}
-	if (!this.ensure_visible()) {
-		this.geometry_cb(this);
-	}
+	this.match_screen_size()
+	// this.debug("geometry", "screen_resized() server_is_desktop=", this.client.server_is_desktop, ", server_is_shadow=", this.client.server_is_shadow);
+	// if (this.client.server_is_desktop) {
+	// 	this.match_screen_size();
+	// }
+	// if (this.client.server_is_shadow) {
+	// 	//note: when this window is created,
+	// 	// it may not have been added to the client's list yet
+	// 	var ids = Object.keys(this.client.id_to_window);
+	// 	if (ids.length==0 || ids[0]==this.wid) {
+	// 		//single window, recenter it:
+	// 		this.recenter();
+	// 	}
+	// }
+	// if (this.fullscreen || this.maximized) {
+	// 	this.fill_screen();
+	// 	this.handle_resized();
+	// }
+	// if (!this.ensure_visible()) {
+	// 	this.geometry_cb(this);
+	// }
 };
 
 XpraWindow.prototype.recenter = function(force_update_geometry) {
