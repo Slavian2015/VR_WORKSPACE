@@ -46,48 +46,6 @@ function getCloseButtonSphere(radius, phiStart, thetaStart) {
 };
 
 
-// function addSecondSphere(renderRadius, picture) {
-//     const sphereGeometry = new THREE.SphereGeometry(
-//         renderRadius, // radius
-//         64, // widthSegments
-//         64, // heightSegments
-//         4.4, // phiStart 4.5
-//         0.5, // phiLength 0.25
-//         1.3, // thetaStart 1.45
-//         0.5 // thetaLength 0.25
-//     );
-
-//     const textureLoader = new THREE.TextureLoader();
-
-
-//     const texture = textureLoader.load(picture, () => {
-//         texture.wrapS = THREE.RepeatWrapping;
-//         texture.wrapT = THREE.RepeatWrapping;
-//         texture.repeat.set(1, 1);
-//     });
-//     texture.colorSpace = THREE.SRGBColorSpace;
-//     const sphereMaterial = new THREE.MeshBasicMaterial({
-//         map: texture,
-//         side: THREE.DoubleSide,
-//         transparent: true,
-//         opacity: 1,
-//     });
-
-//     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-//     sphere.position.set(0, 0, renderRadius/2000);
-//     // sphere.renderOrder = renderOrder;
-
-//     // addSphereControls(
-//     //     sphereGeometry.parameters.phiStart,
-//     //     sphereGeometry.parameters.phiLength,
-//     //     sphereGeometry.parameters.thetaStart,
-//     //     sphereGeometry.parameters.thetaLength,
-//     //     sphere
-//     // );
-
-//     return sphere;
-// }
-
 function addSecondSphere(renderRadius, picture) {
     const innerSphereGeometry = new THREE.SphereGeometry(
         renderRadius,
@@ -99,19 +57,21 @@ function addSecondSphere(renderRadius, picture) {
         0.44 // thetaLength
     );
 
+    let textureVid = document.createElement("video")
+    textureVid.src = `./assets/spinner.mp4`;
+    textureVid.loop = true;
+    textureVid.play();
 
-    const textureLoader = new THREE.TextureLoader();
 
-    const texture = textureLoader.load(picture, () => {
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1, 1);
-    });
-    texture.colorSpace = THREE.SRGBColorSpace;
+    // Load video texture
+    let videoTexture = new THREE.VideoTexture(textureVid);
+    videoTexture.format = THREE.RGBFormat;
+    videoTexture.minFilter = THREE.NearestFilter;
+    videoTexture.maxFilter = THREE.NearestFilter;
+    videoTexture.generateMipmaps = false;
     
-
     const sphereMaterial = new THREE.MeshBasicMaterial({
-        map: texture,
+        map: videoTexture,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,
@@ -122,7 +82,6 @@ function addSecondSphere(renderRadius, picture) {
     innerSphere.userData.isWindow = true;
     innerSphere.userData.isCloseButton = false;
     innerSphere.position.set(0, 0, renderRadius / 2000);
-
 
     const button = getCloseButtonSphere(
         renderRadius,
