@@ -5,8 +5,6 @@ import { VRButton } from "VRButton";
 import { addSecondSphere } from 'addSecondSphere';
 
 
-
-let default_settings = {};
 let camera, scene, renderer, controls, cssRenderer;
 let mainRadius = 5000;
 

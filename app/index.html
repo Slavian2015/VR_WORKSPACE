@@ -8,56 +8,6 @@
     <title>Electron WebXR 3D Workspace</title>
     <link rel="icon" href="./assets/favicon.ico" type="image/x-icon">
     <link rel="stylesheet" href="./styles.css">
-    <link rel="stylesheet" href="./css/client.css">
-    <link rel="stylesheet" href="./css/spinner.css">
-
-    <!-- Load jQuery first -->
-    <script type="text/javascript" src="./node_modules/jquery/dist/jquery.min.js"></script>
-
-    <script>
-        window.jQuery || document.write('<script src="./node_modules/jquery/dist/jquery.min.js"><\/script>')
-    </script>
-
-    <!-- Then load jQuery UI -->
-
-    <script type="text/javascript" src="./js/lib/es6-shim.js"></script>
-    <script type="text/javascript" src="./js/lib/AudioContextMonkeyPatch.js"></script>
-
-    <script type="text/javascript" src="./js/lib/jquery-ui.js"></script>
-    <script type="text/javascript" src="./js/lib/jquery.ba-throttle-debounce.js"></script>
-
-    <script type="text/javascript" src="./js/lib/bencode.js"></script>
-    <script type="text/javascript" src="./js/lib/zlib.js"></script>
-    <script type="text/javascript" src="./js/lib/lz4.js"></script>
-    <script type="text/javascript" src="./js/lib/brotli_decode.js"></script>
-    <script type="text/javascript" src="./js/lib/forge.js"></script>
-
-    <script type="text/javascript" src="./js/lib/jsmpeg.js"></script>
-    <script type="text/javascript" src="./js/lib/broadway/Decoder.js"></script>
-    <script type="text/javascript" src="./js/lib/aurora/aurora.js"></script>
-    <!--
-		<script type="text/javascript" src="js/lib/aurora/mp3.js"></script>
-		<script type="text/javascript" src="js/lib/aurora/flac.js"></script>
-		<script type="text/javascript" src="js/lib/aurora/aac.js"></script>
-		-->
-    <script type="text/javascript" src="./js/lib/aurora/aurora-xpra.js"></script>
-
-    <script type="text/javascript" src="./js/lib/FileSaver.js"></script>
-    <script type="text/javascript" src="./js/lib/jszip.js"></script>
-
-    <script type="text/javascript" src="./js/Keycodes.js"></script>
-    <script type="text/javascript" src="./js/Protocol.js"></script>
-    <script type="text/javascript" src="./js/Window.js"></script>
-    <script type="text/javascript" src="./js/Notifications.js"></script>
-    <script type="text/javascript" src="./js/Utilities.js"></script>
-    <script type="text/javascript" src="./js/MediaSourceUtil.js"></script>
-    <script type="text/javascript" src="./js/Client.js"></script>
-
-    <link rel="stylesheet" type="text/css" href="./css/menu.css" />
-    <script type="application/javascript" src="./js/Menu.js"></script>
-    <script type="application/javascript" src="./js/Menu-custom.js"></script>
-    <link rel="stylesheet" type="text/css" href="./css/menu-skin.css" />
-    <link rel="stylesheet" type="text/css" href="./css/icon.css" />
 
     <script type="importmap">
         {
@@ -67,21 +17,13 @@
                 "CSS3DRenderer": "./node_modules/three/examples/jsm/renderers/CSS3DRenderer.js",
                 "CSS3DObject": "./node_modules/three/examples/jsm/renderers/CSS3DRenderer.js",
                 "VRButton": "./node_modules/three/examples/jsm/webxr/VRButton.js",
-                "addSecondSphere": "./windows/second-sphere.js",
-                "addAppSphere": "./windows/app-sphere.js",
-                "addVideoSphere": "./windows/video-sphere.js",
-                "divWindow": "./windows/div-window.js"
+                "addSecondSphere": "./windows/second-sphere.js"
             }
         }
     </script>
 </head>
 
 <body>
-    <script type="text/javascript">
-        $(document).ready(function () {
-            console.log("jQuery and jQuery UI are loaded");
-        });
-    </script>
     <canvas id="xr-canvas"></canvas>
     <script type="module" src="./sphere.js"></script>
 </body>
