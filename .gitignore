@@ -175,3 +175,8 @@ app/assets/
 app/release/
 client/src/assets/pano.jpg
 app/html5
+/node_modules
+app/bg/
+/bin/
+/certs/
+/params.json*

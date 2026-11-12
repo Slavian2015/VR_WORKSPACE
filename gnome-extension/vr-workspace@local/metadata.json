@@ -1,0 +1,6 @@
+{
+  "uuid": "vr-workspace@local",
+  "name": "VR Workspace",
+  "description": "Tells the VR Workspace server whether a window is fullscreen, so the headset can go dark around a film.",
+  "shell-version": ["46"]
+}

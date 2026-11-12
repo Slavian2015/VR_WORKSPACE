@@ -1,0 +1,12 @@
+{
+  "name": "vr-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test && /usr/bin/python3 -m unittest -q test_capture"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}

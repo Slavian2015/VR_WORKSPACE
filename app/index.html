@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<!-- Opened from the iPhone home screen the page gets the whole screen: Safari on iPhone has no fullscreen API. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>VR Workspace</title>
+<link rel="icon" href="assets/favicon.ico">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
+  canvas { position: fixed; inset: 0; display: block; }
+  #start { position: fixed; inset: 0; z-index: 1; padding: 24px; border: 0; background: #000c; color: #fff; font: 600 24px system-ui; }
+</style>
+<button id="start">Нажмите, чтобы начать</button>
+<script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
+<script type="module" src="main.js"></script>
