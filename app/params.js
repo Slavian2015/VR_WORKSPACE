@@ -11,13 +11,14 @@ export const MONITOR_SPEC = {
   span: [90, 30, 180, 1, 'Ширина, ° (на расстоянии 1,5 м)'],
   curve: [100, 0, 100, 5, 'Изгиб, % (0 — плоский)'],
 }
-// Headset calibration. Defaults are a starting guess for iPhone 15 Pro in a Gear VR, tune them by eye.
+// Headset calibration for iPhone 15 Pro in a Gear VR. lensDist, k1 and k2 were found in the user's headset; the rest is a starting guess.
 export const LENS_SPEC = {
   screenW: [141, 100, 180, 0.5, 'Ширина экрана телефона, мм'],
   ipd: [63, 54, 72, 0.5, 'Расстояние между линзами, мм'],
-  lensDist: [40, 25, 60, 0.5, 'От экрана до линзы, мм'],
-  k1: [0.25, 0, 1, 0.01, 'Искажение линзы k1'],
-  k2: [0.3, 0, 1, 0.01, 'Искажение линзы k2'],
+  lensDist: [42, 25, 60, 0.5, 'От экрана до линзы, мм'], // 42: measured in the user's headset, the grid stands still at it
+  k1: [0.52, 0, 1, 0.01, 'Искажение линзы k1'], // 0.52 and 0.6: tuned by the user until the grid lines were straight
+  k2: [0.6, 0, 1, 0.01, 'Искажение линзы k2'],
+  chroma: [0, -3, 3, 0.1, 'Цветные каймы, %'],
   cx: [0, -10, 10, 0.25, 'Сдвиг центра по горизонтали, мм'],
   cy: [0, -10, 10, 0.25, 'Сдвиг центра по вертикали, мм'],
 }
@@ -25,7 +26,7 @@ const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves 
 
 // Server answer -> full settings: every key has a value, monitors included.
 function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, camera: false, virtualSize: answer.virtualSizes[0] }
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, camera: false, hideMonitors: false, virtualSize: answer.virtualSizes[0] }
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
   answer.monitors.forEach(({ id }, i) => {
     for (const [key, spec] of Object.entries(MONITOR_SPEC)) all[`${id}.${key}`] = key === 'yaw' ? SLOT_YAW[i] : spec[0]

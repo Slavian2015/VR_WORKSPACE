@@ -35,6 +35,9 @@ try {
 let params = {}
 try { params = JSON.parse(fs.readFileSync(PARAMS_FILE, 'utf8')) } catch {}
 let phoneSeen = 0 // when a device other than this PC last asked for the settings
+// The headset's view direction, for the spectator page (index.html?spectator); the phone sends it only while
+// somebody watches, which it learns from `spectator` in the settings answer.
+let pose = 'null', spectatorSeen = 0
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
 const live = { fullscreen: false, passthrough: false }
@@ -84,6 +87,17 @@ async function handle(req, res) {
     return res.writeHead(204).end()
   }
 
+  if (url === '/pose' && req.method === 'POST') {
+    const sent = JSON.parse(await readBody(req))
+    if (!Array.isArray(sent) || sent.length !== 6 || !sent.every(Number.isFinite)) throw new SyntaxError('six numbers expected')
+    pose = JSON.stringify(sent)
+    return res.writeHead(204).end()
+  }
+  if (url === '/pose') {
+    spectatorSeen = Date.now()
+    return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(pose)
+  }
+
   // Live settings: pages poll GET a few times a second, POST merges a JSON object into them (null removes a key).
   // Polling, not server-sent events: pushes did not reach Safari on the iPhone, plain requests do.
   if (url === '/params' && req.method === 'POST') {
@@ -107,7 +121,7 @@ async function handle(req, res) {
   if (url === '/params') {
     if (!local) phoneSeen = Date.now()
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      .end(JSON.stringify({ ...params, ...CAPTURE, ...live, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000 }))
+      .end(JSON.stringify({ ...params, ...CAPTURE, ...live, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 }))
   }
 
   if (url === '/bgs') {

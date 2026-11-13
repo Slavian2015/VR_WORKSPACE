@@ -63,7 +63,8 @@ on the virtual monitor). The line at the top tells whether the phone is connecte
 - **Background** — a 360 photo or video and its rotation, or plain black. With the GNOME extension (see below) it
   turns black by itself while some window is fullscreen, for watching films.
 - **Lens calibration** (folded at the bottom) — start with "lens distance" and "lens separation" until the two
-  pictures merge without eye strain, then k1/k2 until straight lines of the desktop look straight at the edges.
+  pictures merge without eye strain, then k1/k2 until straight lines look straight at the edges, then "colour fringes" until white text near the
+  edge of the view has no red and blue outlines (the lens spreads colours; the test grid shows it best).
 
 Settings are saved in `params.json`. After an update of the code the pages reload themselves; the phone then asks for a tap again.
 Changing the monitors does not reload anything.
@@ -110,6 +111,20 @@ command and, for example, Super+X.
 
 The picture is fixed to the head, one camera for both eyes, and covers only what the camera sees; set "camera view
 angle" so that things look their real size. The camera must have a free view out of the headset.
+
+## Recording what you see
+
+Open http://localhost:8080/?spectator on the PC and click once: the window shows one flat picture of what the
+headset wearer is looking at (no stereo, no lens distortion) and follows the head. `?spectator=110` sets the width
+of the view in degrees (90 by default). Record that window with any screen recorder, for example GNOME's own:
+PrtSc, switch to video, select the area, record. The window has no sound and does not show the phone camera.
+
+## Measuring the field of view
+
+Pick the background `test_grid` and tick "hide monitors" on the control page. Keep the head still and read the
+numbers at the edges of what you see: right minus left on the yellow ruler is the horizontal angle, top minus
+bottom on a blue ruler is the vertical one (small ticks are 1°). Turn the head to check the calibration: the grid
+must stay still like a wall; if it swims, tune "lens distance" until it does not, the angles are true only then.
 
 ## Backgrounds
 

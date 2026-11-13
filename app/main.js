@@ -5,6 +5,11 @@ import { watchParams } from './params.js'
 import { deviceQuaternion, gazeOf, monitorFrame } from './orient.js'
 
 const DEG = Math.PI / 180
+// index.html?spectator on the PC: one flat picture of what the headset wearer looks at, to watch or to record.
+// The same shader with lens separation and lens distortion set to zero is an ordinary camera. A number sets the
+// width of the view in degrees: ?spectator=100.
+const SPECTATOR = new URLSearchParams(location.search).has('spectator')
+const SPECTATOR_FOV = (+new URLSearchParams(location.search).get('spectator') || 90) * DEG
 const WIDTH_AT = 1.5 // metres: a monitor's width in degrees is what it takes up at this distance
 
 const renderer = new THREE.WebGLRenderer({ powerPreference: 'high-performance' })
@@ -45,7 +50,7 @@ function build(count) {
     uBg: { value: background }, uToBg: { value: new THREE.Matrix3() },
     uCam: { value: null }, uCamTan: { value: new THREE.Vector2() },
     uRes: { value: new THREE.Vector2() }, uCenter: { value: new THREE.Vector2() },
-    uPxPerMm: { value: 1 }, uIpd: { value: 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uDist: { value: 1.5 },
+    uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 },
   }
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -54,30 +59,43 @@ function build(count) {
       ${count ? /* glsl: an array of size 0 does not compile */ `
       uniform sampler2D uMonitor[${count}];
       uniform mat3 uToMonitor[${count}];         // head space -> the monitor's own frame
-      uniform vec3 uSize[${count}];              // angular width in rad, height / width, curve (0 flat .. 1 around the viewer)` : ''}
+      uniform vec3 uSize[${count}];              // angular width in rad (0: hidden), height / width, curve (0 flat .. 1 around the viewer)` : ''}
       uniform sampler2D uBg, uCam;
       uniform mat3 uToBg;                        // head space -> the panorama
       uniform vec2 uCamTan;                      // tangents of half the phone camera's view angles; 0: camera not shown
       uniform vec2 uRes, uCenter;                // px, mm
       uniform float uPxPerMm, uIpd, uLensDist, uK1, uK2;  // lengths in mm
+      uniform float uChroma;                     // how much more the lens magnifies blue than green, and green than red
       uniform float uDist;                       // m
+
+      // View ray in head space through a point of the screen; q: its offset from the lens axis over the lens distance.
+      vec3 ray(vec2 q) {
+        float r2 = dot(q, q);
+        return normalize(vec3(q * (1.0 + uK1 * r2 + uK2 * r2 * r2), -1.0)); // the lens magnifies more toward its edge
+      }
+
+      vec3 background(vec3 dir) {
+        if (uCamTan.x > 0.0) { // the phone camera instead of the panorama: it is fixed to the head, like a window
+          vec2 c = dir.xy / (-dir.z * uCamTan);
+          return texture(uCam, c * 0.5 + 0.5).rgb * step(max(abs(c.x), abs(c.y)), 1.0);
+        }
+        vec3 sky = uToBg * dir;
+        return texture(uBg, vec2(atan(sky.x, -sky.z) / 6.2831853 + 0.5, asin(clamp(sky.y, -1.0, 1.0)) / 3.1415927 + 0.5)).rgb;
+      }
 
       void main() {
         vec2 p = (gl_FragCoord.xy - 0.5 * uRes) / uPxPerMm - uCenter; // mm from the point between the lenses
         float side = p.x < 0.0 ? -1.0 : 1.0;                           // left half of the phone is the left eye
-        vec2 q = (p - vec2(side * 0.5 * uIpd, 0.0)) / uLensDist;       // tangent of the angle from the lens axis
-        float r2 = dot(q, q);
-        q *= 1.0 + uK1 * r2 + uK2 * r2 * r2;                           // the lens magnifies more toward its edge
-        vec3 dir = normalize(vec3(q, -1.0));                           // view ray and eye position, in head space
+        vec2 fromAxis = p - vec2(side * 0.5 * uIpd, 0.0);              // mm from the lens axis
+        vec3 dir = ray(fromAxis / uLensDist);                          // view ray and eye position, in head space
         vec3 eye = vec3(side * 0.0005 * uIpd, 0.0, 0.0);               // m
 
-        vec3 color;
-        if (uCamTan.x > 0.0) { // the phone camera instead of the panorama: it is fixed to the head, like a window
-          vec2 c = dir.xy / (-dir.z * uCamTan);
-          color = texture(uCam, c * 0.5 + 0.5).rgb * step(max(abs(c.x), abs(c.y)), 1.0);
-        } else {
-          vec3 sky = uToBg * dir;
-          color = texture(uBg, vec2(atan(sky.x, -sky.z) / 6.2831853 + 0.5, asin(clamp(sky.y, -1.0, 1.0)) / 3.1415927 + 0.5)).rgb;
+        // The lens spreads colours: the blue picture comes out larger than the red one, more so toward the edge.
+        // So red is drawn as if its pixel were a little nearer to the lens axis and blue a little farther.
+        vec3 color = background(dir);
+        if (uChroma != 0.0) {
+          color.r = background(ray(fromAxis * (1.0 - uChroma) / uLensDist)).r;
+          color.b = background(ray(fromAxis * (1.0 + uChroma) / uLensDist)).b;
         }
         ${screens.map((_, i) => /* glsl: sampler arrays accept only constant indexes, so the loop is unrolled here */ `{
           // A monitor faces -Z of its own frame, its centre uDist away. Its width in metres is fixed: an arc of
@@ -100,7 +118,15 @@ function build(count) {
           vec2 edge = min(uv, 1.0 - uv) / fwidth(uv);
           float inside = clamp(min(edge.x, edge.y), 0.0, 1.0); // 1 px soft edge
           vec2 dx = dFdx(uv), dy = dFdy(uv);                   // taken outside the branch, where they are defined
-          if (inside > 0.0) color = mix(color, textureGrad(uMonitor[${i}], uv, dx, dy).rgb, inside);
+          if (uSize[${i}].x > 0.0 && inside > 0.0) {
+            vec3 picture = textureGrad(uMonitor[${i}], uv, dx, dy).rgb;
+            if (uChroma != 0.0) { // the same shift of red and blue, as a step along how uv changes across the screen
+              vec2 shift = uChroma * uPxPerMm * (dx * fromAxis.x + dy * fromAxis.y);
+              picture.r = textureGrad(uMonitor[${i}], uv - shift, dx, dy).r;
+              picture.b = textureGrad(uMonitor[${i}], uv + shift, dx, dy).b;
+            }
+            color = mix(color, picture, inside);
+          }
         }`).join('')}
         gl_FragColor = vec4(color, 1.0);
       }`,
@@ -154,7 +180,7 @@ async function syncCamera(wanted) {
 const head = new THREE.Quaternion()
 let sensorSeen = false
 addEventListener('deviceorientation', e => {
-  if (e.alpha == null) return
+  if (e.alpha == null || SPECTATOR) return
   deviceQuaternion(e.alpha, e.beta, e.gamma, screen.orientation?.angle ?? window.orientation ?? 0, head)
   if (!sensorSeen) centring = 'heading'
   sensorSeen = true
@@ -162,7 +188,7 @@ addEventListener('deviceorientation', e => {
 // Preview on a PC without sensors: drag to look around.
 let dragYaw = 0, dragPitch = 0
 addEventListener('pointermove', e => {
-  if (!e.buttons || sensorSeen) return
+  if (!e.buttons || sensorSeen || SPECTATOR) return
   dragYaw += e.movementX * 0.003
   dragPitch = THREE.MathUtils.clamp(dragPitch + e.movementY * 0.003, -1.5, 1.5)
   head.setFromEuler(new THREE.Euler(dragPitch, dragYaw, 0, 'YXZ'))
@@ -180,14 +206,19 @@ watchParams(p => {
   if (recenterSeen !== undefined && p.recenter !== recenterSeen) centring = 'gaze'
   recenterSeen = p.recenter
   settings = p
-  uniforms.uIpd.value = p.ipd
-  uniforms.uLensDist.value = p.lensDist
-  uniforms.uK1.value = p.k1
-  uniforms.uK2.value = p.k2
-  uniforms.uCenter.value.set(p.cx, p.cy)
+  if (SPECTATOR) { // a plain camera: the screen is as wide as the wanted view at this distance; the rest stays zero
+    uniforms.uLensDist.value = p.screenW / 2 / Math.tan(SPECTATOR_FOV / 2)
+  } else {
+    uniforms.uIpd.value = p.ipd
+    uniforms.uLensDist.value = p.lensDist
+    uniforms.uK1.value = p.k1
+    uniforms.uK2.value = p.k2
+    uniforms.uChroma.value = p.chroma / 100
+    uniforms.uCenter.value.set(p.cx, p.cy)
+  }
   uniforms.uDist.value = p.dist
   setBackground(p.fullscreen && p.autoBlack ? 'black' : p.bg) // dark around a film that fills a monitor
-  syncCamera(p.camera)
+  syncCamera(p.camera && !SPECTATOR) // the spectator must not open the PC's own webcam
   startStreams()
 })
 
@@ -195,7 +226,8 @@ const Y = new THREE.Vector3(0, 1, 0), rotation = new THREE.Quaternion(), matrix 
 const toMatrix3 = (target, q) => target.setFromMatrix4(matrix.makeRotationFromQuaternion(q))
 renderer.setAnimationLoop(() => {
   if (!settings) return
-  if (centring) Object.assign(anchor, gazeOf(head))
+  if (SPECTATOR) head.slerp(poseTarget, 0.35) // glide between the 30 readings a second
+  else if (centring) Object.assign(anchor, gazeOf(head))
   if (centring === 'heading') anchor.pitch = 0
   centring = null
   // The panorama keeps its horizon; it turns with the heading of the anchor and with the user's own offset.
@@ -203,7 +235,7 @@ renderer.setAnimationLoop(() => {
   settings.monitors.forEach(({ id }, i) => {
     toMatrix3(uniforms.uToMonitor.value[i], monitorFrame(anchor, settings[`${id}.yaw`], settings[`${id}.pitch`], rotation).invert().multiply(head))
     const { videoWidth, videoHeight } = screens[i].video
-    uniforms.uSize.value[i].set(settings[`${id}.span`] * DEG, videoWidth ? videoHeight / videoWidth : 9 / 16, settings[`${id}.curve`] / 100)
+    uniforms.uSize.value[i].set(settings.hideMonitors ? 0 : settings[`${id}.span`] * DEG, videoWidth ? videoHeight / videoWidth : 9 / 16, settings[`${id}.curve`] / 100)
   })
   const shown = settings.passthrough && phoneCam?.video?.videoWidth ? phoneCam : null
   const tan = shown ? Math.tan(settings.camFov * DEG / 2) : 0
@@ -214,6 +246,24 @@ renderer.setAnimationLoop(() => {
   uniforms.uPxPerMm.value = canvas.width / settings.screenW
   renderer.render(scene, camera)
 })
+
+// --- the headset tells the spectator page where it looks
+const pause = ms => new Promise(done => setTimeout(done, ms))
+const poseTarget = new THREE.Quaternion()
+async function sharePose() {
+  for (;;) {
+    try {
+      if (SPECTATOR) {
+        const sent = await (await fetch('/pose')).json()
+        if (sent) { poseTarget.fromArray(sent); anchor.yaw = sent[4]; anchor.pitch = sent[5] }
+      } else if (settings?.spectator) {
+        await fetch('/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch]) })
+      }
+    } catch {} // the server is restarting: go on asking
+    await pause(SPECTATOR || settings?.spectator ? 33 : 500)
+  }
+}
+sharePose()
 
 // --- picture and sound from the PC (WebRTC; the WHEP handshake goes through our own server)
 // Returns a function that stops the stream for good.
@@ -256,7 +306,7 @@ let tapped = false, soundOn = false
 function startStreams() { // called after the tap and after every change of settings: starts what is not running yet
   if (!tapped || !settings) return
   screens.forEach((screen, i) => screen.stop ??= receive(settings.monitors[i].id, 'video', screen.video))
-  if (!soundOn) receive('audio', 'audio', sound)
+  if (!soundOn && !SPECTATOR) receive('audio', 'audio', sound) // on the PC it would play the PC's sound back into itself
   soundOn = true
 }
 const keepAwake = () => navigator.wakeLock?.request('screen').catch(() => {})

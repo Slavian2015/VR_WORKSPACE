@@ -25,6 +25,7 @@
 
 <label>Фон 360 <select id="bg"><option value="black">чёрный</option></select></label>
 <label class="check"><input id="autoBlack" type="checkbox">Чёрный фон, пока какое-нибудь окно развёрнуто на весь экран</label>
+<label class="check"><input id="hideMonitors" type="checkbox">Скрыть мониторы (чтобы рассмотреть фон, например тестовую сетку)</label>
 <label class="check"><input id="camera" type="checkbox">Держать камеру телефона включённой (телефон спросит разрешение, пока он в руках)</label>
 <button id="passthrough">Фон с камеры телефона: включить</button>
 <div id="layout"></div>
@@ -68,6 +69,7 @@
   $('bg').onchange = () => setParams({ bg: $('bg').value })
   $('autoBlack').onchange = () => setParams({ autoBlack: $('autoBlack').checked })
   $('camera').onchange = () => setParams({ camera: $('camera').checked })
+  $('hideMonitors').onchange = () => setParams({ hideMonitors: $('hideMonitors').checked })
   $('passthrough').onclick = () => fetch('/toggle/passthrough', { method: 'POST' })
   $('virtual').onchange = () => $('virtual').reportValidity() && setParams({ virtual: +$('virtual').value })
   $('virtualSize').onchange = () => setParams({ virtualSize: $('virtualSize').value })
@@ -97,6 +99,7 @@
     if ($('virtualSize') !== document.activeElement) $('virtualSize').value = p.virtualSize
     $('autoBlack').checked = p.autoBlack
     $('camera').checked = p.camera
+    $('hideMonitors').checked = p.hideMonitors
     $('passthrough').textContent = `Фон с камеры телефона: ${p.passthrough ? 'выключить' : 'включить'}`
     $('passthrough').disabled = !p.camera
     $('status').textContent = p.phoneOnline

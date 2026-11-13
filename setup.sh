@@ -35,6 +35,9 @@ for f in app/assets/*.png app/assets/*.jpg; do
   ffmpeg -v error -y -i "$f" -vf scale=4096:2048 -q:v 3 "$out"
 done
 
+# A panorama with a grid in degrees, to read the field of view inside the headset.
+[ -f app/bg/test_grid.png ] || ./test_grid.py
+
 # A sample video panorama to try video backgrounds with: the first photo with slowly cycling colours, a seamless 10 s loop.
 if [ ! -f app/bg/video_test.mp4 ]; then
   ffmpeg -v error -y -loop 1 -i app/bg/old_field.jpg -t 10 -r 30 -vf "scale=3840:1920,hue=h=36*t" \
