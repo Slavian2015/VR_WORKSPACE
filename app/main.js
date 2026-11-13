@@ -175,7 +175,9 @@ function setBackground(src) {
 // --- the phone's own camera, for pass-through and for the window on the keyboard. It is open only while its picture
 // can be seen, and closed completely otherwise (the drawing loop decides): the user wants the camera sign of the
 // phone to be off the rest of the time, and pausing the camera does not put it out in Safari.
-// Reopening asks for permission again unless Safari is set to always allow the camera for this site.
+// Reopening asks for permission again unless Safari is set to always allow the camera for this site, and a page
+// started from the iPhone home screen does not keep that permission at all: for that case `camKeep` leaves the
+// camera open once it was opened.
 let phoneCam   // { video, texture, track } while open, { opening } meanwhile, { failed: time } after a refusal
 let unseenSince // when the camera picture was last needed, to close it a little later and not at every nod
 async function openCamera() {
@@ -358,7 +360,7 @@ renderer.setAnimationLoop(() => {
     if (wanted) {
       unseenSince = undefined
       openCamera()
-    } else if (phoneCam?.track && Date.now() - (unseenSince ??= Date.now()) > 2000) closeCamera()
+    } else if (phoneCam?.track && !settings.camKeep && Date.now() - (unseenSince ??= Date.now()) > 2000) closeCamera() // camKeep: no closing, so no new permission question
   }
   const shown = (settings.passthrough || settings.camBelow > 0) && phoneCam?.video?.videoWidth ? phoneCam : null
   const tan = shown ? Math.tan(settings.camFov * DEG / 2) : 0

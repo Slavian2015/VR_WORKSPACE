@@ -29,6 +29,7 @@
 <label class="check"><input id="autoBlack" type="checkbox">Чёрный фон, пока какое-нибудь окно развёрнуто на весь экран</label>
 <label class="check"><input id="hideMonitors" type="checkbox">Скрыть мониторы (чтобы рассмотреть фон, например тестовую сетку)</label>
 <button id="passthrough">Фон с камеры телефона: включить</button>
+<label class="check"><input id="camKeep" type="checkbox">Держать камеру телефона открытой (телефон не будет снова спрашивать разрешение; значок камеры горит постоянно)</label>
 <p id="cameras"></p>
 <div id="layout"></div>
 <label>Виртуальных мониторов <input id="virtual" type="number" min="0" step="1" required></label>
@@ -97,7 +98,9 @@
   $('hideMonitors').onchange = () => setParams({ hideMonitors: $('hideMonitors').checked })
   $('passthrough').onclick = () => fetch('/toggle/passthrough', { method: 'POST' })
   $('virtual').onchange = () => $('virtual').reportValidity() && setParams({ virtual: +$('virtual').value })
-  $('virtualSize').onchange = () => setParams({ virtualSize: $('virtualSize').value })
+  // the one size for all: monitors that were given their own size in the GNOME settings window lose it
+  $('virtualSize').onchange = () => setParams({ virtualSize: $('virtualSize').value, ...Object.fromEntries(JSON.parse(shown).map(({ id }) => [`${id}.size`, null])) })
+  $('camKeep').onchange = () => setParams({ camKeep: $('camKeep').checked })
 
   let shown // the monitors the page has controls for
   watchParams(p => {
@@ -128,6 +131,7 @@
     if ($('bg') !== document.activeElement) $('bg').value = p.bg
     if ($('virtualSize') !== document.activeElement) $('virtualSize').value = p.virtualSize
     $('autoBlack').checked = p.autoBlack
+    $('camKeep').checked = p.camKeep
     $('hideMonitors').checked = p.hideMonitors
     $('passthrough').textContent = `Фон с камеры телефона: ${p.passthrough ? 'выключить' : 'включить'}`
     $('cameras').textContent = p.camLabel ? `Камера, которую дал телефон: ${p.camLabel}. Все его камеры: ${p.cameras.join(', ')}.` : ''

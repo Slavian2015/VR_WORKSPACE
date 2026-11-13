@@ -48,8 +48,10 @@ Every number has a slider and a field with − and + for exact values.
 
 - **Connect** — on/off, the QR code and link for the phone, the first-time steps for an iPhone, a button that opens
   a flat view of what the headset shows (for recording).
-- **Monitors** — centre on gaze, hide all monitors, the number and size of virtual monitors, and for every monitor
-  its direction (right/left, up/down), width, curve (100 % wraps it around you, 0 % is flat) and distance.
+- **Monitors** — a map of the view around you (straight ahead in the middle, behind you at the edges) on which
+  you drag the monitors to where you want to see them; centre on gaze, hide all monitors, the number and size of
+  virtual monitors; and a tab for every monitor with its direction (right/left, up/down), width, curve (100 %
+  wraps it around you, 0 % is flat) and distance. A click on a monitor on the map opens its tab.
   A closer monitor looks bigger, as a real one does; the width in degrees is what it takes up at 1.5 m.
   Monitors always stand level with the horizon.
 - **Background** — a gallery with a tab for 360 photos and one for 360 videos, nine to a page; turn the pages
@@ -96,8 +98,8 @@ angles are true only then.
 While the phone is connected, GNOME has extra **virtual monitors**: move windows and the pointer there as on any
 monitor. They disappear when the phone disconnects, and their windows return to the real monitor.
 
-Their number (0–3, one by default) and size (1920×1080 up to 3440×1440, the same for all) are set on the Monitors
-page; a change restarts the capture, the picture is back in about 10 s. Real monitors are read when VR Workspace
+Their number (0–3, one by default) is set on the Monitors page, and each one's size (1920×1080 up to 3440×1440)
+on its own tab there; a change restarts the capture, the picture is back in about 10 s. Real monitors are read when VR Workspace
 is switched on: switch it off and on after plugging one in or out. The first picture appears about 5 s after the
 phone connects.
 
@@ -105,6 +107,11 @@ phone connects.
 its neighbour) is where GNOME puts it, so the pointer crosses from one to another the way you see them. It is
 applied while the phone is connected and replaces what is set in GNOME Settings → Displays for that time. Moving a
 monitor to another side blinks the real monitor's picture for a second.
+
+GNOME needs its monitors edge to edge, so of all such arrangements the one closest to what you see is taken:
+monitors seen side by side share a side edge, one seen above another stands on top of it, and a monitor above two
+others stands on both, so the pointer reaches it from either. Monitors of different sizes are lined up along the
+edge that lets this happen.
 
 Known limit: every time a virtual monitor is created and removed, GNOME Shell keeps 50–100 MB of video memory
 until you log out (measured on GNOME 46). It adds up only after many reconnects in one session.
@@ -129,8 +136,10 @@ On the Headset page:
   set, to see the keyboard and your hands. The scene and the monitors stay above. 0 switches it off.
 
 The camera is open only while its picture is needed and closed completely the rest of the time, so the phone's
-camera sign goes out. Reopening may ask for permission again; to prevent that, allow the camera for websites on
-the iPhone (Settings → Apps → Safari → Camera → Allow). It is also opened once at the start tap, so that the first
+camera sign goes out. Reopening may ask for permission again. In a Safari tab you can allow the camera for this
+one site: the page menu at the address bar → Website Settings → Camera → Allow. A page started from the Home
+Screen does not remember that; for it, switch on "Keep the camera open" on the Headset page: the phone then asks
+once at the start, and the camera sign stays on. It is also opened once at the start tap, so that the first
 permission question comes while the phone is still in your hand.
 
 The picture is fixed to the head, one camera for both eyes, and covers only what the camera sees. Set "camera view

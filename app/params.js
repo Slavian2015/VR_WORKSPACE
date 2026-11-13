@@ -29,9 +29,10 @@ const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves 
 
 // Server answer -> full settings: every key has a value, monitors included.
 export function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, virtualSize: answer.virtualSizes[0] }
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0] }
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
-  answer.monitors.forEach(({ id }, i) => {
+  answer.monitors.forEach(({ id, virtual }, i) => {
+    if (virtual) all[`${id}.size`] = answer.virtualSize ?? answer.virtualSizes[0] // its own size, until set: the one for all
     for (const [key, spec] of Object.entries(MONITOR_SPEC)) all[`${id}.${key}`] = key === 'yaw' ? SLOT_YAW[i] : spec[0]
     all[`${id}.hidden`] = false
     if (answer.dist != null) all[`${id}.dist`] = answer.dist // the distance used to be one for all monitors

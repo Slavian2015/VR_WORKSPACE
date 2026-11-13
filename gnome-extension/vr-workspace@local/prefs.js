@@ -7,6 +7,7 @@ import Gio from 'gi://Gio'
 import GLib from 'gi://GLib'
 import Gtk from 'gi://Gtk'
 import Pango from 'gi://Pango'
+import PangoCairo from 'gi://PangoCairo'
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js'
 import { http, load, talk, power, settingsOnly } from './link.js'
 import { qr } from './qr.js'
@@ -127,6 +128,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
     }
 
     let host, pages // what the server told once; the pages built from it
+    let redraw = () => {} // draws the map of the monitors again
     const build = settings => {
       const display = Gdk.Display.get_default()
       const css = new Gtk.CssProvider()
@@ -162,11 +164,93 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         action(_('See what the headset shows'), _('One flat picture in the browser that follows the head; record it with any screen recorder'), _('Open'),
           () => Gtk.show_uri(window, 'http://localhost:8080/?spectator', Gdk.CURRENT_TIME)))
 
-      // ---- Monitors
+      // ---- Monitors: a map to arrange them on, what applies to all, then one tab for each
       const monitors = new Adw.PreferencesPage({ title: _('Monitors'), icon_name: 'video-display-symbolic' })
       const monitorKeys = () => Object.keys(shows).filter(key => /^m\d+\./.test(key))
-      group(monitors, { title: _('Arrangement') },
-        action(_('Centre on gaze'), _('Look where the middle of the monitors should be, then press'), _('Centre'),
+      const tabs = new Gtk.Stack({ vhomogeneous: false })
+
+      // The map is the sphere unrolled and seen from inside: straight ahead in the middle, behind you at both edges,
+      // the horizon across. A monitor is as big on it as it looks. Dragging one moves it in the sphere; the headset
+      // and GNOME follow when it is let go (GNOME rearranging its monitors at every step of the way would blink).
+      const map = new Gtk.DrawingArea({ content_height: 230, hexpand: true, css_classes: ['card'] })
+      let held = null, moved = null // the monitor under the pressed pointer; where it has been dragged to
+      const boxes = () => last.monitors.map((monitor, i) => {
+        const { id, name } = monitor
+        const [w, h] = (monitor.virtual ? last[`${id}.size`] : '16x9').split('x') // shortcut: a real monitor is drawn 16:9, the server does not tell its size
+        const wide = Math.min(170, last[`${id}.span`] * 1.5 / last[`${id}.dist`]) // nearer than 1.5 m it looks wider
+        const at = moved?.id === id ? moved : { yaw: last[`${id}.yaw`], pitch: last[`${id}.pitch`] }
+        return { id, i, name, hidden: last[`${id}.hidden`], yaw: at.yaw, pitch: at.pitch, wide, tall: wide * h / w }
+      })
+      map.set_draw_func((_area, cr, width, height) => {
+        const scale = width / 360, ink = map.get_color()
+        const [themed, accent] = map.get_style_context().lookup_color('accent_bg_color')
+        const paint = (colour, alpha) => cr.setSourceRGBA(colour.red, colour.green, colour.blue, alpha)
+        cr.setLineWidth(1)
+        paint(ink, 0.15) // the horizon and straight ahead
+        cr.moveTo(0, Math.round(height / 2) + 0.5)
+        cr.lineTo(width, Math.round(height / 2) + 0.5)
+        cr.moveTo(Math.round(width / 2) + 0.5, 0)
+        cr.lineTo(Math.round(width / 2) + 0.5, height)
+        cr.stroke()
+        for (const box of boxes()) {
+          const current = tabs.visible_child_name === box.id, colour = current && themed ? accent : ink
+          const w = box.wide * scale, h = box.tall * scale, y = height / 2 - box.pitch * scale - h / 2
+          const label = map.create_pango_layout(`${box.i + 1}`)
+          const [labelWidth, labelHeight] = label.get_pixel_size()
+          for (const turn of [-360, 0, 360]) { // a monitor behind you shows at both edges
+            const x = (box.yaw + turn + 180) * scale - w / 2
+            if (x > width || x + w < 0) continue
+            cr.rectangle(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(w), Math.round(h))
+            paint(colour, box.hidden ? 0.06 : current ? 0.4 : 0.16)
+            cr.fillPreserve()
+            paint(colour, box.hidden ? 0.3 : 0.85)
+            cr.setLineWidth(current ? 2 : 1)
+            cr.stroke()
+            paint(ink, box.hidden ? 0.4 : 1)
+            cr.moveTo(x + (w - labelWidth) / 2, y + (h - labelHeight) / 2)
+            PangoCairo.show_layout(cr, label)
+          }
+        }
+        cr.$dispose()
+      })
+      redraw = () => map.queue_draw()
+      tabs.connect('notify::visible-child-name', redraw)
+      const drag = new Gtk.GestureDrag()
+      drag.connect('drag-begin', (_drag, x, y) => {
+        const scale = map.get_width() / 360, middle = map.get_height() / 2
+        held = boxes().reverse().find(box => Math.abs(y - (middle - box.pitch * scale)) <= box.tall * scale / 2 &&
+          [-360, 0, 360].some(turn => Math.abs(x - (box.yaw + turn + 180) * scale) <= box.wide * scale / 2)) ?? null
+        if (!held) return
+        drag.set_state(Gtk.EventSequenceState.CLAIMED)
+        tabs.visible_child_name = held.id // a click on a monitor opens its tab
+      })
+      drag.connect('drag-update', (_drag, dx, dy) => {
+        if (!held) return
+        const scale = map.get_width() / 360, [, lowest, highest] = host.monitor.pitch
+        moved = {
+          id: held.id,
+          yaw: ((Math.round(held.yaw + dx / scale) + 540) % 360) - 180,
+          pitch: Math.max(lowest, Math.min(highest, Math.round(held.pitch - dy / scale))),
+        }
+        redraw()
+      })
+      drag.connect('drag-end', () => {
+        for (const key of moved ? ['yaw', 'pitch'] : []) {
+          const name = `${moved.id}.${key}`, value = moved[key]
+          last[name] = value
+          change(name, value)
+          fromServer(() => shows[name]?.(value))
+        }
+        held = moved = null
+        redraw()
+      })
+      map.add_controller(drag)
+      group(monitors, {
+        title: _('Arrangement'),
+        description: _('The view around you, unrolled: straight ahead is the middle, behind you are the edges, the line across is the horizon. Drag a monitor to where you want to see it. GNOME puts its monitors the same way, so the pointer crosses from one to another where you see them side by side.'),
+      }, map)
+      group(monitors, {},
+        action(_('Centre on gaze'), _('Look where the middle of the map should be, then press'), _('Centre'),
           () => talk(session, '/params', { recenter: Date.now() }), 'suggested-action'),
         new Adw.ActionRow({
           title: _('Arrange in the headset: Num Lock'),
@@ -175,30 +259,44 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         toggle('hideMonitors', _('Hide all monitors'), _('To look at the background, for example the test grid')),
         // 'dist': the distance used to be one for all monitors
         action(_('Reset the arrangement'), _('Every monitor back to its place, size and distance'), _('Reset'),
-          () => talk(session, '/params', Object.fromEntries([...monitorKeys(), 'dist'].map(key => [key, null]))), 'destructive-action'))
+          () => talk(session, '/params', Object.fromEntries([...monitorKeys().filter(key => !key.endsWith('.size')), 'dist'].map(key => [key, null]))), 'destructive-action')) // not the pixel sizes: that would restart the picture
       const counts = Array.from({ length: settings.maxVirtual + 1 }, (_n, i) => String(i))
       const count = new Adw.ComboRow({ title: _('Number'), model: Gtk.StringList.new(counts) })
       count.connect('notify::selected', () => change('virtual', count.selected))
-      const size = new Adw.ComboRow({ title: _('Size, pixels'), model: Gtk.StringList.new(settings.virtualSizes.map(s => s.replace('x', ' × '))) })
-      size.connect('notify::selected', () => change('virtualSize', settings.virtualSizes[size.selected]))
-      shows.virtualSize = value => size.selected = settings.virtualSizes.indexOf(value)
       group(monitors, {
         title: _('Virtual Monitors'),
-        description: _('Extra monitors that exist only in the headset; windows and the pointer go there as to any monitor. A change restarts the picture, it is back in about 10 s.'),
-      }, count, size)
-      let shown, panels = [] // the monitors the page has panels for
+        description: _('Extra monitors that exist only in the headset; windows and the pointer go there as to any monitor. Each has its size on its tab below. A change restarts the picture, it is back in about 10 s.'),
+      }, count)
+      // One tab for each monitor; a click on the map opens the tab of that monitor.
+      group(monitors, { title: _('Each Monitor') }, new Gtk.StackSwitcher({ stack: tabs, halign: Gtk.Align.CENTER, margin_bottom: 12 }), tabs)
+      let shown // the monitors the page has tabs for
       shows.monitors = list => {
         if (JSON.stringify(list) === shown) return
         shown = JSON.stringify(list)
-        for (const panel of panels) monitors.remove(panel)
+        const open = tabs.visible_child_name
+        for (let tab; (tab = tabs.get_first_child());) tabs.remove(tab)
         for (const key of monitorKeys()) delete shows[key]
-        panels = list.map(({ id, name }, i) => group(monitors, { title: `${_('Monitor')} ${i + 1}`, description: name },
-          number(`${id}.yaw`, host.monitor.yaw, _('Right / left, °')),
-          number(`${id}.pitch`, host.monitor.pitch, _('Up / down, °')),
-          number(`${id}.span`, host.monitor.span, _('Width, °'), _('What it takes up at 1.5 m; closer it looks bigger, as a real one does')),
-          number(`${id}.curve`, host.monitor.curve, _('Curve, %'), _('100 wraps it around you, 0 makes it flat')),
-          number(`${id}.dist`, host.monitor.dist, _('Distance, m')),
-          toggle(`${id}.hidden`, _('Hidden'), `${_('While arranging in the headset: key')} ${i + 1}`)))
+        list.forEach(({ id, name, virtual }, i) => {
+          const tab = new Adw.PreferencesGroup()
+          const size = virtual
+            ? new Adw.ComboRow({ title: _('Size, pixels'), subtitle: _('A change restarts the picture'), model: Gtk.StringList.new(settings.virtualSizes.map(s => s.replace('x', ' × '))) })
+            : new Adw.ActionRow({ title: _('Size, pixels'), subtitle: _('This is a real monitor: its size is set in GNOME Settings → Displays') })
+          if (virtual) {
+            size.connect('notify::selected', () => change(`${id}.size`, settings.virtualSizes[size.selected]))
+            shows[`${id}.size`] = value => size.selected = settings.virtualSizes.indexOf(value)
+          }
+          for (const row of [
+            size,
+            number(`${id}.yaw`, host.monitor.yaw, _('Right / left, °')),
+            number(`${id}.pitch`, host.monitor.pitch, _('Up / down, °')),
+            number(`${id}.span`, host.monitor.span, _('Width, °'), _('What it takes up at 1.5 m; closer it looks bigger, as a real one does')),
+            number(`${id}.curve`, host.monitor.curve, _('Curve, %'), _('100 wraps it around you, 0 makes it flat')),
+            number(`${id}.dist`, host.monitor.dist, _('Distance, m')),
+            toggle(`${id}.hidden`, _('Hidden'), `${_('While arranging in the headset: key')} ${i + 1}`),
+          ]) tab.add(row)
+          tabs.add_titled(tab, id, `${i + 1} · ${name}`)
+        })
+        if (list.some(({ id }) => id === open)) tabs.visible_child_name = open
         count.selected = list.filter(m => m.virtual).length
       }
 
@@ -322,6 +420,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       },
       toggle('passthrough', _('Camera as the background'), _('Pass-through: the room instead of the scene, the monitors stay')),
       number('camBelow', host.layout.camBelow, _('Camera when looking down, °'), _('To see the keyboard and your hands: the camera shows below this angle under the horizon. 0 switches it off')),
+      toggle('camKeep', _('Keep the camera open'), _('The phone then asks for permission once, at the start, and not at every look down; its camera sign stays on. For a page started from the iPhone home screen, which does not remember the permission')),
       number('camFov', host.layout.camFov, _('Camera view angle, °'), _('Set it so that things look their real size')),
       number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
       number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
@@ -373,6 +472,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
           shows.monitors(settings.monitors) // first: it makes the rows of the monitors, which then get their values
           for (const [key, show] of Object.entries(shows)) if (settings[key] !== undefined && !(Date.now() - touched[key] < 1000)) show(settings[key])
         })
+        redraw()
       } finally {
         busy = false
       }

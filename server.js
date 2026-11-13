@@ -134,7 +134,8 @@ async function handle(req, res) {
       fs.writeFileSync(PARAMS_FILE + '.tmp', JSON.stringify(params, null, 2))
       fs.renameSync(PARAMS_FILE + '.tmp', PARAMS_FILE)
     }
-    if ('virtual' in patch || 'virtualSize' in patch) { // capture.py reads them when MediaMTX starts it again
+    // capture.py reads the number and the sizes of the virtual monitors when MediaMTX starts it again
+    if ('virtual' in patch || 'virtualSize' in patch || Object.keys(patch).some(key => /^m\d\.size$/.test(key))) {
       readMonitors()
       if (mtx) spawn('pkill', ['-INT', '-P', String(mtx.pid)]) // only the capture.py started by our own MediaMTX
     }

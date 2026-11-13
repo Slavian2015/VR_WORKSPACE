@@ -9,7 +9,7 @@ Picture and sound are separate streams on purpose: played in sync, the picture w
 `capture.py --list` prints the monitors and the limit as JSON; server.js shows them to the pages.
 System python on purpose (see the first line): the project venv has no GNOME bindings.
 """
-import json, math, os, signal, subprocess, sys
+import functools, itertools, json, os, signal, subprocess, sys
 from gi.repository import Gio, GLib
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -50,40 +50,110 @@ def monitors():
     return real + ['virtual'] * max(0, min(wanted, SLOTS - len(real)))
 
 
+def virtual_size(saved, i):
+    """[width, height] to ask for virtual monitor i: its own setting, else the one for all, else the first listed.
+    Only listed sizes pass, because the numbers go into a command line."""
+    return next((s for s in (saved.get(f'm{i}.size'), saved.get('virtualSize')) if s in VIRTUAL_SIZES), VIRTUAL_SIZES[0]).split('x')
+
+
+def place_in_sphere(saved, i):
+    """Where monitor i stands according to the saved settings: (yaw, pitch, the width it is seen at), in degrees."""
+    try:
+        yaw, pitch = float(saved.get(f'm{i}.yaw', SLOT_YAW[i])), float(saved.get(f'm{i}.pitch', 0))
+        # the setting is its width from 1.5 m: nearer it looks wider. 'dist' is the old distance, one for all.
+        span = float(saved.get(f'm{i}.span', 90)) * 1.5 / float(saved.get(f'm{i}.dist', saved.get('dist', 1.5)))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return SLOT_YAW[i], 0, 90
+    return yaw, pitch, min(170, max(10, span))
+
+
+@functools.lru_cache(maxsize=8)  # asked again at every change of any setting, with the same monitors
 def system_layout(monitors):
     """Where to put the monitors in GNOME so that the pointer crosses between them the way they stand in the sphere.
 
-    monitors: [(name, width, height, yaw, pitch)], the primary first; yaw grows to the right, pitch up, in degrees.
-    Returns {name: (x, y)}. Each monitor touches the one nearest to it in the sphere, on the side it is seen on and
-    centred on that side; nothing overlaps; the top left corner of the whole is (0, 0), as GNOME requires."""
+    monitors: ((name, width, height, yaw, pitch, span), ...), the primary first; width and height in pixels, yaw
+    grows to the right and pitch up, span is the width the monitor is seen at, all in degrees.
+    Returns {name: (x, y)}: nothing overlaps, every monitor touches another, the top left corner of the whole is
+    (0, 0), as GNOME requires.
+
+    Every way of standing the monitors side by side or one above another is tried, and the one that keeps most of
+    what is seen in the sphere wins: two monitors seen next to each other share an edge, on the side they are seen
+    on, and the rest at least lie in the right direction. (Taking the nearest monitor one at a time, as before, put
+    a monitor seen on the right under its neighbour, because a third one above was a little nearer.)"""
     turn = lambda a, b: (b - a + 180) % 360 - 180  # the short way round from yaw a to yaw b
-    todo = list(monitors)
-    name, w, h, yaw, pitch = todo.pop(0)
-    placed = {name: (0, 0, w, h, yaw, pitch)}
-    while todo:
-        monitor, anchor = min(((m, a) for m in todo for a in placed.values()),
-                              key=lambda pair: math.hypot(turn(pair[1][4], pair[0][3]), pair[0][4] - pair[1][5]))
-        todo.remove(monitor)
-        name, w, h, yaw, pitch = monitor
-        ax, ay, aw, ah, ayaw, apitch = anchor
-        right, up = turn(ayaw, yaw), pitch - apitch
-        if abs(right) >= abs(up):
-            dx, dy = (1 if right >= 0 else -1), 0
-            x, y = (ax + aw if dx > 0 else ax - w), ay + (ah - h) // 2
-        else:
-            dx, dy = 0, (-1 if up > 0 else 1)  # screen y grows downwards
-            x, y = ax + (aw - w) // 2, (ay + ah if dy > 0 else ay - h)
-        while True:  # the place is taken: go on in the same direction until past whatever is there
-            blocker = next((p for p in placed.values() if x < p[0] + p[2] and p[0] < x + w and y < p[1] + p[3] and p[1] < y + h), None)
-            if not blocker:
-                break
-            if dx:
-                x = blocker[0] + blocker[2] if dx > 0 else blocker[0] - w
+    count = len(monitors)
+    size = [(w, h) for _, w, h, _, _, _ in monitors]
+    # How each pair stands in the sphere: across which edge they are neighbours (0: side by side, 1: one above the
+    # other), in which direction, how much that counts (less with a gap between them), the offset of j from i in
+    # degrees, and how many pixels a degree is for the two.
+    seen = {}
+    for i, j in itertools.combinations(range(count), 2):
+        (_, wi, hi, yaw_i, pitch_i, span_i), (_, wj, hj, yaw_j, pitch_j, span_j) = monitors[i], monitors[j]
+        dx, dy = turn(yaw_i, yaw_j), pitch_j - pitch_i
+        wide, tall = (span_i + span_j) / 2, (span_i * hi / wi + span_j * hj / wj) / 2  # centres this far apart: they touch
+        axis = 0 if abs(dx) / wide >= abs(dy) / tall else 1  # further apart sideways, by their own measure: side by side
+        weight = (1.5 if i == 0 else 1) / (1 + max(abs(dx) - wide, abs(dy) - tall, 0) / 15)  # the primary's neighbours first
+        seen[i, j] = (axis, (dx, dy)[axis] >= 0, weight, (dx, dy), (wi / span_i + wj / span_j) / 2)
+
+    def score(at):
+        total = 0
+        for (i, j), (axis, positive, weight, offset, per_degree) in seen.items():
+            (xi, yi), (wi, hi), (xj, yj), (wj, hj) = at[i], size[i], at[j], size[j]
+            if axis == 0:
+                touching = xj == xi + wi if positive else xj + wj == xi
+                shared, least = min(yi + hi, yj + hj) - max(yi, yj), min(hi, hj)
+                ordered = (xj + wj / 2 > xi + wi / 2) == positive
+                across, wanted = (yj + hj / 2) - (yi + hi / 2), -offset[1] * per_degree  # up is a smaller y
             else:
-                y = blocker[1] + blocker[3] if dy > 0 else blocker[1] - h
-        placed[name] = (x, y, w, h, yaw, pitch)
-    left, top = min(p[0] for p in placed.values()), min(p[1] for p in placed.values())
-    return {name: (p[0] - left, p[1] - top) for name, p in placed.items()}
+                touching = yj + hj == yi if positive else yj == yi + hi
+                shared, least = min(xi + wi, xj + wj) - max(xi, xj), min(wi, wj)
+                ordered = (yj + hj / 2 < yi + hi / 2) == positive
+                across, wanted = (xj + wj / 2) - (xi + wi / 2), offset[0] * per_degree
+            if touching and shared >= least / 4:  # an edge long enough to find with the pointer
+                total += weight * (10 - min(1, abs(across - wanted) / least))  # and shifted along it as in the sphere
+            elif ordered:
+                total += weight
+            else:
+                total -= 5 * weight
+        return total
+
+    best = None
+    for order in itertools.permutations(range(1, count)):  # the primary stays first, the rest join in any order
+        def place(done, at):
+            nonlocal best
+            if done == len(order):
+                value = score(at)
+                if best is None or value > best[0]:
+                    best = (value, dict(at))
+                return
+            k = order[done]
+            w, h = size[k]
+            for a in at:
+                axis, positive, _, offset, per_degree = seen[min(a, k), max(a, k)]
+                dx, dy = (offset[0], offset[1]) if a < k else (-offset[0], -offset[1])  # of k from a
+                (ax, ay), (aw, ah) = at[a], size[a]
+                for side in ((1 if dx >= 0 else -1), 0), (0, (-1 if dy >= 0 else 1)):  # the two sides it is seen towards
+                    if side[0]:
+                        x, low, high, middle = (ax + aw if side[0] > 0 else ax - w), ay - h + min(h, ah) // 4, ay + ah - min(h, ah) // 4, ay + (ah - h) // 2
+                        shifted = middle - round(dy * per_degree)
+                    else:
+                        y, low, high, middle = (ay + ah if side[1] > 0 else ay - h), ax - w + min(w, aw) // 4, ax + aw - min(w, aw) // 4, ax + (aw - w) // 2
+                        shifted = middle + round(dx * per_degree)
+                    # along the edge: as far as in the sphere, in the middle, or flush with either end
+                    for along in dict.fromkeys((max(low, min(high, shifted)), middle, (ay if side[0] else ax), (ay + ah - h if side[0] else ax + aw - w))):
+                        if side[0]:
+                            y = along
+                        else:
+                            x = along
+                        if any(x < px + size[p][0] and px < x + w and y < py + size[p][1] and py < y + h for p, (px, py) in at.items()):
+                            continue
+                        at[k] = (x, y)
+                        place(done + 1, at)
+                        del at[k]
+        place(0, {0: (0, 0)})
+    at = best[1]
+    left, top = min(x for x, _ in at.values()), min(y for _, y in at.values())
+    return {monitors[i][0]: (x - left, y - top) for i, (x, y) in at.items()}
 
 
 def memory_action(available_mb, capturing):
@@ -103,8 +173,7 @@ def remove_output():
 
 def main():
     sources = monitors()
-    size = settings().get('virtualSize')
-    width, height = (size if size in VIRTUAL_SIZES else VIRTUAL_SIZES[0]).split('x')  # only listed sizes reach the command line
+    saved = settings()
     children = []  # processes that must stay alive: if one dies, everything stops and MediaMTX starts us again
 
     def spawn(command):
@@ -112,7 +181,7 @@ def main():
         return children[-1]
 
     def encode(i):
-        size = f',width={width},height={height}' if sources[i] == 'virtual' else ''  # a virtual monitor takes the size we ask for
+        size = ',width={},height={}'.format(*virtual_size(saved, i)) if sources[i] == 'virtual' else ''  # a virtual monitor takes the size we ask for
         # keepalive-time: GNOME sends frames only when the screen changes. The last one is repeated after 34 ms of
         # silence, so a still screen gives ~30 fps and a new viewer gets a key frame within 2 s (keyframe-period=60).
         # Not 17 ms: then repeats also land between real frames (72 fps measured with the pointer moving) and only
@@ -211,12 +280,8 @@ def main():
             mode = {spec[0]: next(m for m in modes if m[6].get('is-current')) for spec, modes, _ in physical if spec[0] in now}
             saved, sphere = settings(), []
             for i, name in sorted(connectors.items()):
-                try:
-                    yaw, pitch = float(saved.get(f'm{i}.yaw', SLOT_YAW[i])), float(saved.get(f'm{i}.pitch', 0))
-                except (TypeError, ValueError):
-                    yaw, pitch = SLOT_YAW[i], 0
-                sphere.append((name, round(mode[name][1] / now[name][2]), round(mode[name][2] / now[name][2]), yaw, pitch))
-            wanted = system_layout(sphere)
+                sphere.append((name, round(mode[name][1] / now[name][2]), round(mode[name][2] / now[name][2]), *place_in_sphere(saved, i)))
+            wanted = system_layout(tuple(sphere))
             if any(now[name][:2] != wanted[name] for name in wanted):
                 stop_real()  # before GNOME closes their streams itself
                 config = [(*wanted[name], now[name][2], now[name][3], now[name][4], [(name, mode[name][0], {})]) for name in wanted]
