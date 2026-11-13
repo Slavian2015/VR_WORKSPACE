@@ -4,11 +4,19 @@ import https from 'node:https'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
+// `node server.js --settings`: VR Workspace is off, but its GNOME settings window is open and needs the settings.
+// Nothing is streamed (no MediaMTX, so no capture and no sound output) and only this PC is listened to.
+const SETTINGS_ONLY = process.argv.includes('--settings')
+const BG = path.join(ROOT, 'app/bg')
+// The 360 backgrounds on offer: every file in app/bg (setup.sh puts photos there, a 360 video dropped in works too).
+const backgrounds = () => fs.existsSync(BG) ? fs.readdirSync(BG).filter(f => !f.startsWith('.')) : []
 const MOUNTS = [
   ['/three/', path.join(ROOT, 'node_modules/three/build/')],
   ['/', path.join(ROOT, 'app/')],
@@ -40,7 +48,11 @@ let phoneSeen = 0 // when a device other than this PC last asked for the setting
 let pose = 'null', spectatorSeen = 0
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
-const live = { fullscreen: false, passthrough: false }
+const live = { fullscreen: false, passthrough: false, grab: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 }
+// Arranging monitors with the mouse: whoever holds the mouse (the GNOME extension on Num Lock, or the control page)
+// says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
+// added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
+let editSeen = 0
 
 async function readBody(req) {
   let body = ''
@@ -103,30 +115,59 @@ async function handle(req, res) {
   if (url === '/params' && req.method === 'POST') {
     const patch = JSON.parse(await readBody(req))
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new SyntaxError('object expected')
+    if ('edit' in patch) editSeen = patch.edit === true ? Date.now() : 0
+    // `toggle: "m1.hidden"` flips that monitor's visibility: the keys 1-4 of the arranging mode do not know its state.
+    const flip = /^(m\d)\.hidden$/.exec(patch.toggle)
+    if (flip && CAPTURE.monitors.some(m => m.id === flip[1])) patch[patch.toggle] = !params[patch.toggle]
+    delete patch.toggle
+    delete patch.edit
     for (const key of Object.keys(live)) {
-      if (key in patch) live[key] = patch[key] === true
+      const sent = patch[key]
+      if (typeof sent === 'boolean' && typeof live[key] === 'boolean') live[key] = sent
+      if (Number.isFinite(sent) && typeof live[key] === 'number') live[key] += sent
       delete patch[key]
     }
-    for (const [key, value] of Object.entries(patch)) value === null ? delete params[key] : params[key] = value
-    // Written aside and renamed: a rename is atomic, so a crash never leaves half a file (all settings would be
-    // lost), and capture.py never reads one.
-    fs.writeFileSync(PARAMS_FILE + '.tmp', JSON.stringify(params, null, 2))
-    fs.renameSync(PARAMS_FILE + '.tmp', PARAMS_FILE)
+    if (Object.keys(patch).length) {
+      for (const [key, value] of Object.entries(patch)) value === null ? delete params[key] : params[key] = value
+      // Written aside and renamed: a rename is atomic, so a crash never leaves half a file (all settings would be
+      // lost), and capture.py never reads one.
+      fs.writeFileSync(PARAMS_FILE + '.tmp', JSON.stringify(params, null, 2))
+      fs.renameSync(PARAMS_FILE + '.tmp', PARAMS_FILE)
+    }
     if ('virtual' in patch || 'virtualSize' in patch) { // capture.py reads them when MediaMTX starts it again
       readMonitors()
-      spawn('pkill', ['-INT', '-P', String(mtx.pid)]) // only the capture.py started by our own MediaMTX
+      if (mtx) spawn('pkill', ['-INT', '-P', String(mtx.pid)]) // only the capture.py started by our own MediaMTX
     }
     return res.writeHead(204).end()
   }
   if (url === '/params') {
     if (!local) phoneSeen = Date.now()
+    const answer = { ...params, ...CAPTURE, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
+    // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      .end(JSON.stringify({ ...params, ...CAPTURE, ...live, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 }))
+      .end(JSON.stringify(searchParams.has('full') ? complete(answer) : answer))
+  }
+  // What only this PC may know, for the GNOME settings window: the links for the phone (with the key) and the
+  // ranges of the settings.
+  if (url === '/host' && local) {
+    return res.writeHead(200, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ phone: PHONE_URL, ca: CA_URL, bgDir: BG, layout: LAYOUT_SPEC, monitor: MONITOR_SPEC, lens: LENS_SPEC }))
   }
 
-  if (url === '/bgs') {
-    const list = fs.existsSync(path.join(ROOT, 'app/bg')) ? fs.readdirSync(path.join(ROOT, 'app/bg')).map(f => 'bg/' + f) : []
-    return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(list))
+  if (url === '/bgs') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(backgrounds().map(f => 'bg/' + f)))
+  // A small picture of a background for a gallery: the middle of the panorama (what is ahead), a frame from 1 s
+  // into a video. Made by ffmpeg when first asked for and kept in app/bg/.thumbs.
+  const thumb = /^\/thumb\/([^/]+)$/.exec(url)
+  if (thumb) {
+    const name = decodeURIComponent(thumb[1])
+    if (!backgrounds().includes(name)) return res.writeHead(404).end('not found')
+    const source = path.join(BG, name), small = path.join(BG, '.thumbs', name + '.jpg')
+    if (!(fs.statSync(small, { throwIfNoEntry: false })?.mtimeMs > fs.statSync(source).mtimeMs)) {
+      fs.mkdirSync(path.dirname(small), { recursive: true })
+      await promisify(execFile)('ffmpeg', ['-v', 'error', '-y', ...(/\.(mp4|webm|mov)$/i.test(name) ? ['-ss', '1'] : []), '-i', source,
+        '-frames:v', '1', '-vf', 'crop=iw/2:ih/2,scale=480:-2', '-q:v', '4', small])
+    }
+    return sendFile(req, res, small)
   }
   if (url === '/ca.crt') return sendFile(req, res, path.join(ROOT, 'certs/ca.crt'))
 
@@ -150,13 +191,29 @@ try {
   process.exit(1)
 }
 
-const mtx = spawn(path.join(ROOT, 'bin/mediamtx'), ['mediamtx.yml'], { stdio: 'inherit', cwd: ROOT }) // cwd: mediamtx.yml runs ./capture.py
-mtx.on('exit', code => process.exit(code ?? 1))
-mtx.on('error', e => { console.error('MediaMTX did not start:', e.message); process.exit(1) })
-process.on('exit', () => mtx.kill())
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit())
+const PHONE_URL = `https://${os.hostname()}.local:8443/?k=${TOKEN}`, CA_URL = `http://${os.hostname()}.local:8080/ca.crt`
+let mtx
+if (SETTINGS_ONLY) {
+  http.createServer(listener).listen(8080, '127.0.0.1')
+  console.log('Settings only, for the GNOME settings window: nothing is streamed')
+} else {
+  mtx = spawn(path.join(ROOT, 'bin/mediamtx'), ['mediamtx.yml'], { stdio: 'inherit', cwd: ROOT }) // cwd: mediamtx.yml runs ./capture.py
+  let stopping = false
+  mtx.on('exit', code => process.exit(stopping ? 0 : code ?? 1))
+  mtx.on('error', e => { console.error('MediaMTX did not start:', e.message); process.exit(1) })
+  process.on('exit', () => mtx.kill())
+  // Asked to stop: MediaMTX is stopped and waited for (the line above then ends us). It in turn waits for the
+  // capture, which removes its sound output. Leaving first would have systemd kill them halfway through that.
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      stopping = true
+      mtx.kill()
+      setTimeout(() => process.exit(1), 5000).unref() // MediaMTX hung: do not hang with it
+    })
+  }
 
-http.createServer(listener).listen(8080)
-https.createServer(tls, listener).listen(8443)
-console.log('PC:    http://localhost:8080/control.html (settings)   http://localhost:8080/ (preview)')
-console.log(`Phone: https://${os.hostname()}.local:8443/?k=${TOKEN}   (once before that: http://${os.hostname()}.local:8080/ca.crt)`)
+  http.createServer(listener).listen(8080)
+  https.createServer(tls, listener).listen(8443)
+  console.log('PC:    http://localhost:8080/control.html (settings)   http://localhost:8080/ (preview)')
+  console.log(`Phone: ${PHONE_URL}   (once before that: ${CA_URL})`)
+}

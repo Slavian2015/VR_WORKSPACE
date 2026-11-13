@@ -1,6 +1,7 @@
 {
   "uuid": "vr-workspace@local",
   "name": "VR Workspace",
-  "description": "Tells the VR Workspace server whether a window is fullscreen, so the headset can go dark around a film.",
+  "description": "Your desktop on monitors inside a 360° scene, seen on a phone in a VR headset. The top bar menu starts it and shows the link for the phone; Settings arrange the monitors, pick the background and calibrate the lenses. Needs the VR Workspace server this extension is installed from.",
+  "gettext-domain": "vr-workspace",
   "shell-version": ["46"]
 }

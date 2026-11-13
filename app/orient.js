@@ -20,8 +20,15 @@ export function gazeOf(q) {
 
 // Rotation of a monitor's own frame (it sits at -Z of that frame). `anchor` is the gaze the layout was centred on,
 // yaw and pitch are the monitor's place in the layout in degrees, positive to the right and up.
+// A monitor is turned about the vertical and then raised, never rolled: it stays level with the horizon wherever
+// it is carried. (Placing it in a frame tilted with the anchor made it lean to one side when moved sideways.)
 export function monitorFrame(anchor, yaw, pitch, out = new Quaternion()) {
-  return out
-    .setFromEuler(new Euler(anchor.pitch, anchor.yaw, 0, 'YXZ'))
-    .multiply(new Quaternion().setFromEuler(new Euler(pitch * RAD, -yaw * RAD, 0, 'YXZ')))
+  return out.setFromEuler(new Euler(anchor.pitch + pitch * RAD, anchor.yaw - yaw * RAD, 0, 'YXZ'))
+}
+
+// Where the head looks in the coordinates monitors are placed in: degrees to the right and up from the centre of
+// the layout. A monitor put at exactly these numbers stands dead ahead.
+export function gazeInLayout(anchor, head) {
+  const gaze = gazeOf(head)
+  return { yaw: (((anchor.yaw - gaze.yaw) / RAD + 540) % 360) - 180, pitch: (gaze.pitch - anchor.pitch) / RAD }
 }

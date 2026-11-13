@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup (safe to re-run): MediaMTX, three.js, TLS certs for the phone, phone-sized backgrounds.
+# One-time setup (safe to re-run): MediaMTX, three.js, TLS certs for the phone, phone-sized backgrounds, the GNOME extension.
 set -euo pipefail
 cd "$(dirname "$0")"
 MTX=v1.21.3
@@ -26,25 +26,23 @@ openssl req -newkey rsa:2048 -nodes -subj "/CN=$HOST" -keyout certs/server.key -
 openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial -days 800 -out certs/server.crt \
   -extfile <(printf 'subjectAltName=DNS:%s,DNS:localhost,IP:%s,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\n' "$HOST" "$IP") 2>/dev/null
 
-# The 360 sources are 8192x4096 PNGs of ~35 MB; the headset shows ~12 px/deg, so 4096x2048 JPEG loses nothing visible.
-mkdir -p app/bg
-for f in app/assets/*.png app/assets/*.jpg; do
-  out="app/bg/$(basename "${f%.*}").jpg"
-  [ -f "$out" ] && continue
-  [ "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=/ "$f" | awk -F/ '{print ($1 == 2 * $2)}')" = 1 ] || continue
-  ffmpeg -v error -y -i "$f" -vf scale=4096:2048 -q:v 3 "$out"
-done
-
-# A panorama with a grid in degrees, to read the field of view inside the headset.
-[ -f app/bg/test_grid.png ] || ./test_grid.py
-
-# A sample video panorama to try video backgrounds with: the first photo with slowly cycling colours, a seamless 10 s loop.
-if [ ! -f app/bg/video_test.mp4 ]; then
+# The 360 backgrounds are made once, when app/bg does not exist yet: later runs leave the folder alone, so that
+# what was deleted in the gallery stays deleted. (To get the set again, delete app/bg and run this script.)
+if [ ! -d app/bg ]; then
+  mkdir -p app/bg
+  # The sources are 8192x4096 PNGs of ~35 MB; the headset shows ~12 px/deg, so 4096x2048 JPEG loses nothing visible.
+  for f in app/assets/*.png app/assets/*.jpg; do
+    [ "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=/ "$f" | awk -F/ '{print ($1 == 2 * $2)}')" = 1 ] || continue
+    ffmpeg -v error -y -i "$f" -vf scale=4096:2048 -q:v 3 "app/bg/$(basename "${f%.*}").jpg"
+  done
+  # A panorama with a grid in degrees, to read the field of view inside the headset.
+  ./test_grid.py
+  # A sample video panorama to try video backgrounds with: the first photo with slowly cycling colours, a seamless 10 s loop.
   ffmpeg -v error -y -loop 1 -i app/bg/old_field.jpg -t 10 -r 30 -vf "scale=3840:1920,hue=h=36*t" \
     -c:v libx264 -preset fast -crf 24 -pix_fmt yuv420p -movflags +faststart app/bg/video_test.mp4
 fi
 
 echo
-echo "Ready. Start with:  npm start"
-echo "Phone, once:        http://$IP:8080/ca.crt   (install the profile, then trust it)"
-echo "Phone, every time:  https://$IP:8443/?k=$(cat certs/token)   (or the same with $HOST)"
+gnome-extension/install.sh
+echo "Then switch VR Workspace on in the menu of that icon and open Settings there: the code for the phone is on the first page."
+echo "Without the icon:  npm start   and   http://localhost:8080/control.html"

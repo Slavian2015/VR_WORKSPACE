@@ -233,9 +233,12 @@ def main():
     else:
         arrange()
 
-    # The audio output: pick it once in the GNOME sound menu, the system remembers the choice and the volume.
+    # The audio output. It becomes the system's output while we run, so that the PC's volume and mute keys act on
+    # what the phone plays; the output used before comes back when we leave. The system remembers its volume.
     remove_output()  # left over if a previous run was killed
+    usual = subprocess.run(['pactl', 'get-default-sink'], capture_output=True, text=True).stdout.strip()
     subprocess.run(['pactl', 'load-module', 'module-null-sink', f'sink_name={SINK}', 'sink_properties=device.description=VR-Headset'], stdout=subprocess.DEVNULL)
+    subprocess.run(['pactl', 'set-default-sink', SINK])
     spawn(f'ffmpeg -hide_banner -loglevel warning -f pulse -fragment_size 1920 -i {SINK}.monitor'
           ' -c:a libopus -b:a 128k -frame_duration 10 -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/vr/audio')
 
@@ -277,6 +280,8 @@ def main():
     finally:  # leaving also closes the sessions with GNOME, which removes the virtual monitors
         for child in children:
             child.terminate()
+        if usual and usual != SINK:
+            subprocess.run(['pactl', 'set-default-sink', usual])
         remove_output()
 
 
@@ -285,7 +290,7 @@ if __name__ == '__main__':
         listed, virtual = [], 0
         for i, source in enumerate(monitors()):
             virtual += source == 'virtual'
-            name = f'виртуальный {virtual}' if source == 'virtual' else source
+            name = f'virtual {virtual}' if source == 'virtual' else source
             listed.append({'id': f'm{i}', 'name': name, 'virtual': source == 'virtual'})
         print(json.dumps({'monitors': listed, 'maxVirtual': SLOTS - (len(listed) - virtual), 'virtualSizes': VIRTUAL_SIZES}, ensure_ascii=False))
     else:

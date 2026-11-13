@@ -1,8 +1,10 @@
 // Settings shared by the phone page and the PC control page: key -> [default, min, max, step, label]
 export const LAYOUT_SPEC = {
-  dist: [1.5, 0.5, 5, 0.1, 'Расстояние до мониторов, м'],
   bgYaw: [0, -180, 180, 5, 'Поворот фона, °'],
   camFov: [70, 40, 130, 1, 'Угол обзора камеры телефона, °'],
+  camBelow: [0, 0, 80, 1, 'Камера при взгляде вниз: показывать ниже, ° под горизонтом (0 — выключено)'],
+  camShiftX: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вправо / влево, °'],
+  camShiftY: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вверх / вниз, °'],
 }
 // One set per monitor, stored as "m0.yaw", "m1.span", ...
 export const MONITOR_SPEC = {
@@ -10,6 +12,7 @@ export const MONITOR_SPEC = {
   pitch: [0, -60, 60, 1, 'Вверх / вниз, °'],
   span: [90, 30, 180, 1, 'Ширина, ° (на расстоянии 1,5 м)'],
   curve: [100, 0, 100, 5, 'Изгиб, % (0 — плоский)'],
+  dist: [1.5, 0.5, 5, 0.1, 'Расстояние, м'],
 }
 // Headset calibration for iPhone 15 Pro in a Gear VR. lensDist, k1 and k2 were found in the user's headset; the rest is a starting guess.
 export const LENS_SPEC = {
@@ -25,11 +28,13 @@ export const LENS_SPEC = {
 const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves them: centre, right, left, behind (same list in capture.py)
 
 // Server answer -> full settings: every key has a value, monitors included.
-function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, camera: false, hideMonitors: false, virtualSize: answer.virtualSizes[0] }
+export function complete(answer) {
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, virtualSize: answer.virtualSizes[0] }
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
   answer.monitors.forEach(({ id }, i) => {
     for (const [key, spec] of Object.entries(MONITOR_SPEC)) all[`${id}.${key}`] = key === 'yaw' ? SLOT_YAW[i] : spec[0]
+    all[`${id}.hidden`] = false
+    if (answer.dist != null) all[`${id}.dist`] = answer.dist // the distance used to be one for all monitors
   })
   return { ...all, ...answer }
 }
@@ -38,7 +43,7 @@ function complete(answer) {
 // has not answered for a second (onChange is called again when it is back).
 // Reloads the page when the server reports other code than the page was loaded with.
 export function watchParams(onChange, onLost) {
-  let seen, build, failures = 0
+  let seen, build, failures = 0, fast = false // fast: while monitors are arranged with the mouse, its buttons must feel instant
   const poll = async () => {
     let changed
     try {
@@ -52,7 +57,8 @@ export function watchParams(onChange, onLost) {
         onLost?.()
       }
     }
-    setTimeout(poll, 200)
+    if (changed) fast = changed.edit
+    setTimeout(poll, fast ? 40 : 200)
     if (!changed) return
     build ??= changed.build
     if (changed.build !== build) return location.reload()

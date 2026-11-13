@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Euler, Quaternion, Vector3 } from 'three'
-import { deviceQuaternion, gazeOf, monitorFrame } from './app/orient.js'
+import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
+import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -37,4 +38,33 @@ test('a monitor placed 90° right and 20° up is dead ahead after turning the he
 test('a monitor on the right is seen on the right', () => {
   const head = looking(0, 0)
   assert.ok(gazeInMonitor(head, gazeOf(head), 40, 0).x < -0.5) // the gaze is left of that monitor's centre
+})
+
+test('a monitor put where the gaze is, in layout coordinates, stands dead ahead', () => {
+  const head = deviceQuaternion(210, 35, -60, 90), anchor = gazeOf(looking(-40, 15))
+  const { yaw, pitch } = gazeInLayout(anchor, head)
+  near(gazeInMonitor(head, anchor, yaw, pitch), 0, 0, -1)
+  const plain = gazeInLayout(gazeOf(looking(0, 0)), looking(30, 10)) // no tilt of the layout: the numbers are the angles
+  assert.ok(Math.abs(plain.yaw - 30) < 1e-6 && Math.abs(plain.pitch - 10) < 1e-6)
+})
+
+test('a monitor stays level with the horizon wherever it is put, also in a layout centred with the head tilted', () => {
+  for (const anchor of [gazeOf(looking(0, 0)), gazeOf(looking(25, 30)), gazeOf(looking(-70, -20))]) {
+    for (const [yaw, pitch] of [[0, 0], [40, 0], [-60, 10], [120, -25]]) {
+      const right = new Vector3(1, 0, 0).applyQuaternion(monitorFrame(anchor, yaw, pitch)) // its right edge direction
+      assert.ok(Math.abs(right.y) < 1e-6, `rolled by ${right.y} at ${yaw}, ${pitch}`)
+    }
+  }
+})
+
+test('QR code: the check bytes of the textbook example, and the fixed parts of the picture', () => {
+  // "HELLO WORLD" at version 1-M, the worked example of QR tutorials
+  const data = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17]
+  assert.deepEqual(checkBytes(data, 10), [196, 35, 39, 119, 235, 215, 231, 226, 93, 23])
+  const code = qr('https://my-pc.local:8443/?k=0123456789ab') // 40 bytes: version 3, 29 x 29
+  assert.equal(code.length, 29)
+  assert.ok(code[0][0] && !code[1][1] && code[3][3] && !code[7][7], 'corner square')
+  assert.ok(code[6][8] && !code[6][9] && code[6][10], 'timing line')
+  assert.ok(code[21][8], 'the module that is always dark')
+  assert.throws(() => qr('x'.repeat(107)), RangeError)
 })

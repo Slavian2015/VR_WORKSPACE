@@ -21,13 +21,15 @@
 <p id="status" role="status">Связь с сервером…</p>
 
 <button id="center">Центрировать по взгляду</button>
+<button id="arrange">Расставлять мышью в шлеме</button>
 <p>Посмотрите туда, где должен быть центр расстановки, и нажмите кнопку. Когда она в фокусе, работает и пробел: можно смотреть в сторону от этого окна.</p>
+<p>«Расставлять мышью» (или клавиша Num Lock, если установлено расширение GNOME): мышь уходит в шлем. Посмотрите на монитор, зажмите левую кнопку и несите его взглядом; колесо меняет размер, с Shift — изгиб, с Ctrl — расстояние до этого монитора. Цифры 1–4 скрывают и показывают монитор с этим номером, 5 центрирует расстановку по взгляду. Esc возвращает мышь.</p>
 
 <label>Фон 360 <select id="bg"><option value="black">чёрный</option></select></label>
 <label class="check"><input id="autoBlack" type="checkbox">Чёрный фон, пока какое-нибудь окно развёрнуто на весь экран</label>
 <label class="check"><input id="hideMonitors" type="checkbox">Скрыть мониторы (чтобы рассмотреть фон, например тестовую сетку)</label>
-<label class="check"><input id="camera" type="checkbox">Держать камеру телефона включённой (телефон спросит разрешение, пока он в руках)</label>
 <button id="passthrough">Фон с камеры телефона: включить</button>
+<p id="cameras"></p>
 <div id="layout"></div>
 <label>Виртуальных мониторов <input id="virtual" type="number" min="0" step="1" required></label>
 <label>Размер виртуальных мониторов, точек <select id="virtualSize"></select></label>
@@ -60,15 +62,38 @@
   for (const [key, spec] of Object.entries(LAYOUT_SPEC)) addSlider($('layout'), key, spec)
   for (const [key, spec] of Object.entries(LENS_SPEC)) addSlider($('lens'), key, spec)
   $('resetLens').onclick = () => reset(Object.keys(LENS_SPEC))
-  $('resetLayout').onclick = () => reset([...Object.keys(LAYOUT_SPEC), ...monitorKeys()])
+  $('resetLayout').onclick = () => reset([...Object.keys(LAYOUT_SPEC), ...monitorKeys(), 'dist']) // 'dist': the old shared distance
   $('center').onclick = () => setParams({ recenter: Date.now() })
+
+  // Arranging in the headset: this page takes the mouse (the browser shows how to give it back: Esc) and passes its
+  // left button and wheel on; the phone does the rest. `edit: true` is repeated so that a closed page ends the mode.
+  let beat
+  const arranging = () => document.pointerLockElement === document.body
+  $('arrange').onclick = () => document.body.requestPointerLock()
+  document.addEventListener('pointerlockchange', () => {
+    clearInterval(beat)
+    if (!arranging()) return setParams({ edit: false, grab: false })
+    setParams({ edit: true })
+    beat = setInterval(() => setParams({ edit: true }), 1000)
+  })
+  addEventListener('mousedown', e => arranging() && e.button === 0 && setParams({ grab: true }))
+  addEventListener('mouseup', e => arranging() && e.button === 0 && setParams({ grab: false }))
+  addEventListener('keydown', e => { // the same keys as with Num Lock: 1-4 hide or show a monitor, 5 centres
+    if (!arranging() || !/^[1-5]$/.test(e.key)) return
+    setParams(e.key === '5' ? { recenter: Date.now() } : { toggle: `m${e.key - 1}.hidden` })
+  })
+  addEventListener('wheel', e => {
+    if (!arranging()) return
+    e.preventDefault() // Ctrl+wheel would zoom the page
+    // away from you: one step more. Shift turns the wheel sideways in some browsers
+    setParams({ [e.ctrlKey ? 'wheelDist' : e.shiftKey ? 'wheelCurve' : 'wheelSize']: -Math.sign(e.deltaY || e.deltaX) })
+  }, { passive: false })
 
   // Everything in app/bg is offered: setup.sh puts photos there, a 360 video dropped in works too.
   const files = await (await fetch('/bgs')).json()
   $('bg').append(...files.map(file => new Option(file.replace(/^bg\/|\.\w+$/g, ''), file)))
   $('bg').onchange = () => setParams({ bg: $('bg').value })
   $('autoBlack').onchange = () => setParams({ autoBlack: $('autoBlack').checked })
-  $('camera').onchange = () => setParams({ camera: $('camera').checked })
   $('hideMonitors').onchange = () => setParams({ hideMonitors: $('hideMonitors').checked })
   $('passthrough').onclick = () => fetch('/toggle/passthrough', { method: 'POST' })
   $('virtual').onchange = () => $('virtual').reportValidity() && setParams({ virtual: +$('virtual').value })
@@ -84,6 +109,10 @@
         const box = document.createElement('fieldset')
         box.append(Object.assign(document.createElement('legend'), { textContent: `Монитор ${i + 1} (${name})` }))
         for (const [key, spec] of Object.entries(MONITOR_SPEC)) addSlider(box, `${id}.${key}`, spec)
+        const hidden = Object.assign(document.createElement('input'), { type: 'checkbox', id: `${id}.hidden` })
+        hidden.onchange = () => setParams({ [`${id}.hidden`]: hidden.checked })
+        box.append(Object.assign(document.createElement('label'), { className: 'check' }))
+        box.lastChild.append(hidden, `Скрыт (в режиме расстановки: клавиша ${i + 1})`)
         return box
       }))
       $('virtual').value = p.monitors.filter(m => m.virtual).length
@@ -95,13 +124,13 @@
       if (input !== document.activeElement) input.value = p[key]
       output.textContent = input.value
     }
+    for (const { id } of p.monitors) $(`${id}.hidden`).checked = p[`${id}.hidden`]
     if ($('bg') !== document.activeElement) $('bg').value = p.bg
     if ($('virtualSize') !== document.activeElement) $('virtualSize').value = p.virtualSize
     $('autoBlack').checked = p.autoBlack
-    $('camera').checked = p.camera
     $('hideMonitors').checked = p.hideMonitors
     $('passthrough').textContent = `Фон с камеры телефона: ${p.passthrough ? 'выключить' : 'включить'}`
-    $('passthrough').disabled = !p.camera
+    $('cameras').textContent = p.camLabel ? `Камера, которую дал телефон: ${p.camLabel}. Все его камеры: ${p.cameras.join(', ')}.` : ''
     $('status').textContent = p.phoneOnline
       ? 'Телефон на связи: изменения видны в шлеме сразу.'
       : 'Телефон не подключён: настройки применятся, когда он подключится.'
