@@ -68,6 +68,18 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       shows[key] = value => { if (row.active !== !!value) row.active = !!value }
       return row
     }
+    const colour = (key, title, subtitle = '') => { // a colour, kept as #rrggbb
+      const button = new Gtk.ColorDialogButton({ dialog: new Gtk.ColorDialog({ with_alpha: false }), valign: Gtk.Align.CENTER })
+      const hex = rgba => '#' + [rgba.red, rgba.green, rgba.blue].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')
+      button.connect('notify::rgba', () => change(key, hex(button.rgba)))
+      shows[key] = value => {
+        const rgba = new Gdk.RGBA()
+        if (rgba.parse(value) && hex(rgba) !== hex(button.rgba)) button.rgba = rgba
+      }
+      const row = new Adw.ActionRow({ title, subtitle })
+      row.add_suffix(button)
+      return row
+    }
     const action = (title, subtitle, label, run, style) => {
       const button = new Gtk.Button({ label, valign: Gtk.Align.CENTER, css_classes: style ? [style] : [] })
       button.connect('clicked', run)
@@ -406,6 +418,8 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       background.connect('map', gallery)
       group(background, {},
         number('bgYaw', host.layout.bgYaw, _('Rotation, °'), _('Turns the scene around you')),
+        number('bgDim', host.layout.bgDim, _('Darkening, %'), _('So that the panels stand out. Also in the headset: arranging mode, look down')),
+        number('bgBlur', host.layout.bgBlur, _('Blur, %'), _('So that the scene does not draw the eye')),
         toggle('autoBlack', _('Black while a window is fullscreen'), _('For films: the scene goes dark around them')),
         action(_('Your own backgrounds'), _('Put 360° photos or videos (equirectangular, twice as wide as tall; .jpg, .png, .mp4, .webm, .mov) into the folder'), _('Open Folder'),
           () => Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(host.bgDir, null), null)))
@@ -425,6 +439,12 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
       number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
       camera)
+      group(headset, {
+        title: _('Highlights'),
+        description: _('A soft light around panels: the one in the arranging mode under the pointer, being carried or resized, and the window that gets the keyboard.'),
+      },
+      colour('glowColor', _('Colour'), _('It drifts a little around the panel')),
+      toggle('focusGlow', _('Light the window that gets the keyboard'), _('What you type on the PC goes there')))
       group(headset, {
         title: _('Lens Calibration'),
         description: _('First the two distances, until both pictures merge without eye strain. Then k1 and k2, until straight lines are straight at the edges. Then the colour fringes, until white text near the edge has no red and blue outlines. The background “test grid” shows all of it best.'),

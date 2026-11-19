@@ -67,8 +67,8 @@ export default class VrWorkspace extends Extension {
     global.display.disconnect(this._focusChanged)
     for (const copy of this._copies.keys()) copy.destroy()
     this._copies.clear()
-    for (const source of [this._watch, this._startCheck, this._windowsBeat]) if (source) GLib.source_remove(source)
-    this._watch = this._startCheck = this._windowsBeat = 0
+    for (const source of [this._watch, this._startCheck, this._windowsBeat, this._soon]) if (source) GLib.source_remove(source)
+    this._watch = this._startCheck = this._windowsBeat = this._soon = 0
     if (this._stopPressed) this._stopButton.disconnect(this._stopPressed)
     this._stopPressed = 0
     this._indicator.destroy()
@@ -152,7 +152,7 @@ export default class VrWorkspace extends Extension {
       return { id: w.get_id(), title: w.get_title() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
         parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
     })
-    talk(this._http, '/windows', { open, ...wish }).then(answer => {
+    talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, ...wish }).then(answer => {
       if (!this._indicator) return // switched off meanwhile
       this._serverSeen = !!answer
       this._shownWindows = answer?.shown ?? []
@@ -165,7 +165,18 @@ export default class VrWorkspace extends Extension {
         active.activate(global.get_current_time())
       }
       if (answer?.launch) this._start(answer.launch)
+      if (answer?.resize) this._resize(windows.find(w => w.get_id() === answer.resize.id), answer.resize)
+      // While a window is resized from the headset: the next report in a tenth of a second, not in half of one.
+      if (answer?.soon && !this._soon) this._soon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => (this._soon = 0, this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
     })
+  }
+
+  // A size the headset asked for (dragged at a side or a corner there): the opposite sides stay where they are.
+  _resize(window, { w, h, edge: [left, , top] }) {
+    if (!window?.allows_resize()) return
+    if (window.get_maximized()) window.unmaximize(Meta.MaximizeFlags.BOTH)
+    const r = window.get_frame_rect()
+    window.move_resize_frame(true, left ? r.x + r.width - w : r.x, top ? r.y + r.height - h : r.y, w, h)
   }
 
   _note(window, what) { // into the journal, while the server runs: GNOME's own warnings name X11 windows by these numbers

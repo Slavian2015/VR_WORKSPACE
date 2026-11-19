@@ -66,6 +66,8 @@ let activeWindow = null, activeAt = 0, activeSince = 0 // the window the headset
 let headsetClick = { at: 0, in: null } // when the headset last clicked, and in which window (null: it started an application)
 const adopted = new Map()       // window id -> the window it is taken for a dialog of: it opened right after a click there, naming no parent
 let windowsTold = false         // whether the extension has told the open windows once: before that, none is new
+let focusedWindow = 0           // the window that gets the keyboard on the PC, as the extension last told
+let resizeWish = null, resizeAt = 0 // { id, w, h, edge }: a size the headset asked for a window, until the extension has taken it
 let windowsModule               // the windows.py process, started when first needed
 // The headset's own list of applications: the extension tells which are installed (name and icon file), the headset
 // shows them and names one to start, and the extension starts it and shows its window.
@@ -74,7 +76,8 @@ let launch = null // the application the headset asked for, until the extension 
 // In the order the windows came into the headset: it draws the later ones on top, as a dialog over its window.
 // A dialog's panel names the panel of its window (`over`).
 const windowPanels = () => [...wantedWindows].map(([id, slot]) => [openWindows.find(w => w.id === id), slot]).filter(([w]) => w)
-  .map(([w, slot]) => ({ id: slot, name: w.title, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups }))
+  .map(([w, slot]) => ({ id: slot, name: w.title, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups,
+    focused: w.id === focusedWindow }))
 function tellWindows(order) {
   if (!windowsModule) {
     windowsModule = spawn(path.join(ROOT, 'windows.py'), { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] })
@@ -145,6 +148,7 @@ async function handle(req, res) {
   if (url === '/windows' && req.method === 'POST' && local) {
     const told = JSON.parse(await readBody(req))
     let opened = [] // windows that were not there at the last report
+    if (Number.isFinite(told?.focus)) focusedWindow = told.focus
     if (Array.isArray(told?.open)) {
       const before = new Set(openWindows.map(w => w.id))
       openWindows = told.open.filter(w => [w?.id, w?.left, w?.top].every(Number.isFinite) && w.w > 0 && w.h > 0)
@@ -180,8 +184,10 @@ async function handle(req, res) {
     for (const w of opened) console.log(`window opened: type ${w.type}, ${w.w}x${w.h}${w.parent ? ', a dialog' : ''}${wantedWindows.has(w.id) ? `, shown in the headset: "${w.title}"` : ''}`)
     syncWindows()
     // `active` only while the pointer is at work there: otherwise the desktop's own choice of window stands
-    const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length }
-    launch = null
+    // soon: a window is being resized from the headset; the extension then asks again in a tenth of a second
+    const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length,
+      resize: resizeWish, soon: Date.now() - resizeAt < 1000 }
+    launch = resizeWish = null
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
   }
   // For the headset's list of applications: names and GNOME's ids in order (the user's own places in the list are
@@ -197,6 +203,16 @@ async function handle(req, res) {
     if (!apps[wish?.app]) throw new SyntaxError('the number of an application expected')
     launch = apps[wish.app].id
     headsetClick = { at: Date.now(), in: null }
+    return res.writeHead(204).end()
+  }
+  // From the headset: a new size for a window it shows, dragged at a side or corner (edge: left, right, top, bottom as
+  // 0 or 1: the opposite sides stay where they are). The extension resizes the window.
+  if (url === '/resize' && req.method === 'POST') {
+    const wish = JSON.parse(await readBody(req)), panel = windowPanels().find(p => p.id === wish?.to)
+    const size = n => Number.isInteger(n) && n >= 150 && n <= 8192
+    if (!panel || !size(wish.w) || !size(wish.h) || !Array.isArray(wish.edge) || wish.edge.length !== 4 || !wish.edge.every(e => e === 0 || e === 1)) throw new SyntaxError('a window, a size and its sides expected')
+    resizeWish = { id: panel.source, w: wish.w, h: wish.h, edge: wish.edge }
+    resizeAt = Date.now()
     return res.writeHead(204).end()
   }
   // From capture.py: GNOME's own "stop sharing" button was pressed. That switches VR Workspace off.
@@ -234,8 +250,11 @@ async function handle(req, res) {
   }
 
   if (url === '/pose' && req.method === 'POST') {
+    // Only the phone's: a preview page left open on this PC sends its own, and the spectator jumped between the two.
+    if (local) return res.writeHead(204).end()
     const sent = JSON.parse(await readBody(req))
-    if (!Array.isArray(sent) || sent.length !== 6 || !sent.every(Number.isFinite)) throw new SyntaxError('six numbers expected')
+    // head (4), anchor (2), the list of applications (open, yaw, pitch, the icon carried), the mouse (2), our pointer (3)
+    if (!Array.isArray(sent) || sent.length !== 15 || !sent.every(Number.isFinite)) throw new SyntaxError('fifteen numbers expected')
     pose = JSON.stringify(sent)
     return res.writeHead(204).end()
   }

@@ -4,7 +4,7 @@ import { Euler, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 import { cleanOrder } from './orders.js'
-import { placeIcon } from './app/params.js'
+import { placeIcon, resizeWindow, snapPanel } from './app/params.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -78,6 +78,23 @@ test('the field of the list of applications: a taken place pushes its neighbours
   assert.equal(show(placeIcon(field('abcdefghijklmno.'), 'd', 4)), 'abcedfghijklmno.') // one place on: e takes the place d left, nothing else moves
   assert.equal(show(placeIcon(field('abcdefghijklmnop'), 'x', 2)), 'abxcdefghijklmno') // full: the last one leaves
   assert.equal(show(placeIcon(field('ab..............'), 'a', -1)), '.b..............') // out of the field
+})
+
+test('a carried panel is drawn to its neighbours: beside them, in line with them, or not at all when far', () => {
+  const other = { yaw: 0, pitch: 0, w: 40, h: 25 }
+  assert.deepEqual(snapPanel({ yaw: 33, pitch: 1, w: 20, h: 15 }, [other]), { yaw: 32, pitch: 0, to: 0 }) // beside it, 2 degrees apart, same height
+  assert.deepEqual(snapPanel({ yaw: -11, pitch: 23.5, w: 20, h: 15 }, [other]), { yaw: -10, pitch: 22, to: 0 }) // left edges in line, 2 degrees over it
+  assert.deepEqual(snapPanel({ yaw: 2, pitch: 2, w: 20, h: 15 }, [other]).pitch, 0) // the same middle height
+  assert.deepEqual(snapPanel({ yaw: 70, pitch: 30, w: 20, h: 15 }, [other]), { yaw: 70, pitch: 30, to: -1 })
+  assert.deepEqual(snapPanel({ yaw: -170, pitch: 0, w: 20, h: 15 }, [{ yaw: 160, pitch: 0, w: 40, h: 25 }]).yaw, -168) // across the back of the sphere
+})
+
+test('a window resized by its side keeps the opposite side and the size of its text', () => {
+  const panel = { w: 800, h: 600, span: 40, yaw: 0, pitch: 0, dist: 1.5 } // 40 degrees across: 20 pixels a degree
+  assert.deepEqual(resizeWindow(panel, { left: 0, right: 1, top: 0, bottom: 0 }, { yaw: 10, pitch: 0 }), { w: 1000, h: 600, span: 50, yaw: 5, pitch: 0 })
+  assert.deepEqual(resizeWindow(panel, { left: 1, right: 0, top: 0, bottom: 0 }, { yaw: 10, pitch: 0 }), { w: 600, h: 600, span: 30, yaw: 5, pitch: 0 })
+  assert.deepEqual(resizeWindow(panel, { left: 0, right: 0, top: 0, bottom: 1 }, { yaw: 0, pitch: -5 }), { w: 800, h: 700, span: 40, yaw: 0, pitch: -2.5 })
+  assert.equal(resizeWindow(panel, { left: 0, right: 1, top: 1, bottom: 0 }, { yaw: -40, pitch: -40 }).w, 200) // never smaller than 200 x 150
 })
 
 test('orders for a window: only a shown window, only inside it, only known buttons and keys', () => {

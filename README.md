@@ -65,8 +65,10 @@ Settings are kept in `params.json` in this folder.
 ### Arranging monitors in the headset: Num Lock
 
 Press **Num Lock** while a phone is connected: the mouse stops reaching the desktop and works in the headset.
-Look at a monitor (it gets a yellow frame, and a note with its numbers appears under the centre of the view), hold
-the left button and carry it with your gaze.
+Look at a monitor (a soft light comes around it, and a note with its numbers appears under the centre of the view),
+hold the left button and carry it with your gaze; near another monitor it is drawn to sit beside it or in line with
+it. The mouse connected to the phone works in this mode too: see "Single windows", step 6. Looking down shows the
+backgrounds, with darkening and blur.
 
 | Input | Does |
 | --- | --- |
@@ -124,22 +126,30 @@ a mouse connected to the phone.
 1. Click the window on the PC, then the headset icon → **Show “…” in the Headset**. The same item takes it back.
    Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of Wi-Fi.
 2. The window appears as a panel where you are looking (under the monitors, if the headset is not on yet), curved
-   like a monitor. Move it like a monitor (map, tab, or Num Lock); its curve is in its tab in Settings → Monitors.
+   like a monitor; its curve is in its tab in Settings → Monitors.
 3. Look at the panel and move the mouse that is connected to the **phone**: a white dot is the pointer. The whole
-   phone screen stands for the window, edge to edge, so the pointer never jumps across it; the outermost strip
-   around the phone screen is the window's frame. Left and right button and the wheel go to the window.
-4. **To move a window**, push the pointer to an edge of the phone screen, onto the window's frame: the frame lights
-   up yellow. Hold the left button and move the mouse, or turn your head: the window goes along until you let go.
-   The wheel on the frame changes its size. On the iPhone use the left and right edges: at the top and bottom
-   edges of its screen the phone seems to keep presses and the wheel for itself.
-5. **To start an application**, look where its window should open, away from the windows, and press the right
-   button: the PC's applications hang around you as a ribbon of icons, four in a column, and everything else goes
-   dark. In its middle is your own field of 4 × 4 places; the other applications are to its left and right by name.
-   Turn your head to see the rest; a click starts an application, and its window opens where you looked when you
-   pressed the right button. A click beside the icons closes the list.
-6. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
-   stays there (if the place is taken, the icons from there on move one place along); let go beside the field and
-   it leaves it. The field is kept on the PC.
+   phone screen stands for the window, edge to edge, so the pointer never jumps across it. Left and right button
+   and the wheel go to the window. The window that gets the PC's keyboard has a soft coloured light around it.
+4. **To start an application**, look where its window should open, away from the windows, and press the right
+   button: the PC's applications hang around you level with your eyes, a ribbon of icons four in a column, and
+   everything else goes dark. In its middle is your own field of 4 × 4 places with larger icons; the other
+   applications are to its left and right by name. Turn your head to see the rest; a click starts an application,
+   and its window opens where you looked when you pressed the right button. A click beside the icons closes the
+   list.
+5. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
+   stays there (if the place is taken, the icons move one place toward the nearest free place); let go beside the
+   field and it leaves it. The field is kept on the PC.
+6. **To move and resize windows**, switch on the arranging mode with Num Lock on the PC's keyboard. Our pointer is
+   then a dot in the view, and the panel under it lights up:
+   - hold the left button anywhere on a panel and move the mouse or turn your head: it goes along, and near another
+     panel it is drawn to sit beside it, over or under it, or in line with it;
+   - at a side or a corner of a window that side lights up: drag it to make the window itself wider or taller on
+     the PC; its panel grows with it and the text keeps its size;
+   - the wheel over a panel changes its size;
+   - look down: the backgrounds as round pictures (the wheel turns the pages; a click chooses one) and two sliders,
+     darkening and blur of the background. The phone camera is off in this mode.
+   Num Lock again leaves the mode.
+7. **Look up** for the time and date.
 
 What to know:
 - **Hide all monitors** (Settings → Monitors) leaves the single windows, so you can work with windows alone.
@@ -196,17 +206,27 @@ curl -s -X POST http://localhost:8080/toggle/passthrough
 
 ## Recording what you see
 
-Settings → Connect → "See what the headset shows" opens http://localhost:8080/?spectator in the browser. Click the
-page once: it shows one flat picture of what the wearer is looking at (no stereo, no lens distortion) and follows
-the head. `?spectator=110` sets the width of the view in degrees (90 by default). Record that window with any
-screen recorder, for example GNOME's own: PrtSc, switch to video, select the area. The page has no sound and does
-not show the phone camera.
+In the project folder, while VR Workspace runs:
+
+```bash
+node record.mjs          # Ctrl+C stops; the video, with the PC's sound, goes to ~/Videos
+node record.mjs 110      # a wider view: 110 degrees instead of 90
+```
+
+It records one flat picture of what the wearer is looking at (no stereo, no lens distortion), following the head a
+quarter of a second behind so that it stays smooth. Nothing appears on the screen: an invisible Chromium draws the
+picture on the graphics card. Our pointer and the list of applications are in it, as the phone shows them; the
+phone camera is not.
+
+To only watch: Settings → Connect → "See what the headset shows" opens http://localhost:8080/?spectator in the
+browser (click it once). As a window on the PC it gets covered by the windows the headset brings to the front.
 
 ## Your own backgrounds
 
 Settings → Background → "Open Folder" opens `app/bg/`. Put equirectangular files there (twice as wide as tall):
 photos, or 360 videos as `.mp4`, `.webm` or `.mov` in a codec the phone plays (H.264 is safe). They appear in the
-gallery the next time its page is opened. `setup.sh` fills the folder only when it does not exist yet (with the
+gallery the next time its page is opened. The same page has darkening and blur of the background, so that the
+panels stand out; in the headset they are under the backgrounds when you look down in the arranging mode. `setup.sh` fills the folder only when it does not exist yet (with the
 photos, a test grid and `video_test.mp4`), so what you delete stays deleted.
 
 ## Without the top bar icon

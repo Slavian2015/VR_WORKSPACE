@@ -5,6 +5,8 @@ export const LAYOUT_SPEC = {
   camBelow: [0, 0, 80, 1, 'Камера при взгляде вниз: показывать ниже, ° под горизонтом (0 — выключено)'],
   camShiftX: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вправо / влево, °'],
   camShiftY: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вверх / вниз, °'],
+  bgDim: [0, 0, 90, 5, 'Затемнение фона, %'],
+  bgBlur: [0, 0, 100, 5, 'Размытие фона, %'],
 }
 // One set per monitor, stored as "m0.yaw", "m1.span", ...
 export const MONITOR_SPEC = {
@@ -30,7 +32,8 @@ const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (
 
 // Server answer -> full settings: every key has a value, monitors included.
 export function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0] }
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0],
+    glowColor: '#4fb2ff', focusGlow: true } // the light around panels; around the one that gets the keyboard
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
   answer.monitors.forEach(({ id, virtual, window }, i) => {
     if (virtual) all[`${id}.size`] = answer.virtualSize ?? answer.virtualSizes[0] // its own size, until set: the one for all
@@ -52,6 +55,49 @@ export function placeIcon(pins, id, k) {
   out.splice(free.length ? free.reduce((a, b) => Math.abs(b - k) < Math.abs(a - k) ? b : a) : out.length - 1, 1)
   out.splice(k, 0, id)
   return out
+}
+
+// Where a panel being carried is drawn to: within `reach` degrees of lining up with another panel it goes there (side
+// by side or one over the other `gap` apart, edges or middles in line). Panels: { yaw, pitch, w, h }
+// in degrees, yaw to the right, pitch up, w and h what they take in the view. Returns { yaw, pitch, to }: to is the
+// index of the panel it lined up with, or -1.
+export function snapPanel(moving, others, reach = 3, gap = 2) {
+  const turn = a => ((a + 540) % 360) - 180, off = o => turn(moving.yaw - o.yaw)
+  const best = { yaw: moving.yaw, pitch: moving.pitch, to: -1 }
+  let miss = reach
+  others.forEach((o, i) => { // first the height, if it is beside or over another: over or under it, middles, tops or bottoms in line
+    if (Math.abs(off(o)) >= (moving.w + o.w) / 2 + gap + reach) return
+    const stack = (moving.h + o.h) / 2 + gap
+    for (const target of [stack, -stack, 0, (o.h - moving.h) / 2, (moving.h - o.h) / 2]) {
+      const away = Math.abs(moving.pitch - o.pitch - target)
+      if (away < miss) [miss, best.pitch, best.to] = [away, o.pitch + target, i]
+    }
+  })
+  miss = reach
+  others.forEach((o, i) => { // then across, at the height it got: beside it, edges or middles in line
+    if (Math.abs(best.pitch - o.pitch) >= (moving.h + o.h) / 2 + gap + reach / 2) return
+    const side = (moving.w + o.w) / 2 + gap
+    for (const target of [side, -side, (o.w - moving.w) / 2, (moving.w - o.w) / 2, 0]) {
+      const away = Math.abs(off(o) - target)
+      if (away < miss) [miss, best.yaw, best.to] = [away, turn(o.yaw + target), i]
+    }
+  })
+  return best
+}
+
+// A window resized from the headset by a side or a corner (edge: { left, right, top, bottom } as 0 or 1) after the
+// pointer moved { yaw, pitch } degrees: its new size in pixels and where its panel stands, the opposite side staying
+// where it was and the text as large as it was (the pixels a degree holds are kept). widthAt: the metres one radian of
+// span is wide at (main.js WIDTH_AT); the panel takes span * widthAt / dist degrees across.
+export function resizeWindow({ w, h, span, yaw, pitch, dist }, edge, moved, widthAt = 1.5) {
+  const perDegree = w / (span * widthAt / dist)
+  const width = Math.max(200, Math.round(w + (edge.right - edge.left) * moved.yaw * perDegree))
+  const height = Math.max(150, Math.round(h - (edge.bottom - edge.top) * moved.pitch * perDegree))
+  return {
+    w: width, h: height, span: span * width / w,
+    yaw: yaw + (edge.right - edge.left) * (width - w) / perDegree / 2,
+    pitch: pitch - (edge.bottom - edge.top) * (height - h) / perDegree / 2,
+  }
 }
 
 // Calls onChange with the full settings at start and every time anyone changes them, and onLost when the server

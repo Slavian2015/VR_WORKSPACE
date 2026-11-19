@@ -1,4 +1,5 @@
-// Plays the phone: opens a page in headless Chromium and does what the arguments say, in order.
+// Plays the phone: opens a page in headless Chromium and does what the arguments say, in order. It may be opened over
+// https at the PC's network address, as the phone does (the certificate is accepted without a question).
 //
 //   node dev/page.mjs <url> [width height] <action>...
 //
@@ -12,7 +13,7 @@ const [url, ...rest] = process.argv.slice(2)
 const [width, height] = /^\d+$/.test(rest[0]) ? rest.splice(0, 2).map(Number) : [1280, 590]
 const chrome = spawn('chromium', ['--headless=new', '--remote-debugging-port=9333', `--window-size=${width},${height}`,
   `--user-data-dir=${process.env.HOME}/snap/chromium/common/vr-test-profile`, '--autoplay-policy=no-user-gesture-required', '--mute-audio',
-  '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', 'about:blank'], { stdio: 'ignore' })
+  '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors', 'about:blank'], { stdio: 'ignore' })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const started = Date.now(), log = (...what) => console.log(((Date.now() - started) / 1000).toFixed(1).padStart(5), ...what)
 try {
