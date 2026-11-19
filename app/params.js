@@ -26,18 +26,32 @@ export const LENS_SPEC = {
   cy: [0, -10, 10, 0.25, 'Сдвиг центра по вертикали, мм'],
 }
 const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves them: centre, right, left, behind (same list in capture.py)
+const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (w0, w1, ...): a row under the monitors
 
 // Server answer -> full settings: every key has a value, monitors included.
 export function complete(answer) {
   const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0] }
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
-  answer.monitors.forEach(({ id, virtual }, i) => {
+  answer.monitors.forEach(({ id, virtual, window }, i) => {
     if (virtual) all[`${id}.size`] = answer.virtualSize ?? answer.virtualSizes[0] // its own size, until set: the one for all
-    for (const [key, spec] of Object.entries(MONITOR_SPEC)) all[`${id}.${key}`] = key === 'yaw' ? SLOT_YAW[i] : spec[0]
+    for (const [key, spec] of Object.entries(MONITOR_SPEC)) all[`${id}.${key}`] = key === 'yaw' ? SLOT_YAW[i] ?? 0 : spec[0]
+    if (window) Object.assign(all, { [`${id}.yaw`]: WINDOW_YAW[id.slice(1)] ?? 0, [`${id}.pitch`]: -45, [`${id}.span`]: 60 }) // curved as a monitor
     all[`${id}.hidden`] = false
     if (answer.dist != null) all[`${id}.dist`] = answer.dist // the distance used to be one for all monitors
   })
   return { ...all, ...answer }
+}
+
+// The user's field in the headset's list of applications: puts an application (GNOME's id) into place k (-1: out
+// of the field). pins: the id in each place, null where free. A taken place: the icons between it and the nearest
+// free place, on either side, move one place toward that one; in a full field the last one leaves it.
+export function placeIcon(pins, id, k) {
+  const out = pins.map(pin => pin === id ? null : pin)
+  if (k < 0) return out
+  const free = out.flatMap((pin, i) => pin === null ? [i] : [])
+  out.splice(free.length ? free.reduce((a, b) => Math.abs(b - k) < Math.abs(a - k) ? b : a) : out.length - 1, 1)
+  out.splice(k, 0, id)
+  return out
 }
 
 // Calls onChange with the full settings at start and every time anyone changes them, and onLost when the server

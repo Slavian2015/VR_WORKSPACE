@@ -8,6 +8,7 @@ import { spawn, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
+import { cleanOrder } from './orders.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -22,7 +23,7 @@ const MOUNTS = [
   ['/', path.join(ROOT, 'app/')],
 ]
 const TYPES = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.jpg': 'image/jpeg', '.png': 'image/png',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.ico': 'image/x-icon', '.crt': 'application/x-x509-ca-cert',
 }
 
@@ -53,6 +54,51 @@ const live = { fullscreen: false, passthrough: false, grab: false, wheelSize: 0,
 // says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
 // added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
 let editSeen = 0
+
+// --- single application windows in the headset. The GNOME extension tells which windows are open and which of them
+// the user wants there; windows.py records those and works them. A wanted window that is open takes a slot and is
+// one more panel in the list of monitors, cut out of its stream (`crop`: left, top, width, height in the picture).
+// Eight: each is a stream of its own (12 Mbit/s, a hardware encoder, about 200 MB of graphics memory), and dialogs count.
+const WINDOW_SLOTS = Array.from({ length: 8 }, (_, i) => `w${i}`)
+let openWindows = []            // [{ id, title, w, h, left, top, parent }], as the extension last told; parent: the window a dialog belongs to, or 0
+const wantedWindows = new Map() // GNOME's window id -> slot, in the order they came into the headset
+let activeWindow = null, activeAt = 0, activeSince = 0 // the window the headset's pointer is in, when it last did something there, and since when
+let headsetClick = { at: 0, in: null } // when the headset last clicked, and in which window (null: it started an application)
+const adopted = new Map()       // window id -> the window it is taken for a dialog of: it opened right after a click there, naming no parent
+let windowsTold = false         // whether the extension has told the open windows once: before that, none is new
+let windowsModule               // the windows.py process, started when first needed
+// The headset's own list of applications: the extension tells which are installed (name and icon file), the headset
+// shows them and names one to start, and the extension starts it and shows its window.
+let apps = []    // [{ id, name, icon }]
+let launch = null // the application the headset asked for, until the extension has taken it
+// In the order the windows came into the headset: it draws the later ones on top, as a dialog over its window.
+// A dialog's panel names the panel of its window (`over`).
+const windowPanels = () => [...wantedWindows].map(([id, slot]) => [openWindows.find(w => w.id === id), slot]).filter(([w]) => w)
+  .map(([w, slot]) => ({ id: slot, name: w.title, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups }))
+function tellWindows(order) {
+  if (!windowsModule) {
+    windowsModule = spawn(path.join(ROOT, 'windows.py'), { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] })
+    windowsModule.on('exit', () => { windowsModule = null })
+    windowsModule.stdin.on('error', () => {}) // it died: the next order starts it again
+    // A stream that ended without being told to (GNOME stopped the sharing, or the encoder failed): that window
+    // leaves the headset. Asking again by ourselves would work against a user who pressed "stop".
+    windowsModule.stdout.on('data', text => {
+      for (const line of String(text).split('\n').filter(Boolean)) {
+        const said = JSON.parse(line)
+        for (const [id, slot] of wantedWindows) if (said.live === false && slot === said.slot) wantedWindows.delete(id)
+      }
+    })
+  }
+  windowsModule.stdin.write(JSON.stringify(order) + '\n')
+}
+function syncWindows() {
+  for (const id of new Set([...wantedWindows.keys(), ...adopted.keys()])) { // it was closed
+    if (!openWindows.some(w => w.id === id)) { wantedWindows.delete(id); adopted.delete(id) }
+  }
+  if (SETTINGS_ONLY || (!wantedWindows.size && !windowsModule)) return
+  tellWindows({ streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1] }])) })
+}
+process.on('exit', () => windowsModule?.kill())
 
 async function readBody(req) {
   let body = ''
@@ -89,9 +135,97 @@ async function handle(req, res) {
   }
 
   const stream = /^\/whep\/(\w+)$/.exec(url)
-  if (stream && req.method === 'POST' && (stream[1] === 'audio' || CAPTURE.monitors.some(m => m.id === stream[1]))) {
+  if (stream && req.method === 'POST' && (stream[1] === 'audio' || [...CAPTURE.monitors, ...windowPanels()].some(m => m.id === stream[1]))) {
     const r = await fetch(`http://127.0.0.1:8889/vr/${stream[1]}/whep`, { method: 'POST', headers: { 'content-type': 'application/sdp' }, body: await readBody(req) })
     return res.writeHead(r.status, { 'content-type': 'application/sdp' }).end(await r.text())
+  }
+
+  // From the GNOME extension, so from this PC only: the windows that are open, and the user's wish to have one in
+  // the headset or out of it. The answer tells the extension which are shown and which one to bring to the front.
+  if (url === '/windows' && req.method === 'POST' && local) {
+    const told = JSON.parse(await readBody(req))
+    let opened = [] // windows that were not there at the last report
+    if (Array.isArray(told?.open)) {
+      const before = new Set(openWindows.map(w => w.id))
+      openWindows = told.open.filter(w => [w?.id, w?.left, w?.top].every(Number.isFinite) && w.w > 0 && w.h > 0)
+        .map(w => ({ id: w.id, title: String(w.title).slice(0, 80), w: w.w, h: w.h, left: w.left, top: w.top, parent: Number.isFinite(w.parent) ? w.parent : 0, type: w.type,
+          popups: (Array.isArray(w.popups) ? w.popups : []).filter(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > 0 && r[3] > 0).slice(0, 3) }))
+      opened = windowsTold ? openWindows.filter(w => !before.has(w.id)) : []
+      windowsTold = true
+    }
+    if (Array.isArray(told?.apps)) {
+      apps = told.apps.slice(0, 500).filter(a => typeof a?.id === 'string' && typeof a.name === 'string')
+        .map(a => ({ id: a.id.slice(0, 200), name: a.name.slice(0, 60), icon: String(a.icon ?? '') }))
+    }
+    // toggle: the user's choice in the menu of the top bar; show: the window of an application started from the headset
+    const freeSlot = () => WINDOW_SLOTS.find(s => ![...wantedWindows.values()].includes(s))
+    if (wantedWindows.has(told?.toggle)) { // out of the headset, and its dialogs with it
+      for (const w of openWindows) if ([w.id, w.parent, adopted.get(w.id)].includes(told.toggle)) wantedWindows.delete(w.id)
+    } else if ([told?.toggle, told?.show].some(id => openWindows.some(w => w.id === id) && !wantedWindows.has(id))) {
+      if (freeSlot()) wantedWindows.set(told.toggle ?? told.show, freeSlot())
+    }
+    // A dialog of a window that is in the headset goes there too: who looks only into the headset would not know
+    // that it opened. (A dialog of a dialog follows with the next report.) So does any window that opens soon after
+    // a click from the headset: a file chooser that another program shows (Flatpak applications ask the system for
+    // it, and GNOME does not know whose it is), the second window of an application, the main window after a splash.
+    // Opened after a click in a window and naming no parent, it is taken for a dialog of that window: it lies on it,
+    // as large as its text, and leaves the headset with it.
+    const soon = Date.now() - headsetClick.at < 15000
+    for (const w of openWindows) {
+      if (wantedWindows.has(w.id) || !freeSlot() || !(wantedWindows.has(w.parent) || (soon && opened.includes(w)))) continue
+      wantedWindows.set(w.id, freeSlot())
+      if (!w.parent && soon && wantedWindows.has(headsetClick.in)) adopted.set(w.id, headsetClick.in)
+    }
+    // For finding out why a window did not come into the headset. The title only of those that did: the journal is kept for weeks.
+    for (const w of opened) console.log(`window opened: type ${w.type}, ${w.w}x${w.h}${w.parent ? ', a dialog' : ''}${wantedWindows.has(w.id) ? `, shown in the headset: "${w.title}"` : ''}`)
+    syncWindows()
+    // `active` only while the pointer is at work there: otherwise the desktop's own choice of window stands
+    const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length }
+    launch = null
+    return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
+  }
+  // For the headset's list of applications: names and GNOME's ids in order (the user's own places in the list are
+  // kept by id), each one's icon, and the wish to start one.
+  if (url === '/apps') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(apps.map(({ id, name }) => ({ id, name }))))
+  const icon = /^\/appicon\/(\d+)$/.exec(url)
+  if (icon) { // only picture files, and only those the extension named
+    const file = apps[icon[1]]?.icon ?? ''
+    return ['.png', '.svg'].includes(path.extname(file)) ? sendFile(req, res, file) : res.writeHead(404).end('no icon')
+  }
+  if (url === '/launch' && req.method === 'POST') {
+    const wish = JSON.parse(await readBody(req))
+    if (!apps[wish?.app]) throw new SyntaxError('the number of an application expected')
+    launch = apps[wish.app].id
+    headsetClick = { at: Date.now(), in: null }
+    return res.writeHead(204).end()
+  }
+  // From capture.py: GNOME's own "stop sharing" button was pressed. That switches VR Workspace off.
+  if (url === '/stop' && req.method === 'POST' && local) {
+    res.writeHead(204).end()
+    return process.kill(process.pid, 'SIGTERM')
+  }
+  // From the headset: the pointer, the buttons, the wheel and keys for a window it shows.
+  if (url === '/input' && req.method === 'POST') {
+    const panels = windowPanels(), areas = Object.fromEntries(panels.map(p => [p.id, [[0, 0, ...p.crop.slice(2)], ...p.popups]]))
+    const orders = JSON.parse(await readBody(req))
+    if (!Array.isArray(orders) || orders.length > 50) throw new SyntaxError('a short list of orders expected')
+    for (const order of orders.map(o => cleanOrder(o, areas)).filter(Boolean)) {
+      const source = panels.find(p => p.id === order.to).source
+      if (source !== activeWindow) activeSince = Date.now()
+      activeWindow = source
+      activeAt = Date.now()
+      // A press must not come before the extension had the time to bring this window to the front (it asks twice a
+      // second): it would land on whatever covers the window on the desktop.
+      if (order.down && 'button' in order && Date.now() - activeSince < 700) {
+        console.log('a press from the headset was held back: its window was brought to the front less than 0.7 s ago')
+        continue
+      }
+      if (order.down && 'button' in order) headsetClick = { at: Date.now(), in: source }
+      // Until the trouble with VLC's file chooser (2026-11-19) is understood: every button from the headset.
+      if ('button' in order) console.log(`input: button ${order.button} ${order.down ? 'down' : 'up'} in ${order.to} (window ${source}) at ${Math.round(order.x)},${Math.round(order.y)}`)
+      tellWindows(order)
+    }
+    return res.writeHead(204).end()
   }
 
   if (url === '/toggle/passthrough' && req.method === 'POST') {
@@ -143,7 +277,8 @@ async function handle(req, res) {
   }
   if (url === '/params') {
     if (!local) phoneSeen = Date.now()
-    const answer = { ...params, ...CAPTURE, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
+    const monitors = [...CAPTURE.monitors, ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? complete(answer) : answer))

@@ -176,7 +176,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       let held = null, moved = null // the monitor under the pressed pointer; where it has been dragged to
       const boxes = () => last.monitors.map((monitor, i) => {
         const { id, name } = monitor
-        const [w, h] = (monitor.virtual ? last[`${id}.size`] : '16x9').split('x') // shortcut: a real monitor is drawn 16:9, the server does not tell its size
+        const [w, h] = monitor.crop ? monitor.crop.slice(2) : (monitor.virtual ? last[`${id}.size`] : '16x9').split('x') // crop: a single window // shortcut: a real monitor is drawn 16:9, the server does not tell its size
         const wide = Math.min(170, last[`${id}.span`] * 1.5 / last[`${id}.dist`]) // nearer than 1.5 m it looks wider
         const at = moved?.id === id ? moved : { yaw: last[`${id}.yaw`], pitch: last[`${id}.pitch`] }
         return { id, i, name, hidden: last[`${id}.hidden`], yaw: at.yaw, pitch: at.pitch, wide, tall: wide * h / w }
@@ -256,7 +256,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
           title: _('Arrange in the headset: Num Lock'),
           subtitle: _('While Num Lock is on, the mouse works in the headset. Look at a monitor, hold the left button and carry it with your gaze. Wheel: size. Shift+wheel: curve. Ctrl+wheel: distance. Keys 1–4: hide or show a monitor, 5: centre. Num Lock again gives the mouse back; the rest of the keyboard works as usual.'),
         }),
-        toggle('hideMonitors', _('Hide all monitors'), _('To look at the background, for example the test grid')),
+        toggle('hideMonitors', _('Hide all monitors'), _('To look at the background, or to work with single windows alone: those stay')),
         // 'dist': the distance used to be one for all monitors
         action(_('Reset the arrangement'), _('Every monitor back to its place, size and distance'), _('Reset'),
           () => talk(session, '/params', Object.fromEntries([...monitorKeys().filter(key => !key.endsWith('.size')), 'dist'].map(key => [key, null]))), 'destructive-action')) // not the pixel sizes: that would restart the picture
@@ -276,11 +276,11 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         const open = tabs.visible_child_name
         for (let tab; (tab = tabs.get_first_child());) tabs.remove(tab)
         for (const key of monitorKeys()) delete shows[key]
-        list.forEach(({ id, name, virtual }, i) => {
+        list.forEach(({ id, name, virtual, window: single }, i) => {
           const tab = new Adw.PreferencesGroup()
           const size = virtual
             ? new Adw.ComboRow({ title: _('Size, pixels'), subtitle: _('A change restarts the picture'), model: Gtk.StringList.new(settings.virtualSizes.map(s => s.replace('x', ' × '))) })
-            : new Adw.ActionRow({ title: _('Size, pixels'), subtitle: _('This is a real monitor: its size is set in GNOME Settings → Displays') })
+            : new Adw.ActionRow({ title: _('Size, pixels'), subtitle: single ? _('This is a single window: it is as big as that window is on the desktop') : _('This is a real monitor: its size is set in GNOME Settings → Displays') })
           if (virtual) {
             size.connect('notify::selected', () => change(`${id}.size`, settings.virtualSizes[size.selected]))
             shows[`${id}.size`] = value => size.selected = settings.virtualSizes.indexOf(value)

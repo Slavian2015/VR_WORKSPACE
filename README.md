@@ -116,6 +116,47 @@ edge that lets this happen.
 Known limit: every time a virtual monitor is created and removed, GNOME Shell keeps 50–100 MB of video memory
 until you log out (measured on GNOME 46). It adds up only after many reconnects in one session.
 
+## Single windows (experimental)
+
+Besides whole monitors, one application window can be shown as a panel of its own and worked from the headset with
+a mouse connected to the phone.
+
+1. Click the window on the PC, then the headset icon → **Show “…” in the Headset**. The same item takes it back.
+   Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of Wi-Fi.
+2. The window appears as a panel where you are looking (under the monitors, if the headset is not on yet), curved
+   like a monitor. Move it like a monitor (map, tab, or Num Lock); its curve is in its tab in Settings → Monitors.
+3. Look at the panel and move the mouse that is connected to the **phone**: a white dot is the pointer. The whole
+   phone screen stands for the window, edge to edge, so the pointer never jumps across it; the outermost strip
+   around the phone screen is the window's frame. Left and right button and the wheel go to the window.
+4. **To move a window**, push the pointer to an edge of the phone screen, onto the window's frame: the frame lights
+   up yellow. Hold the left button and move the mouse, or turn your head: the window goes along until you let go.
+   The wheel on the frame changes its size. On the iPhone use the left and right edges: at the top and bottom
+   edges of its screen the phone seems to keep presses and the wheel for itself.
+5. **To start an application**, look where its window should open, away from the windows, and press the right
+   button: the PC's applications hang around you as a ribbon of icons, four in a column, and everything else goes
+   dark. In its middle is your own field of 4 × 4 places; the other applications are to its left and right by name.
+   Turn your head to see the rest; a click starts an application, and its window opens where you looked when you
+   pressed the right button. A click beside the icons closes the list.
+6. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
+   stays there (if the place is taken, the icons from there on move one place along); let go beside the field and
+   it leaves it. The field is kept on the PC.
+
+What to know:
+- **Hide all monitors** (Settings → Monitors) leaves the single windows, so you can work with windows alone.
+- Menus, drop-down lists and tooltips of a window are shown on it, also where they reach out of it. While one is
+  open, the pointer reaches its part outside the window too, so the pointer moves a little when it opens. A menu
+  reaching out to the left of or above the window is cut there.
+- A dialog of a window in the headset (a file chooser, a question) comes into the headset by itself, lying on
+  its window, and leaves when it is closed. It appears dark first; the picture follows in 3–4 seconds. It takes one
+  of the eight places. So does any window that opens within 15 seconds after a click from the headset: a file
+  chooser that a Flatpak application asks the system for, the second window of an application. Such a window lies
+  on the window you clicked in, with its text as large, and leaves the headset with it.
+- The iPhone shows its own round pointer too; Safari gives pages no way to hide or hold it.
+- The PC has one pointer: while you work in a window from the headset, the PC's pointer is there, and the window is
+  brought to the front.
+- Whoever has the link with the key can now click in these windows, not only watch.
+- The keyboard is not passed on yet.
+
 ## Sound
 
 While the phone is connected, the sound of the PC plays on the phone: an audio output called **VR-Headset**
@@ -196,6 +237,9 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
   monitors; cause unknown). Windows still take the keyboard. Ctrl+Alt+F3 opens a text console: log in and run
   `systemctl --user stop vr-workspace`; if the desktop does not come back, `loginctl terminate-user $USER` ends the
   session without a hard reset. Ctrl+Alt+F2 (or F1) returns to the desktop.
+- **VR Workspace switched itself off** — GNOME's own "stop sharing the screen" button (the orange one in the top
+  bar) was pressed. It ends every recording, so VR Workspace takes it as "off". Switch it on again in its menu.
+  A locked screen only pauses the picture; it comes back after unlocking.
 - **Picture but no head tracking** — the tap on the phone screen allows the motion sensors; reload and tap again.
   Rotation lock must be off.
 
@@ -225,6 +269,8 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `capture.py` — asks GNOME for the monitor streams (creating the virtual monitors), runs one GStreamer encoder per
   monitor and ffmpeg for the sound, creates the virtual audio output.
 - `mediamtx.yml` — MediaMTX settings; it starts `capture.py` when a viewer connects.
+- `windows.py` — the same for single windows, and puts the pointer, buttons and wheel from the headset into them
+  (`orders.js` checks what the headset may ask for).
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,

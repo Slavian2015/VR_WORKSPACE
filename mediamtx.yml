@@ -20,5 +20,5 @@ paths:
   vr/m0:
     runOnDemand: ./capture.py
     runOnDemandRestart: true
-  # Any number of monitors: how many there are is decided in capture.py.
-  '~^vr/(m\d+|audio)$':
+  # Any number of monitors (how many there are is decided in capture.py) and of single windows (windows.py).
+  '~^vr/(m\d+|w\d+|audio)$':

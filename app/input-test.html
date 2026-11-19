@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Проверка мыши и клавиатуры</title>
+<!-- What a mouse and a keyboard connected to the phone give a web page. Decides how windows of applications can be
+     pointed at from the headset: with the mouse itself, or with the gaze and the mouse buttons.
+     The page shows what arrived and sends the same to the server (setting "inputTest"), to be read on the PC. -->
+<style>
+  body { margin: 0; padding: 12px 12px 80px; background: #111; color: #eee; font: 15px/1.35 system-ui; touch-action: none; user-select: none; -webkit-user-select: none; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  ol { margin: 0 0 10px; padding-left: 22px; color: #bbb; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 3px 6px; border-bottom: 1px solid #333; vertical-align: top; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  #keys span { display: inline-block; margin: 2px; padding: 2px 6px; border: 1px solid #555; border-radius: 4px; color: #888; }
+  #keys .seen { background: #264; border-color: #6f6; color: #fff; }
+  #dot { position: fixed; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #fd0; pointer-events: none; display: none; }
+</style>
+<h1>Проверка мыши и клавиатуры</h1>
+<ol>
+  <li>Подвигайте мышью, ничего не нажимая: жёлтая точка должна ходить за указателем.</li>
+  <li>Доведите указатель до всех четырёх краёв экрана.</li>
+  <li>Щёлкните левой и правой кнопкой, протащите с нажатой кнопкой, покрутите колесо.</li>
+  <li>Нажмите на клавиатуре каждую клавишу и сочетание из списка внизу.</li>
+</ol>
+<p id="sent" role="status">Пока ничего не пришло.</p>
+<table id="facts"></table>
+<p>Клавиши и сочетания, которые дошли до страницы:</p>
+<p id="keys"></p>
+<div id="dot"></div>
+<script type="module">
+  const $ = id => document.getElementById(id)
+  const count = {} // what happened -> how many times
+  let changed = false
+  const bump = what => { count[what] = (count[what] ?? 0) + 1; changed = true }
+  const seen = { buttons: new Set(), keys: new Set(), relative: false, lock: 'не пробовали', perSecond: 0, wheel: '', fine: false, x: [Infinity, -Infinity], y: [Infinity, -Infinity] }
+
+  // --- the pointer
+  let moves = [] // times of the last movements, for their rate
+  for (const type of ['pointermove', 'pointerdown', 'pointerup', 'pointercancel', 'pointerover', 'pointerout']) {
+    addEventListener(type, e => {
+      const pressed = e.buttons ? 'нажата' : 'не нажата'
+      bump(type === 'pointermove' ? `движение, кнопка ${pressed} (${e.pointerType})` : `${type} (${e.pointerType})`)
+      if (type === 'pointerdown') seen.buttons.add(e.button)
+      if (e.movementX || e.movementY) seen.relative = true
+      if (e.pointerType === 'mouse') { // how finely and how far the pointer goes: it will stand for a place in a window
+        if (e.clientX % 1 || e.clientY % 1) seen.fine = true
+        seen.x = [Math.min(seen.x[0], e.clientX), Math.max(seen.x[1], e.clientX)]
+        seen.y = [Math.min(seen.y[0], e.clientY), Math.max(seen.y[1], e.clientY)]
+      }
+      if (type === 'pointermove') {
+        moves = [...moves.filter(t => e.timeStamp - t < 1000), e.timeStamp]
+        seen.perSecond = Math.max(seen.perSecond, moves.length)
+        Object.assign($('dot').style, { display: 'block', left: `${e.clientX}px`, top: `${e.clientY}px` })
+      }
+    })
+  }
+  for (const type of ['mousemove', 'mousedown', 'mouseup', 'touchstart', 'touchmove', 'touchend', 'click', 'auxclick']) addEventListener(type, () => bump(type), { passive: true })
+  addEventListener('contextmenu', e => { e.preventDefault(); bump('contextmenu (правая кнопка)') })
+  addEventListener('wheel', e => { bump('wheel (колесо)'); seen.wheel = `шаг ${Math.round(e.deltaY)}, режим ${e.deltaMode}` }, { passive: true })
+  // Can the page hold the pointer, as on a computer? Asked once, at the first press.
+  addEventListener('pointerdown', async () => {
+    if (!document.body.requestPointerLock) return void (seen.lock = 'нет в этом браузере')
+    try {
+      await document.body.requestPointerLock()
+      seen.lock = document.pointerLockElement ? 'получен' : 'не дан'
+      document.exitPointerLock()
+    } catch (e) {
+      seen.lock = `отказано: ${e.message}`
+    }
+    changed = true
+  }, { once: true })
+
+  // --- the keyboard
+  const KEYS = ['KeyA', 'Digit1', 'Enter', 'Backspace', 'Space', 'Escape', 'Tab', 'ArrowLeft', 'ArrowUp', 'Delete', 'Home', 'PageDown', 'F1', 'F5',
+    'ShiftLeft', 'ControlLeft', 'AltLeft', 'MetaLeft', 'CapsLock']
+  const COMBOS = { // what the applications on the PC will need most
+    'Ctrl+C': e => e.ctrlKey && e.code === 'KeyC', 'Ctrl+V': e => e.ctrlKey && e.code === 'KeyV', 'Ctrl+Z': e => e.ctrlKey && e.code === 'KeyZ',
+    'Ctrl+W': e => e.ctrlKey && e.code === 'KeyW', 'Ctrl+T': e => e.ctrlKey && e.code === 'KeyT', 'Ctrl+Tab': e => e.ctrlKey && e.code === 'Tab',
+    'Alt+Tab': e => e.altKey && e.code === 'Tab', 'Alt+F4': e => e.altKey && e.code === 'F4', 'Shift+ArrowRight': e => e.shiftKey && e.code === 'ArrowRight',
+    'Cmd+C': e => e.metaKey && e.code === 'KeyC', 'Cmd+Space': e => e.metaKey && e.code === 'Space', 'Cmd+Tab': e => e.metaKey && e.code === 'Tab',
+  }
+  $('keys').append(...[...KEYS, ...Object.keys(COMBOS)].map(name => Object.assign(document.createElement('span'), { id: name, textContent: name })))
+  addEventListener('keydown', e => {
+    e.preventDefault() // so that Tab, Space and the like do their work in the page, not in the browser
+    bump(e.repeat ? 'keydown (повтор при удержании)' : 'keydown')
+    for (const name of [e.code, ...Object.keys(COMBOS).filter(name => COMBOS[name](e))]) {
+      seen.keys.add(name)
+      if (!$(name)) $('keys').append(Object.assign(document.createElement('span'), { id: name, textContent: name })) // a key that is not on the list
+      $(name).classList.add('seen')
+    }
+  })
+  addEventListener('keyup', () => bump('keyup'))
+
+  // --- what is shown, and sent to the PC every two seconds while something changes
+  setInterval(async () => {
+    if (!changed) return
+    changed = false
+    const facts = {
+      ...count,
+      'сдвиги мыши (movementX)': seen.relative ? 'есть' : 'нет',
+      'движений в секунду, самое большее': seen.perSecond,
+      'кнопки, которые нажимались': [...seen.buttons].join(', '),
+      'колесо': seen.wheel,
+      'захват указателя': seen.lock,
+      'дробные координаты мыши': seen.fine ? 'есть' : 'нет',
+      'мышь доходила, по ширине': seen.x.map(v => Math.round(v * 10) / 10).join(' … '),
+      'мышь доходила, по высоте': seen.y.map(v => Math.round(v * 10) / 10).join(' … '),
+      'экран в точках страницы': `${innerWidth} × ${innerHeight}, плотность ${devicePixelRatio}`,
+      'запущено с домашнего экрана': navigator.standalone ? 'да' : 'нет',
+    }
+    $('facts').replaceChildren(...Object.entries(facts).map(([name, value]) => {
+      const row = document.createElement('tr')
+      row.append(Object.assign(document.createElement('td'), { textContent: name }), Object.assign(document.createElement('td'), { textContent: value }))
+      return row
+    }))
+    try {
+      const answer = await fetch('/params', { method: 'POST', body: JSON.stringify({ inputTest: { ...facts, keys: [...seen.keys], browser: navigator.userAgent, at: new Date().toLocaleString() } }) })
+      $('sent').textContent = answer.ok ? `Отправлено на компьютер в ${new Date().toLocaleTimeString()}.` : `Компьютер не принял: ${answer.status}.`
+    } catch {
+      $('sent').textContent = 'Нет связи с компьютером: результаты видны только здесь.'
+    }
+  }, 2000)
+</script>

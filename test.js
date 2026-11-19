@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { Euler, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
+import { cleanOrder } from './orders.js'
+import { placeIcon } from './app/params.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -67,4 +69,30 @@ test('QR code: the check bytes of the textbook example, and the fixed parts of t
   assert.ok(code[6][8] && !code[6][9] && code[6][10], 'timing line')
   assert.ok(code[21][8], 'the module that is always dark')
   assert.throws(() => qr('x'.repeat(107)), RangeError)
+})
+
+test('the field of the list of applications: a taken place pushes its neighbours toward the nearest free place', () => {
+  const field = text => text.split('').map(c => c === '.' ? null : c), show = pins => pins.map(p => p ?? '.').join('')
+  assert.equal(show(placeIcon(field('................'), 'a', 5)), '.....a..........') // a free place
+  assert.equal(show(placeIcon(field('.....bc.........'), 'a', 6)), '.....bac........') // taken: c moves on to 7
+  assert.equal(show(placeIcon(field('abcdefghijklmno.'), 'd', 4)), 'abcedfghijklmno.') // one place on: e takes the place d left, nothing else moves
+  assert.equal(show(placeIcon(field('abcdefghijklmnop'), 'x', 2)), 'abxcdefghijklmno') // full: the last one leaves
+  assert.equal(show(placeIcon(field('ab..............'), 'a', -1)), '.b..............') // out of the field
+})
+
+test('orders for a window: only a shown window, only inside it, only known buttons and keys', () => {
+  const sizes = { w0: [[0, 0, 700, 520]] }
+  assert.deepEqual(cleanOrder({ to: 'w0', x: 350.5, y: 20 }, sizes), { to: 'w0', x: 350.5, y: 20 })
+  assert.deepEqual(cleanOrder({ to: 'w0', x: -50, y: 9999 }, sizes), { to: 'w0', x: 0, y: 519 })
+  assert.deepEqual(cleanOrder({ to: 'w0', button: 272, down: true, extra: 'rm -rf' }, sizes), { to: 'w0', button: 272, down: true })
+  assert.deepEqual(cleanOrder({ to: 'w0', wheel: -1 }, sizes), { to: 'w0', wheel: -1 })
+  assert.deepEqual(cleanOrder({ to: 'w0', x: 10, y: 20, button: 273, down: false }, sizes), { to: 'w0', x: 10, y: 20, button: 273, down: false }) // a press carries its place
+  assert.deepEqual(cleanOrder({ to: 'w0', key: 30, down: false }, sizes), { to: 'w0', key: 30, down: false })
+  for (const bad of [{ to: 'w1', x: 1, y: 1 }, { to: 'w0' }, { to: 'w0', button: 1, down: true }, { to: 'w0', button: 272 }, { to: 'w0', wheel: 500 },
+    { to: 'w0', key: 0, down: true }, { to: 'w0', x: 'a', y: 1 }, { to: 'streams', x: 1, y: 1 }, null, 'w0']) assert.equal(cleanOrder(bad, sizes), null, JSON.stringify(bad))
+  // an open menu reaching out of the window at its bottom right: its part outside is allowed, the empty corner is not
+  const menu = { w0: [[0, 0, 700, 520], [600, 400, 200, 300]] }
+  assert.deepEqual(cleanOrder({ to: 'w0', x: 750, y: 650 }, menu), { to: 'w0', x: 750, y: 650 })
+  assert.deepEqual(cleanOrder({ to: 'w0', x: 300, y: 650 }, menu), { to: 'w0', x: 300, y: 519 })
+  assert.deepEqual(cleanOrder({ to: 'w0', x: 900, y: 450 }, menu), { to: 'w0', x: 799, y: 450 })
 })

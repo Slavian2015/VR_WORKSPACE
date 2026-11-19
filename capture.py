@@ -9,7 +9,7 @@ Picture and sound are separate streams on purpose: played in sync, the picture w
 `capture.py --list` prints the monitors and the limit as JSON; server.js shows them to the pages.
 System python on purpose (see the first line): the project venv has no GNOME bindings.
 """
-import functools, itertools, json, os, signal, subprocess, sys
+import functools, itertools, json, os, signal, subprocess, sys, time, urllib.request
 from gi.repository import Gio, GLib
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -172,6 +172,20 @@ def remove_output():
 
 
 def main():
+    # A capture that keeps ending is not started again at once. Every start adds virtual monitors and every end
+    # removes them, and GNOME Shell crashed on 2026-11-18 when that happened three times in half a minute.
+    stamp = os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/tmp'), 'vr-workspace-capture')
+    try:
+        wait = 30 - (time.time() - os.stat(stamp).st_mtime)
+    except OSError:
+        wait = 0  # the first start
+    if wait > 0:
+        print(f'capture.py: started again {30 - wait:.0f} s after the last start, waiting {wait:.0f} s', file=sys.stderr)
+        try:
+            time.sleep(wait)
+        except KeyboardInterrupt:  # MediaMTX gave up waiting for the picture; it starts us again when asked
+            sys.exit()
+    open(stamp, 'w').close()
     sources = monitors()
     saved = settings()
     children = []  # processes that must stay alive: if one dies, everything stops and MediaMTX starts us again
@@ -197,7 +211,53 @@ def main():
                      f' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/m{i}')
 
     def new_session():
-        return mutter('ScreenCast', '/org/gnome/Mutter/ScreenCast', 'CreateSession', GLib.Variant('(a{sv})', ({},)))[0]
+        session = mutter('ScreenCast', '/org/gnome/Mutter/ScreenCast', 'CreateSession', GLib.Variant('(a{sv})', ({},)))[0]
+        bus.signal_subscribe('org.gnome.Mutter.ScreenCast', 'org.gnome.Mutter.ScreenCast.Session', 'Closed', session, None, 0, on_closed)
+        return session
+
+    ours = set()                               # sessions we end ourselves
+    halted = {'by': None}                      # GNOME ended a session: 'lock' (the screen is locked) or 'button'
+
+    def allowed():
+        """Does GNOME let screens be recorded now? It refuses while the screen is locked."""
+        try:
+            probe = mutter('ScreenCast', '/org/gnome/Mutter/ScreenCast', 'CreateSession', GLib.Variant('(a{sv})', ({},)))[0]
+        except GLib.Error:
+            return False
+        mutter('ScreenCast', probe, 'Stop')
+        return True
+
+    def on_closed(_bus, _sender, session, _interface, _signal, _parameters):
+        """GNOME ended a recording without being asked: its "stop sharing" button in the top bar was pressed, or the
+        screen was locked. Starting again at once, as after an encoder that died, would work against the user and
+        make the virtual monitors come and go. So everything is let go. After a lock the capture comes back when
+        recording is allowed again; after the button VR Workspace is switched off, as the user asked."""
+        if session in ours or halted['by']:
+            return
+        halted['by'] = 'pending'  # the sessions that stand_down ends must not bring us here again
+        stand_down()
+        halted['by'] = 'button' if allowed() else 'lock'
+        if halted['by'] == 'button':
+            print('capture.py: GNOME stopped the sharing of the screen: VR Workspace switches itself off', file=sys.stderr)
+            try:
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8080/stop', method='POST'), timeout=2)
+            except OSError:
+                pass  # the server is on its way out already
+        else:
+            print('capture.py: the screen is locked, the capture waits for it to be unlocked', file=sys.stderr)
+
+    def stand_down():
+        for child in children:
+            child.terminate()
+        children.clear()
+        real['encoders'] = []
+        for session in virtual_session, real['session']:
+            if session:
+                ours.add(session)
+                try:
+                    mutter('ScreenCast', session, 'Stop')
+                except (GLib.Error, TypeError):
+                    pass  # not started yet, or closed already
 
     cursor = {'cursor-mode': GLib.Variant('u', 1)}  # 1: the pointer is drawn into the picture
     streams = {}     # D-Bus path of a stream -> index of its monitor
@@ -223,6 +283,7 @@ def main():
             encoder.terminate()
         real['encoders'] = []
         if real['session']:
+            ours.add(real['session'])
             try:
                 mutter('ScreenCast', real['session'], 'Stop')
             except GLib.Error:
@@ -313,21 +374,18 @@ def main():
     seen = [None]  # when the settings file was last looked at
 
     def watch():
+        if halted['by']:  # GNOME ended the recording and nothing runs. After a lock: leave once recording is allowed
+            if halted['by'] == 'lock' and allowed():  # again, MediaMTX then starts us afresh. Else: wait to be stopped.
+                print('capture.py: the screen is unlocked, the capture starts again', file=sys.stderr)
+                loop.quit()
+            return True
         if any(child.poll() is not None for child in children):  # an encoder died: leave, MediaMTX starts us again
             loop.quit()
         available = int(next(line for line in open('/proc/meminfo') if line.startswith('MemAvailable')).split()[1]) // 1024
         action = memory_action(available, capturing=bool(children))
         if action == 'stop':  # stay alive but idle, or MediaMTX would start us again at once
             print(f'capture.py: only {available} MB of memory left, capture stopped to keep the computer usable', file=sys.stderr)
-            for child in children:
-                child.terminate()
-            children.clear()
-            real['encoders'] = []
-            for session in virtual_session, real['session']:
-                try:
-                    mutter('ScreenCast', session, 'Stop')
-                except (GLib.Error, TypeError):
-                    pass  # not started yet, or closed already
+            stand_down()
         elif action == 'leave':
             print(f'capture.py: {available} MB of memory again, capture restarts', file=sys.stderr)
             loop.quit()

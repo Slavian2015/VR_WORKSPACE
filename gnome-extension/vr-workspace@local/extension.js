@@ -3,6 +3,12 @@
 //   the settings window (prefs.js);
 // - it tells the server (server.js, on this PC) whether some window is fullscreen, so the headset can go dark
 //   around a film;
+// - single windows in the headset: the menu sends the window last used there or takes it back. While the server
+//   runs it is told twice a second which windows are open and how big; it answers which window the headset's
+//   pointer works in (that one is brought to the front: a click lands on whatever is in front) and which
+//   application the headset asked to start (its window is then shown there). It also gets the list of installed
+//   applications, for the headset's own menu of them. Menus, drop-down lists and tooltips of a window shown there
+//   are copied into that window, so that its recording has them (see _copyPopup);
 // - Num Lock hands the mouse to the headset: while it is on, the left button and the wheel arrange the monitors in
 //   the sphere instead of reaching the desktop, the keys 1-4 hide or show a monitor and 5 centres the layout on
 //   the gaze. Num Lock off gives the mouse back.
@@ -26,7 +32,28 @@ import { http, talk, power } from './link.js'
 export default class VrWorkspace extends Extension {
   enable() {
     this._http = http()
+    this._shownWindows = [] // GNOME's ids of the windows shown in the headset one by one
+    this._copies = new Map() // the copies of popups laid into those windows: copy -> { popup, window }
+    this._windowCreated = global.display.connect('window-created', (_display, window) => {
+      this._copyPopup(window)
+      this._note(window, 'opened')
+    })
+    // Until the trouble with VLC's file chooser (2026-11-19) is understood: what windows do while the headset works in them.
+    this._focusChanged = global.display.connect('notify::focus-window', () => this._note(global.display.focus_window, 'has the focus'))
     this._addMenu()
+    // Twice a second while the server answers, every three seconds while it does not.
+    this._windowsBeat = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+      if (this._serverSeen || ++this._silent % 6 === 0) this._tellWindows()
+      return GLib.SOURCE_CONTINUE
+    })
+    this._silent = 0
+    // GNOME's own "stop sharing" button stands next to our icon and ends every recording, so VR Workspace switches
+    // off when it is pressed. It was pressed without anyone meaning to; the log tells what pressed it.
+    this._stopButton = Main.panel.statusArea.screenSharing
+    this._stopPressed = this._stopButton?.connect('button-press-event', (_actor, event) => {
+      console.log(`VR Workspace: "stop sharing" pressed by ${event.get_source_device()?.get_device_name()} at ${event.get_coords().map(Math.round)}`)
+      return Clutter.EVENT_PROPAGATE
+    })
     this._fullscreenChanged = global.display.connect('in-fullscreen-changed', () => this._reportFullscreen())
     this._reportFullscreen()
     this._keymap = Clutter.get_default_backend().get_default_seat().get_keymap()
@@ -36,8 +63,14 @@ export default class VrWorkspace extends Extension {
 
   disable() {
     this._leave()
-    for (const source of [this._watch, this._startCheck]) if (source) GLib.source_remove(source)
-    this._watch = this._startCheck = 0
+    global.display.disconnect(this._windowCreated)
+    global.display.disconnect(this._focusChanged)
+    for (const copy of this._copies.keys()) copy.destroy()
+    this._copies.clear()
+    for (const source of [this._watch, this._startCheck, this._windowsBeat]) if (source) GLib.source_remove(source)
+    this._watch = this._startCheck = this._windowsBeat = 0
+    if (this._stopPressed) this._stopButton.disconnect(this._stopPressed)
+    this._stopPressed = 0
     this._indicator.destroy()
     this._indicator = null
     this._keymap.disconnect(this._keymapChanged)
@@ -65,6 +98,7 @@ export default class VrWorkspace extends Extension {
     this._camera = new PopupMenu.PopupSwitchMenuItem(_('Phone Camera as Background'), false)
     this._camera.connect('toggled', (_item, on) => this._talk({ passthrough: on }))
     menu.addMenuItem(this._camera)
+    this._windowItem = menu.addAction('', () => this._tellWindows({ toggle: this._candidate?.get_id() }))
     menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
     menu.addAction(_('Settings'), () => this.openPreferences())
     // The state is asked for only while the menu is open: nothing runs in the background for an icon.
@@ -72,6 +106,15 @@ export default class VrWorkspace extends Extension {
       if (this._watch) GLib.source_remove(this._watch)
       this._watch = open ? GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => (this._refresh(), GLib.SOURCE_CONTINUE)) : 0
       if (open) this._refresh()
+      if (!open) return
+      // The window used last: the one the user means by "this window" while the menu is open. For a dialog that is
+      // the window it belongs to: dialogs go into the headset and out of it with their window.
+      this._candidate = global.display.get_tab_list(Meta.TabList.NORMAL, null)[0]
+      while (this._candidate?.get_transient_for()) this._candidate = this._candidate.get_transient_for()
+      const title = (this._candidate?.get_title() ?? '').slice(0, 30)
+      this._windowItem.label.text = !this._candidate ? _('No Window to Show in the Headset')
+        : (this._shownWindows.includes(this._candidate.get_id()) ? _('Take “%s” out of the Headset') : _('Show “%s” in the Headset')).replace('%s', title)
+      this._windowItem.setSensitive(!!this._candidate)
     })
     this._refresh()
     Main.panel.addToStatusArea(this.uuid, this._indicator)
@@ -89,6 +132,106 @@ export default class VrWorkspace extends Extension {
       this._camera.setSensitive(on)
       this._camera.setToggleState(on && answer.passthrough)
     })
+  }
+
+  // Tells the server the open windows (and, with `toggle`, to show that one in the headset or stop showing it) and
+  // does what the answer says.
+  _tellWindows(wish = {}) { // wish: { toggle: id } or { show: id }
+    // Dialogs as well (a file chooser, a question): GNOME records every window alone, so a dialog is not in the
+    // picture of the window it belongs to. `parent` names that window, and the server shows the dialog with it.
+    const kinds = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG]
+    const windows = global.get_window_actors().map(actor => actor.meta_window).filter(w => kinds.includes(w.get_window_type()))
+    this._showStarted(windows, wish)
+    if (this._needApps) wish.apps = this._apps()
+    this._needApps = false
+    const open = windows.map(w => {
+      const frame = w.get_frame_rect(), buffer = w.get_buffer_rect() // the picture of a window starts at its shadow
+      // popups: where the menus copied into it lie, from the window's top left (they may reach out of it)
+      const popups = [...this._copies.values()].filter(c => c.window === w).map(({ popup }) => popup.get_frame_rect())
+        .filter(r => r.width > 0 && r.height > 0).slice(-3).map(r => [r.x - frame.x, r.y - frame.y, r.width, r.height])
+      return { id: w.get_id(), title: w.get_title() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
+        parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
+    })
+    talk(this._http, '/windows', { open, ...wish }).then(answer => {
+      if (!this._indicator) return // switched off meanwhile
+      this._serverSeen = !!answer
+      this._shownWindows = answer?.shown ?? []
+      this._needApps = !!answer?.needApps
+      // Not while a menu of it is open: the menu is what is being worked, and Qt programs (VLC) lose track of their
+      // windows when theirs is activated under an open menu.
+      const active = windows.find(w => w.get_id() === answer?.active)
+      if (active && active !== global.display.focus_window && ![...this._copies.values()].some(c => c.window === active)) {
+        console.log(`VR Workspace: bringing ${active.get_description()} "${active.get_title()}" to the front`)
+        active.activate(global.get_current_time())
+      }
+      if (answer?.launch) this._start(answer.launch)
+    })
+  }
+
+  _note(window, what) { // into the journal, while the server runs: GNOME's own warnings name X11 windows by these numbers
+    if (!this._serverSeen || !window) return
+    const parent = window.get_transient_for(), r = window.get_frame_rect()
+    console.log(`VR Workspace: window ${window.get_description()} "${window.get_title() ?? ''}" ${what}: type ${window.get_window_type()}, ` +
+      `${r.width}x${r.height}, pid ${window.get_pid()}${window.is_override_redirect() ? ', override-redirect' : ''}${parent ? `, belongs to ${parent.get_description()}` : ''}`)
+    if (what === 'opened') window.connect('unmanaged', () => this._note(window, 'closed'))
+  }
+
+  // A popup (menu, drop-down list, tooltip) is a window of its own to GNOME, and the recording of the window it
+  // drops from does not have it. So a copy of it is laid into that window, at the same place: the recording paints
+  // a window with what it holds, and the headset sees the menu where it is. On the PC the copy lies exactly under
+  // the popup and is not seen. The recording takes a new picture only when the window itself changes, so every
+  // change of the popup (a highlighted item, closing) is passed on to the window as a change of its own.
+  _copyPopup(popup) {
+    const kinds = [Meta.WindowType.DROPDOWN_MENU, Meta.WindowType.POPUP_MENU, Meta.WindowType.COMBO, Meta.WindowType.TOOLTIP, Meta.WindowType.MENU]
+    if (!kinds.includes(popup.get_window_type())) return
+    // Into the nearest window shown in the headset that it belongs to (a submenu belongs to a menu). X11 menus
+    // (Qt programs, VLC) may name no window: then the window of the same program that is shown there.
+    const shown = w => this._shownWindows.includes(w.get_id())
+    let window = popup.get_transient_for() ?? global.get_window_actors().map(actor => actor.meta_window)
+      .find(w => popup.get_pid() > 0 && w.get_pid() === popup.get_pid() && shown(w))
+    while (window && !shown(window)) window = window.get_transient_for()
+    const actor = popup.get_compositor_private(), into = window?.get_compositor_private()
+    if (!actor || !into) return
+    const copy = new Clutter.Clone({ source: actor })
+    const place = () => copy.set_position(actor.x - into.x, actor.y - into.y)
+    const changed = () => into.emit('damaged')
+    // The headset is told at once (not at the next report, half a second later) where the menu is: it shows the
+    // part of it that reaches out of the window, and its pointer reaches there too.
+    const tell = () => GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => (this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
+    place()
+    into.add_child(copy)
+    this._copies.set(copy, { popup, window })
+    actor.connectObject('notify::x', place, 'notify::y', place, 'damaged', changed, 'destroy', () => { copy.destroy(); changed() }, copy)
+    into.connectObject('notify::x', place, 'notify::y', place, copy) // a copy goes with its window, as its child
+    copy.connect('destroy', () => { this._copies.delete(copy); tell() })
+    changed()
+    tell()
+  }
+
+  // The installed applications that GNOME's own list shows, with the file of each one's icon.
+  _apps() {
+    const theme = new St.IconTheme()
+    return Shell.AppSystem.get_default().get_installed().filter(info => info.should_show()).map(info => {
+      const icon = info.get_icon()
+      return { id: info.get_id(), name: info.get_display_name(), icon: (icon && theme.lookup_by_gicon(icon, 128, St.IconLookupFlags.FORCE_SIZE))?.get_filename() ?? '' }
+    }).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  // Starts an application for the headset. Its new window is then shown there; an application that only brings
+  // forward a window it already has gets that one shown.
+  _start(id) {
+    const app = Shell.AppSystem.get_default().lookup_app(id)
+    if (!app) return
+    this._started = { app, had: app.get_windows().map(w => w.get_id()), at: Date.now() }
+    app.open_new_window(-1)
+  }
+
+  _showStarted(windows, wish) {
+    if (!this._started) return
+    const { app, had, at } = this._started, mine = app.get_windows().filter(w => windows.includes(w))
+    const fresh = mine.find(w => !had.includes(w.get_id())) ?? (Date.now() - at > 2500 ? mine[0] : undefined)
+    if (fresh) wish.show = fresh.get_id()
+    if (fresh || Date.now() - at > 10000) this._started = null
   }
 
   _setPower(on) {

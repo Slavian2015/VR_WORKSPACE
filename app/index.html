@@ -12,7 +12,11 @@
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; }
   canvas { position: fixed; inset: 0; display: block; }
   #start { position: fixed; inset: 0; z-index: 1; padding: 24px; border: 0; background: #000c; color: #fff; font: 600 24px system-ui; }
+  /* a way to the input test from the start screen: a page started from the home screen has no address bar */
+  #inputTest { position: fixed; z-index: 2; left: 0; right: 0; bottom: 16px; text-align: center; color: #9cf; font: 16px system-ui; }
+  #start[hidden] ~ #inputTest { display: none; }
 </style>
 <button id="start">Нажмите, чтобы начать</button>
+<a id="inputTest" href="input-test.html">Проверка мыши и клавиатуры</a>
 <script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
 <script type="module" src="main.js"></script>
