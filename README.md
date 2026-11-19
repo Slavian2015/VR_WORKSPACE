@@ -126,13 +126,17 @@ a mouse connected to the phone.
 1. Click the window on the PC, then the headset icon → **Show “…” in the Headset**. The same item takes it back.
    Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of Wi-Fi.
 2. The window appears as a panel where you are looking (under the monitors, if the headset is not on yet), curved
-   like a monitor; its curve is in its tab in Settings → Monitors.
+   like a monitor, and as large as makes one pixel of the window one pixel of the phone screen: its text as sharp
+   as it gets (the picture arrives as sharp as on the PC). Smaller is blurrier, larger is not sharper. Its curve is
+   in its tab in Settings → Monitors.
 3. Look at the panel and move the mouse that is connected to the **phone**: a white dot is the pointer. The whole
-   phone screen stands for the window, edge to edge, so the pointer never jumps across it. Left and right button
+   phone screen stands for the window (from side to side; from top to bottom without the phone's own edges, which
+   its pointer does not reach), so the pointer never jumps across it. Left and right button
    and the wheel go to the window. The window that gets the PC's keyboard has a soft coloured light around it.
 4. **To start an application**, look where its window should open, away from the windows, and press the right
-   button: the PC's applications hang around you level with your eyes, a ribbon of icons four in a column, and
-   everything else goes dark. In its middle is your own field of 4 × 4 places with larger icons; the other
+   button: the PC's applications hang around you level with your eyes, a ribbon of icons four in a column, always
+   in the same place, its middle straight ahead (where the layout was last centred), and everything else goes dark.
+   In its middle is your own field of 4 × 4 places with larger icons; the other
    applications are to its left and right by name. Turn your head to see the rest; a click starts an application,
    and its window opens where you looked when you pressed the right button. A click beside the icons closes the
    list.
@@ -166,6 +170,9 @@ What to know:
   brought to the front.
 - Whoever has the link with the key can now click in these windows, not only watch.
 - The keyboard is not passed on yet.
+- Settings → Headset → **Text sharpness** (40 % at first) makes letters crisper through the lenses; too much draws
+  bright edges around them.
+- A still window takes little Wi-Fi (about 0.4 Mbit/s); one that changes, up to 12.
 
 ## Sound
 

@@ -440,6 +440,10 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
       camera)
       group(headset, {
+        title: _('Picture'),
+      },
+      number('sharpen', host.layout.sharpen, _('Text sharpness, %'), _('Crisper letters through the lenses; too much draws bright edges around them')))
+      group(headset, {
         title: _('Highlights'),
         description: _('A soft light around panels: the one in the arranging mode under the pointer, being carried or resized, and the window that gets the keyboard.'),
       },

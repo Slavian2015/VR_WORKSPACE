@@ -253,8 +253,8 @@ async function handle(req, res) {
     // Only the phone's: a preview page left open on this PC sends its own, and the spectator jumped between the two.
     if (local) return res.writeHead(204).end()
     const sent = JSON.parse(await readBody(req))
-    // head (4), anchor (2), the list of applications (open, yaw, pitch, the icon carried), the mouse (2), our pointer (3)
-    if (!Array.isArray(sent) || sent.length !== 15 || !sent.every(Number.isFinite)) throw new SyntaxError('fifteen numbers expected')
+    // head (4), anchor (2), the list of applications (open, yaw, the icon carried), the mouse (2), our pointer (3)
+    if (!Array.isArray(sent) || sent.length !== 14 || !sent.every(Number.isFinite)) throw new SyntaxError('fourteen numbers expected')
     pose = JSON.stringify(sent)
     return res.writeHead(204).end()
   }

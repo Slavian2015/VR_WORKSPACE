@@ -81,12 +81,19 @@ test('the field of the list of applications: a taken place pushes its neighbours
 })
 
 test('a carried panel is drawn to its neighbours: beside them, in line with them, or not at all when far', () => {
+  const snap = (...args) => { const s = snapPanel(...args); return { yaw: +s.yaw.toFixed(2), pitch: +s.pitch.toFixed(2), to: s.to } }
   const other = { yaw: 0, pitch: 0, w: 40, h: 25 }
-  assert.deepEqual(snapPanel({ yaw: 33, pitch: 1, w: 20, h: 15 }, [other]), { yaw: 32, pitch: 0, to: 0 }) // beside it, 2 degrees apart, same height
-  assert.deepEqual(snapPanel({ yaw: -11, pitch: 23.5, w: 20, h: 15 }, [other]), { yaw: -10, pitch: 22, to: 0 }) // left edges in line, 2 degrees over it
-  assert.deepEqual(snapPanel({ yaw: 2, pitch: 2, w: 20, h: 15 }, [other]).pitch, 0) // the same middle height
-  assert.deepEqual(snapPanel({ yaw: 70, pitch: 30, w: 20, h: 15 }, [other]), { yaw: 70, pitch: 30, to: -1 })
-  assert.deepEqual(snapPanel({ yaw: -170, pitch: 0, w: 20, h: 15 }, [{ yaw: 160, pitch: 0, w: 40, h: 25 }]).yaw, -168) // across the back of the sphere
+  assert.deepEqual(snap({ yaw: 33, pitch: 1, w: 20, h: 15 }, [other]), { yaw: 32, pitch: 0, to: 0 }) // beside it, 2 degrees apart, same height
+  assert.deepEqual(snap({ yaw: -11, pitch: 23.5, w: 20, h: 15 }, [other]), { yaw: -9.23, pitch: 22, to: 0 }) // left edges in line, 2 degrees over it (up there half its width takes 10.77 degrees of turn)
+  assert.deepEqual(snap({ yaw: 2, pitch: 2, w: 20, h: 15 }, [other]).pitch, 0) // the same middle height
+  assert.deepEqual(snap({ yaw: 70, pitch: 30, w: 20, h: 15 }, [other]), { yaw: 70, pitch: 30, to: -1 })
+  assert.deepEqual(snap({ yaw: -170, pitch: 0, w: 20, h: 15 }, [{ yaw: 160, pitch: 0, w: 40, h: 25 }]).yaw, -168) // across the back of the sphere
+  // 30 degrees up, beside each other: 2 degrees apart across, not overlapping (42 degrees of turn overlapped them by 3)
+  const up = snapPanel({ yaw: 47, pitch: 30, w: 40, h: 25 }, [{ yaw: 0, pitch: 30, w: 40, h: 25 }])
+  const side = (x, yaw) => new Vector3(Math.sin(x * RAD), 0, -Math.cos(x * RAD)).applyEuler(new Euler(30 * RAD, -yaw * RAD, 0, 'YXZ')) // the middle of a side
+  const [right, left] = [side(20, 0), side(-20, up.yaw)]
+  assert.ok(Math.atan2(left.x, -left.z) > Math.atan2(right.x, -right.z), 'overlapping')
+  assert.ok(Math.abs(right.angleTo(left) / RAD - 2) < 0.1, `${right.angleTo(left) / RAD} degrees apart`)
 })
 
 test('a window resized by its side keeps the opposite side and the size of its text', () => {
@@ -95,6 +102,10 @@ test('a window resized by its side keeps the opposite side and the size of its t
   assert.deepEqual(resizeWindow(panel, { left: 1, right: 0, top: 0, bottom: 0 }, { yaw: 10, pitch: 0 }), { w: 600, h: 600, span: 30, yaw: 5, pitch: 0 })
   assert.deepEqual(resizeWindow(panel, { left: 0, right: 0, top: 0, bottom: 1 }, { yaw: 0, pitch: -5 }), { w: 800, h: 700, span: 40, yaw: 0, pitch: -2.5 })
   assert.equal(resizeWindow(panel, { left: 0, right: 1, top: 1, bottom: 0 }, { yaw: -40, pitch: -40 }).w, 200) // never smaller than 200 x 150
+  const up = resizeWindow({ ...panel, pitch: 60 }, { left: 0, right: 1, top: 0, bottom: 0 }, { yaw: 10, pitch: 0 }) // 60 degrees up 10 degrees of turn are 5 across
+  assert.deepEqual({ ...up, yaw: +up.yaw.toFixed(6) }, { w: 900, h: 600, span: 45, yaw: 5, pitch: 60 })
+  // the PC gave another size than asked (an application's smallest size): the panel takes that one, its left side staying
+  assert.deepEqual(resizeWindow(panel, { left: 0, right: 1, top: 0, bottom: 0 }, null, 1.5, { w: 700, h: 600 }), { w: 700, h: 600, span: 35, yaw: -2.5, pitch: 0 })
 })
 
 test('orders for a window: only a shown window, only inside it, only known buttons and keys', () => {

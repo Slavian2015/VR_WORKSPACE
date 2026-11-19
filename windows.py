@@ -39,10 +39,12 @@ def start(slot, window, tries=0):
         # The same encoder as for the monitors (see capture.py for the why of every setting), but a full picture
         # twice as often: a window comes into the headset while its stream runs (a dialog opens), and the headset
         # can start showing only from a full picture. A still window sends 30 frames a second: one second at most.
+        # Variable bitrate: a still page of text needed 0.4 Mbit/s for the same picture as 5.3 at a constant
+        # rate (measured on the stand, 2026-11-19); the Wi-Fi is left to the windows that change.
         entry['encoder'] = subprocess.Popen((
             f'gst-launch-1.0 -q pipewiresrc path={parameters.unpack()[0]} keepalive-time=34'
             ' ! video/x-raw(memory:DMABuf),format=BGRx,max-framerate=60/1 ! vaapipostproc'
-            ' ! vaapih264enc rate-control=cbr bitrate=12000 keyframe-period=30 max-bframes=0'
+            ' ! vaapih264enc rate-control=vbr bitrate=12000 keyframe-period=30 max-bframes=0'
             ' ! video/x-h264,profile=constrained-baseline'
             f' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/{slot}').split(), env=ENV)
         say(slot=slot, live=True)

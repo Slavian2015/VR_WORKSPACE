@@ -36,6 +36,9 @@ const pickTexture = new THREE.CanvasTexture(pickCanvas)
 const clockCanvas = Object.assign(document.createElement('canvas'), { width: 640, height: 230 }) // the clock, above
 const clockTexture = new THREE.CanvasTexture(clockCanvas)
 for (const sheet of [menuTexture, pickTexture, clockTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
+// In place of the video of a panel out of view: three.js puts a video frame on the graphics card (and makes its mipmaps)
+// only for a texture that is drawn with, so the frames of panels behind the viewer cost nothing there.
+const blankTexture = Object.assign(new THREE.DataTexture(new Uint8Array(4), 1, 1), { needsUpdate: true })
 let screens = [], uniforms, monitorIds
 function build(keys) { // keys: what each monitor shows. One that stays keeps its video and its connection: no blink
   const old = screens, count = keys.length
@@ -58,7 +61,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
     uCrop: { value: screens.map(() => new THREE.Vector4(0, 0, 1, 1)) },
     uPopups: { value: Array.from({ length: count * 3 }, () => new THREE.Vector4()) },
     uGlow: { value: screens.map(() => new THREE.Vector4()) }, uLook: { value: screens.map(() => new THREE.Vector2(0, 1)) },
-    uGlowColor: { value: new THREE.Color() }, uGlowColor2: { value: new THREE.Color() }, uTime: { value: 0 },
+    uGlowColor: { value: new THREE.Color() }, uGlowColor2: { value: new THREE.Color() }, uTime: { value: 0 }, uSharp: { value: new THREE.Vector2(1, 0) },
     uPointer: { value: new THREE.Vector3(-1, 0, 0) }, uPointerPx: { value: new THREE.Vector2(1, 1) },
     uRay: { value: new THREE.Vector3(0, 0, -1) }, uRayOn: { value: 0 },
     uMenu: { value: menuTexture }, uMenuOn: { value: 0 }, uToMenu: { value: new THREE.Matrix3() }, uMenuPlace: { value: new THREE.Vector4() },
@@ -86,6 +89,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       uniform vec4 uGlow[${count}];              // which sides of it glow: left, right, top, bottom as 0 or 1
       uniform vec2 uLook[${count}];              // how strongly they glow (0: not at all); how much of the panel shows (it fades in)` : ''}
       uniform vec3 uGlowColor, uGlowColor2;      // the glow drifts between these two
+      uniform vec2 uSharp;                       // text sharpening: how much smaller a footprint picks the mipmap level (1: none); how much of the edges is added back
       uniform float uTime;                       // s
       uniform vec3 uPointer;                     // our pointer in a single window: the monitor it is on (-1: none) and its place there, 0..1
       uniform vec2 uPointerPx;                   // that window's size in its own pixels
@@ -121,6 +125,9 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       }
 
       bool within(vec2 p, vec4 r) { return all(greaterThanEqual(p, r.xy)) && all(lessThanEqual(p, r.zw)); }
+
+      // The colour of the glow at a place of a panel (uv: 0..1): it drifts between the two around the panel.
+      vec3 glowTint(vec2 uv) { return mix(uGlowColor, uGlowColor2, 0.5 + 0.5 * sin(uTime * 1.6 + 2.0 * atan(uv.y - 0.5, uv.x - 0.5))); }
 
       // A sheet's picture where the ray meets it; at: that place on the sheet, px. Its columns follow the azimuth,
       // its rows the height, both as angles.
@@ -161,7 +168,9 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
           color.r = background(ray(fromAxis * (1.0 - uChroma) / uLensDist)).r;
           color.b = background(ray(fromAxis * (1.0 + uChroma) / uLensDist)).b;
         }
-        ${screens.map((_, i) => /* glsl: sampler arrays accept only constant indexes, so the loop is unrolled here */ `{
+        ${screens.map((_, i) => /* glsl: sampler arrays accept only constant indexes, so the loop is unrolled here */ `
+        // A panel hidden or out of view costs nothing: the branch is on a uniform, the same for every pixel.
+        if (uSize[${i}].x > 0.0) {
           // A monitor faces -Z of its own frame, its centre away metres off (uSize.w). Its width in metres is fixed: an arc of
           // uSize.x radians at ${WIDTH_AT} m. So, like a real one, it looks bigger when it is brought closer.
           // It is bent into a cylinder that touches that centre: of that radius at full curve
@@ -182,12 +191,11 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
           // The glow: a soft shadow and over it a light along the glowing sides, its colour drifting around the
           // panel. Only beyond those sides: a pixel beyond a side that does not glow gets none.
           vec4 beyond = vec4(max(-uv.x, 0.0), max(uv.x - 1.0, 0.0), max(uv.y - 1.0, 0.0), max(-uv.y, 0.0)) * vec4(width, width, width * uSize[${i}].y, width * uSize[${i}].y);
-          if (uLook[${i}].x > 0.0 && uSize[${i}].x > 0.0 && dot(beyond, 1.0 - uGlow[${i}]) == 0.0) {
+          if (uLook[${i}].x > 0.0 && dot(beyond, 1.0 - uGlow[${i}]) == 0.0) {
             float off = length(beyond * uGlow[${i}]) / away; // as an angle, rad
-            vec3 tint = mix(uGlowColor, uGlowColor2, 0.5 + 0.5 * sin(uTime * 1.6 + 2.0 * atan(uv.y - 0.5, uv.x - 0.5)));
             float strength = uLook[${i}].x * uLook[${i}].y;
             color *= 1.0 - 0.5 * strength * exp(-off / 0.03);
-            color = mix(color, tint, strength * exp(-off / 0.01));
+            color = mix(color, glowTint(uv), strength * exp(-off / 0.01));
           }
           vec2 edge = min(uv, 1.0 - uv) / fwidth(uv);
           float inside = clamp(min(edge.x, edge.y), 0.0, 1.0), menu = 0.0; // 1 px soft edge; menu: an open menu of the window is here
@@ -198,21 +206,32 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
           inside = max(inside, menu);
           vec2 at = uCrop[${i}].xy + uv * uCrop[${i}].zw;      // where that is in the video
           vec2 dx = dFdx(at), dy = dFdy(at);                   // taken outside the branch, where they are defined
-          if (uSize[${i}].x > 0.0 && inside > 0.0) {
-            vec3 picture = textureGrad(uMonitor[${i}], at, dx, dy).rgb;
+          if (inside > 0.0) {
+            // Text through the lenses: a sharper level of the mipmaps than the screen's pixels would take, and the
+            // picture's difference from its neighbours (one screen pixel away) added back: an unsharp mask. Added
+            // as grey, after the colour shift below: that takes red and blue anew, and they would stay soft (green
+            // alone sharpened draws coloured edges around letters).
+            vec2 gx = dx * uSharp.x, gy = dy * uSharp.x;
+            vec3 picture = textureGrad(uMonitor[${i}], at, gx, gy).rgb;
+            float sharper = 0.0;
+            if (uSharp.y > 0.0) {
+              vec3 around = textureGrad(uMonitor[${i}], at + dx, gx, gy).rgb + textureGrad(uMonitor[${i}], at - dx, gx, gy).rgb
+                + textureGrad(uMonitor[${i}], at + dy, gx, gy).rgb + textureGrad(uMonitor[${i}], at - dy, gx, gy).rgb;
+              sharper = dot(picture - around * 0.25, vec3(0.299, 0.587, 0.114)) * uSharp.y;
+            }
             // Out of the window the video is black where a menu's box has nothing (beside its arrow): not shown.
             if (min(edge.x, edge.y) < 0.0 && max(picture.r, max(picture.g, picture.b)) < 0.04) inside = 0.0;
             if (uChroma != 0.0) { // the same shift of red and blue, as a step along how the place changes across the screen
               vec2 shift = uChroma * uPxPerMm * (dx * fromAxis.x + dy * fromAxis.y);
-              picture.r = textureGrad(uMonitor[${i}], at - shift, dx, dy).r;
-              picture.b = textureGrad(uMonitor[${i}], at + shift, dx, dy).b;
+              picture.r = textureGrad(uMonitor[${i}], at - shift, gx, gy).r;
+              picture.b = textureGrad(uMonitor[${i}], at + shift, gx, gy).b;
             }
+            picture = clamp(picture + sharper, 0.0, 1.0);
             // The glowing sides also light the panel's own rim, a few tenths of a degree in: clearly which side it is.
             vec4 into = vec4(uv.x, 1.0 - uv.x, 1.0 - uv.y, uv.y) * vec4(width, width, width * uSize[${i}].y, width * uSize[${i}].y) / away;
             float rim = min(min(mix(1.0, into.x, uGlow[${i}].x), mix(1.0, into.y, uGlow[${i}].y)), min(mix(1.0, into.z, uGlow[${i}].z), mix(1.0, into.w, uGlow[${i}].w)));
             if (uLook[${i}].x > 0.0 && rim >= 0.0 && rim < 0.005 && menu == 0.0) { // on the window itself: not beyond it, not over its menus
-              vec3 tint = mix(uGlowColor, uGlowColor2, 0.5 + 0.5 * sin(uTime * 1.6 + 2.0 * atan(uv.y - 0.5, uv.x - 0.5)));
-              picture = mix(picture, tint, uLook[${i}].x * (1.0 - rim / 0.005));
+              picture = mix(picture, glowTint(uv), uLook[${i}].x * (1.0 - rim / 0.005));
             }
             if (uPointer.x == ${i}.0) { // our pointer: a white dot with a dark rim, sized in the window's pixels
               float off = length((uv - uPointer.yz) * uPointerPx);
@@ -347,10 +366,12 @@ function arrange(p) {
     if (p[key] === value || Date.now() - when > 1000) delete pending[key]
     else p[key] = value
   }
-  if (!p.edit || SPECTATOR) { // not arranging: nothing stays in hand
-    held = resizing = undefined
+  if (!p.edit || SPECTATOR) { // not arranging: nothing stays in hand; a window being resized keeps the size it got
+    if (resizing) endResize(p)
+    held = undefined
     return void (wheelSeen = undefined)
   }
+  if (menu.open) closeMenu() // its clicks are the arranging's now
   const id = p.monitors[held ? held.i : looked]?.id
   const wheel = [p.wheelSize, p.wheelCurve, p.wheelDist], was = wheelSeen ?? wheel
   wheelSeen = wheel
@@ -418,7 +439,10 @@ watchParams(p => {
   // Where a single window that has just come into the sphere stands. A dialog (`over`: the panel of its window) lies
   // on its window as on the PC, at its distance and with its text as large as the window's. The first window after
   // a start from the list of applications opens where the user looked before calling the list. Any other window
-  // opens where the user is looking. (Windows that were there when the page started keep their places.)
+  // opens where the user is looking, as large as makes one of its pixels one pixel of the phone screen there: its
+  // text as sharp as it can be (the picture arrives as sharp as on the PC). (Windows that were there when the page
+  // started keep their places.)
+  const pxPerDegree = renderer.domElement.width / p.screenW * p.lensDist * DEG // the phone screen's, in the middle of an eye's view
   for (const m of p.monitors) {
     const { id, window, over, crop } = m
     if (!window || monitorIds === undefined || monitorIds.split(',').includes(key(m)) || !tapped || SPECTATOR || document.hidden) continue
@@ -428,8 +452,19 @@ watchParams(p => {
     change(p, {
       [`${id}.yaw`]: Math.round(gaze.yaw), [`${id}.pitch`]: Math.round(clamp(gaze.pitch, MONITOR_SPEC.pitch)),
       // (at most 120 degrees wide: a file chooser as large as the screen, over a small window, would go round the viewer)
-      ...parent && { [`${id}.dist`]: p[`${over}.dist`], [`${id}.curve`]: p[`${over}.curve`], [`${id}.span`]: Math.round(Math.min(120, clamp(p[`${over}.span`] * crop[2] / parent.crop[2], MONITOR_SPEC.span))) },
+      ...parent ? { [`${id}.dist`]: p[`${over}.dist`], [`${id}.curve`]: p[`${over}.curve`], [`${id}.span`]: Math.round(Math.min(120, clamp(p[`${over}.span`] * crop[2] / parent.crop[2], MONITOR_SPEC.span))) }
+        : { [`${id}.span`]: Math.round(Math.min(120, clamp(crop[2] / pxPerDegree * p[`${id}.dist`] / WIDTH_AT, MONITOR_SPEC.span))) },
     })
+  }
+  // A window just resized from the headset: its panel takes the size the PC really gave it (an application has a
+  // smallest size, some dialogs keep theirs), for 2 s or until that is the size asked for. (Settings come here only
+  // when they change, so a size reported meanwhile, the one asked for just before, is soon followed by the last.)
+  const fit = fitting && Date.now() - fitting.at < 2000 && p.monitors.find(m => m.id === fitting.id && m.source === fitting.source)
+  if (fit) {
+    const [, , w, h] = fit.crop, { span, yaw, pitch } = resizeWindow(fitting.from, fitting.edge, null, WIDTH_AT, { w, h })
+    const values = { [`${fit.id}.span`]: Math.round(span * 10) / 10, [`${fit.id}.yaw`]: Math.round(yaw), [`${fit.id}.pitch`]: Math.round(pitch) }
+    if (Object.entries(values).some(([key, value]) => p[key] !== value)) change(p, values)
+    if (w === fitting.w && h === fitting.h) fitting = undefined
   }
   monitorIds = ids
   if (recenterSeen !== undefined && p.recenter !== recenterSeen) centring = 'gaze'
@@ -448,7 +483,8 @@ watchParams(p => {
   }
   setBackground(p.fullscreen && p.autoBlack ? 'black' : p.bg, p.bgBlur > 0) // dark around a film that fills a monitor
   uniforms.uBgLook.value.set(p.bgDim / 100, p.bgBlur / 100 * 6)
-  uniforms.uGlowColor.value.set(p.glowColor) // and a second colour, a third of the way round the colour wheel, to drift to
+  uniforms.uSharp.value.set(1 - 0.4 * p.sharpen / 100, 1.2 * p.sharpen / 100)
+  uniforms.uGlowColor.value.set(p.glowColor) // and a second colour, a sixth of the way round the colour wheel, to drift to
   uniforms.uGlowColor2.value.copy(uniforms.uGlowColor.value).offsetHSL(0.17, 0, 0.08)
   startStreams()
 })
@@ -513,6 +549,12 @@ renderer.setAnimationLoop(now => {
     }
     // Where the centre of the view is on this panel, 0..1 from its top left; its half-size as seen from here, in radians.
     const ahead = forward.set(0, 0, -1).applyQuaternion(rotation), halfWidth = WIDTH_AT * span / settings[`${id}.dist`] / 2
+    // Out of view: farther from the centre of the view than an eye sees (about 60 degrees to its corners), plus half the
+    // panel's diagonal and room for its glow and menus. Phones get hot in a headset, and a hot iPhone slows down.
+    // (Not on the PC: a recording may be asked for a wider view than an eye's.)
+    const seen = span > 0 && (SPECTATOR || Math.acos(Math.max(-1, Math.min(1, -ahead.z))) / DEG < 65 + Math.hypot(spans[i], spans[i] * aspect) / 2 + 12)
+    uniforms.uSize.value[i].x = seen ? span : 0
+    uniforms.uMonitor.value[i] = seen ? screens[i].texture : blankTexture
     const u = 0.5 + Math.atan2(ahead.x, -ahead.z) / (2 * halfWidth), v = 0.5 - Math.asin(ahead.y) / (2 * halfWidth * aspect)
     const [x0, y0, x1, y1] = crop ? reach(m).map((d, k) => d / crop[2 + k % 2]) : [0, 0, 1, 1] // a window with its open menus
     // The panels come in the order they are drawn: of those under the centre of the view, the last is on top.
@@ -531,7 +573,7 @@ renderer.setAnimationLoop(now => {
   point(dt)
   // Below while arranging, the backgrounds; above, always, the clock. They come as the head turns to them.
   const look = gaze.pitch / DEG, ease = f => f * f * (3 - 2 * f)
-  pick.fade = Math.max(0, Math.min(1, pick.fade + ((settings.edit && tapped && look < -30) ? dt : -dt) / 0.25))
+  pick.fade = Math.max(0, Math.min(1, pick.fade + ((settings.edit && tapped && look < PICK.below) ? dt : -dt) / 0.25))
   clock.fade = Math.max(0, Math.min(1, clock.fade + (tapped && look > 35 ? dt : -dt) / 0.25))
   if (pick.fade > 0) showPick()
   if (clock.fade > 0) showClock()
@@ -568,7 +610,10 @@ renderer.setAnimationLoop(now => {
 // The whole screen stands for the window, not each eye's half: with halves, the pointer crossing the middle of the
 // phone jumped from one edge of the window to the other. So where the phone's pointer stops at the edge of its
 // screen, ours stays at the edge of the window. Windows are moved and resized in the arranging mode (see below).
+// Only not quite edge to edge from top to bottom: the phone keeps the top and bottom of its screen for its own
+// gestures, and its pointer stops short of them (a window's top bar, with its close button, was out of reach).
 const mouse = { x: 0.5, y: 0.5 } // where the system's pointer is on the phone screen, 0..1 from the top left
+const ROOM = 0.08 // the top and the bottom of the phone screen left out, of its height (as the frame around windows once was)
 let orders = [], sendingOrders = false, pointedAt, pressedIn, wheelRest = 0, clickedAt = 0
 const working = () => tapped && !SPECTATOR && !settings.edit
 const windowLooked = () => working() && settings.monitors[looked]?.window ? settings.monitors[looked] : undefined
@@ -592,7 +637,7 @@ function reach(target) {
 }
 const place = target => {
   const [x0, y0, x1, y1] = reach(target)
-  return { to: target.id, x: x0 + mouse.x * (x1 - x0), y: y0 + mouse.y * (y1 - y0) }
+  return { to: target.id, x: x0 + mouse.x * (x1 - x0), y: y0 + Math.min(1, Math.max(0, (mouse.y - ROOM) / (1 - 2 * ROOM))) * (y1 - y0) }
 }
 // The view ray through the phone's pointer, in head space: the shader's ray() for a place of one eye's picture,
 // the whole width of the phone standing for the width of that picture. So it sweeps the view once, smoothly, as the
@@ -665,12 +710,14 @@ addEventListener('wheel', e => {
 // and the head; it is drawn to its neighbours. A side or corner of a window changes the size of the window itself,
 // on the PC; its panel grows with it, the text keeping its size. Below, looking down: the backgrounds.
 let pointed = { i: -1 } // the panel under our pointer: { i, u, v (0..1 from its top left), edge: [left, right, top, bottom] or null }
-let resizing            // { i, id, edge, from: { w, h, span, yaw, pitch, dist }, start: the pointer then, w, h, span, yaw, pitch, sent }
+let resizing            // { i, id, source, edge, from: { w, h, span, yaw, pitch, dist }, start: the pointer then, w, h, span, yaw, pitch, sent }
+let fitting             // { id, source, edge, from, w, h, at }: a window let go after resizing (w, h: the size asked for; at: when)
 const rayDir = new THREE.Vector3(), rayHere = new THREE.Vector3()
 function editPress(e, down, left) {
   if (pick.fade > 0.5 && pickPress(down, left)) return
   if (!down) {
     if (e.type === 'pointercancel') return // the iPhone goes on with the same drag as a finger: its end puts the panel down
+    pick.slider = null // also when the backgrounds went out of view while it was held
     if (held?.mouse) putDown()
     if (resizing) endResize()
     return
@@ -679,7 +726,8 @@ function editPress(e, down, left) {
   const m = settings.monitors[pointed.i], at = pointerInLayout(), here = { yaw: settings[`${m.id}.yaw`], pitch: settings[`${m.id}.pitch`] }
   if (pointed.edge) {
     const from = { w: m.crop[2], h: m.crop[3], span: settings[`${m.id}.span`], dist: settings[`${m.id}.dist`], ...here }
-    return void (resizing = { i: pointed.i, id: m.id, edge: pointed.edge, from, start: at, ...from, sent: { at: 0 } })
+    fitting = undefined
+    return void (resizing = { i: pointed.i, id: m.id, source: m.source, edge: pointed.edge, from, start: at, ...from, sent: { at: 0 } })
   }
   held = { i: pointed.i, mouse: true, dYaw: here.yaw - at.yaw, dPitch: here.pitch - at.pitch, ...here }
 }
@@ -694,10 +742,12 @@ function sendSize(now) {
   resizing.sent = { at: now, w, h }
   fetch('/resize', { method: 'POST', body: JSON.stringify({ to: id, w, h, edge }) }).catch(() => {})
 }
-function endResize() {
+function endResize(p = settings) {
   sendSize(performance.now())
-  const { id, span, yaw, pitch } = resizing
-  change(settings, { [`${id}.span`]: Math.round(span * 10) / 10, [`${id}.yaw`]: Math.round(yaw), [`${id}.pitch`]: Math.round(pitch) })
+  const { id, source, edge, from, w, h, span, yaw, pitch } = resizing
+  change(p, { [`${id}.span`]: Math.round(span * 10) / 10, [`${id}.yaw`]: Math.round(yaw), [`${id}.pitch`]: Math.round(pitch) })
+  const [left, right, top, bottom] = edge
+  fitting = { id, source, edge: { left, right, top, bottom }, from, w, h, at: Date.now() }
   resizing = undefined
 }
 function editWheel(clicks) {
@@ -725,8 +775,9 @@ function glow() {
 }
 
 // --- the list of the PC's applications, called up in the sphere with the right button while no window is looked at:
-// a ribbon of icons, four in a column, hung in the room level with the eyes, ahead of where the user was looking,
-// with everything else darkened. In its middle is the user's own field of 4 x 4 places, its icons half as large again
+// a ribbon of icons, four in a column, hung in the room level with the eyes, always in the same place: its middle
+// ahead of the centre of the layout (where one looks sitting straight), wherever one looked when calling it, so that
+// the head can turn as far to either side. Everything else is darkened. In its middle is the user's own field of 4 x 4 places, its icons half as large again
 // and a wider gap around it; the other applications are to its left and right in name order. Turning the head shows
 // the rest; nothing scrolls (the iPhone gives the wheel late and in bursts). A click starts an application, and its
 // window opens where the user looked before calling the list. An icon held with the left button and moved is
@@ -736,11 +787,11 @@ function glow() {
 // field; column: the degrees one cell takes in the view, at most.
 const MENU = { rows: 4, field: 4, cell: [180, 200], big: 1.5, gap: 110, column: 9 }
 const FIELD = MENU.field * MENU.rows // its places, numbered by rows: 0 1 2 3 / 4 5 6 7 / ...
-const menu = { open: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, pitch: 0, spot: null, press: null, drag: -1, layout: null }
+const menu = { open: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, spot: null, press: null, drag: -1, layout: null }
 let launchSpot // { yaw, pitch, at }: where the user looked before calling the list, for the window of what was started from it
 const menuTurn = new THREE.Quaternion() // head space -> the frame the ribbon hangs in: level, -Z at the middle of the field
 function openMenu() {
-  Object.assign(menu, { open: true, yaw: gazeOf(head).yaw, pitch: 0, spot: gazeInLayout(anchor, head), press: null, drag: -1 })
+  Object.assign(menu, { open: true, yaw: anchor.yaw, spot: gazeInLayout(anchor, head), press: null, drag: -1 })
   loadApps()
 }
 function loadApps() {
@@ -880,7 +931,7 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
 
 // --- the backgrounds, below while arranging: round pictures, 4 x 2 a page (the wheel turns the pages), and the
 // darkening and blur of the background. Where the phone camera shows otherwise; it is off in this mode.
-const PICK = { cols: 4, rows: 2, height: -52, across: 50 } // the height of its middle and its width, degrees
+const PICK = { cols: 4, rows: 2, height: -36, across: 50, below: -20 } // the height of its middle and its width; below: it comes when one looks lower than this (degrees)
 const pick = { fade: 0, list: [], page: 0, thumbs: new Map(), drawn: '', slider: null, items: [], asked: 0 }
 const yawTurn = new THREE.Quaternion()
 function pickLayout() { // the places on the sheet: the backgrounds of this page, the two sliders
@@ -1025,11 +1076,11 @@ async function sharePose() {
         const sent = await (await fetch('/pose')).json()
         if (sent) {
           poseTarget.fromArray(sent)
-          const [, , , , anchorYaw, anchorPitch, open, yaw, pitch, drag, x, y, ...pointer] = sent
+          const [, , , , anchorYaw, anchorPitch, open, yaw, drag, x, y, ...pointer] = sent
           Object.assign(anchor, { yaw: anchorYaw, pitch: anchorPitch })
           // The list of applications and our pointer, as the phone shows them: the spectator draws them the same way.
           if (open && !menu.names.length) loadApps()
-          Object.assign(menu, { open: !!open, yaw, pitch, drag })
+          Object.assign(menu, { open: !!open, yaw, drag })
           Object.assign(mouse, { x, y })
           phonePointer.fromArray(pointer)
         }
@@ -1037,7 +1088,7 @@ async function sharePose() {
         // Only the page on screen: a second copy left open in Safari keeps running behind the home-screen one (it
         // plays sound), and its head, without sensors, stays where it started: the spectator jumped back to it.
         await fetch('/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch,
-          menu.open ? 1 : 0, menu.yaw, menu.pitch, menu.drag, mouse.x, mouse.y, ...uniforms.uPointer.value.toArray()]) })
+          menu.open ? 1 : 0, menu.yaw, menu.drag, mouse.x, mouse.y, ...uniforms.uPointer.value.toArray()]) })
       }
     } catch {} // the server is restarting: go on asking
     await pause(SPECTATOR || settings?.spectator ? Math.max(0, 33 - (performance.now() - started)) : 500) // 30 a second, however long the request took
