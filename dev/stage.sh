@@ -20,5 +20,24 @@ s = open(sys.argv[1]).read().replace(':8554', ':18554').replace(':1935', ':11935
 i = s.index("    spawn(f'ffmpeg -hide_banner"); j = s.index('\n\n', i)
 print(s[:i] + "    spawn('sleep 100000')  # staged copy: no sound" + s[j:], end='')
 PY
-chmod +x capture.py windows.py
+# the microphone into test devices, and never made the system's microphone. Every replacement must take place: one
+# that silently did not (mic.py changed) would let the test switch the real microphone.
+/usr/bin/python3 - "$P/mic.py" > mic.py <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+def swap(old, new):
+    global s
+    assert s.count(old) == 1, f'stage.sh: mic.py has changed, cannot make its test copy safely: {old!r}'
+    s = s.replace(old, new)
+swap(':8554', ':18554')
+swap("'vr_mic_feed'", "'vr_test_mic_feed'")
+swap("'vr_microphone'", "'vr_test_microphone'")
+# the real sound server, also from inside iso.sh (whose session has none): only the test devices above are made there
+swap('import signal, subprocess, sys\n', "import os, signal, subprocess, sys\nos.environ.setdefault('PULSE_SERVER', f'unix:/run/user/{os.getuid()}/pulse/native')\n")
+swap("        pactl('set-default-source', SOURCE)\n", '')
+swap("            pactl('set-default-source', usual)\n", '            pass\n')
+assert 'set-default-source' not in s.replace("'get-default-source'", ''), 'stage.sh: mic.py still switches the microphone'
+print(s, end='')
+PY
+chmod +x capture.py windows.py mic.py
 [ -f params.json ] || echo '{"virtual": 0}' > params.json

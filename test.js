@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Euler, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
-import { cleanOrder } from './orders.js'
+import { blocked, cleanOrder, wrongKey } from './orders.js'
 import { placeIcon, resizeWindow, snapPanel } from './app/params.js'
 
 const RAD = Math.PI / 180
@@ -123,4 +123,21 @@ test('orders for a window: only a shown window, only inside it, only known butto
   assert.deepEqual(cleanOrder({ to: 'w0', x: 750, y: 650 }, menu), { to: 'w0', x: 750, y: 650 })
   assert.deepEqual(cleanOrder({ to: 'w0', x: 300, y: 650 }, menu), { to: 'w0', x: 300, y: 519 })
   assert.deepEqual(cleanOrder({ to: 'w0', x: 900, y: 450 }, menu), { to: 'w0', x: 799, y: 450 })
+})
+
+test('an address from the internet that keeps giving wrong keys is refused for the rest of the hour; the home network never', () => {
+  const refused = new Map(), t = 1e6, guesser = '203.0.113.9'
+  for (let i = 1; i <= 9; i++) assert.equal(wrongKey(refused, guesser, t + i), false)
+  assert.equal(blocked(refused, guesser, t + 9), false) // nine are allowed
+  assert.equal(wrongKey(refused, guesser, t + 10), true) // the tenth blocks (and is what the journal tells of)
+  assert.equal(blocked(refused, guesser, t + 60e3), true)
+  assert.equal(blocked(refused, '203.0.113.10', t + 60e3), false) // another address is not
+  assert.equal(blocked(refused, guesser, t + 1 + 3600e3), false) // an hour after its first wrong key
+  assert.equal(wrongKey(refused, guesser, t + 2 + 3600e3), false) // and counting starts afresh
+  for (const home of ['::ffff:192.168.31.5', '10.0.0.7', '172.20.1.1', 'fd12::1', 'fe80::2', '::1']) {
+    for (let i = 0; i < 20; i++) wrongKey(refused, home, t)
+    assert.equal(blocked(refused, home, t), false, home)
+  }
+  for (let i = 0; i < 10; i++) wrongKey(refused, '::ffff:100.64.0.1', t) // a mobile network's shared address is not home
+  assert.equal(blocked(refused, '::ffff:100.64.0.1', t), true)
 })

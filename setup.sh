@@ -18,7 +18,8 @@ if [ ! -f certs/ca.key ]; then
     -keyout certs/ca.key -out certs/ca.crt \
     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign" 2>/dev/null
 fi
-[ -f certs/token ] || openssl rand -hex 16 > certs/token  # key that other devices need to see the desktop
+# The key that other devices need to see the desktop; made anew when missing, empty or too short (the server refuses those)
+{ [ -f certs/token ] && [ "$(wc -c < certs/token)" -gt 12 ]; } || openssl rand -hex 16 > certs/token
 # The address on the internet, if one was set in the settings window, stays in the certificate.
 ./cert.sh "$(python3 -c "import json; print(json.load(open('params.json')).get('publicHost', ''))" 2>/dev/null || true)"
 

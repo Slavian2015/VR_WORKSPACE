@@ -17,3 +17,20 @@ export function cleanOrder(order, areas) {
   if (Number.isInteger(order.wheel) && order.wheel && Math.abs(order.wheel) <= 10) clean.wheel = order.wheel
   return Object.keys(clean).length > 1 ? clean : null
 }
+
+// Guessing the key from the internet. An address that is not of the home network and gave 10 wrong keys within an
+// hour is refused for the rest of that hour, key or no key. refused: Map address -> { count, since }, kept by the caller.
+// HOME: addresses of the home network and of this PC (IPv4 private and link-local; IPv6 loopback, unique local, link-local).
+export const HOME = /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)|^(::1$|f[cd][0-9a-f]{2}:|fe80:)/i
+export function blocked(refused, from, now = Date.now()) {
+  const wrong = HOME.test(from) ? null : refused.get(from)
+  return wrong?.count >= 10 && now - wrong.since < 3600e3
+}
+export function wrongKey(refused, from, now = Date.now()) { // a wrong key from that address; true when this one blocks it
+  if (HOME.test(from)) return false
+  if (refused.size > 10000) refused.clear() // shortcut: forgets all at 10000 guessing addresses, a block per network if that is ever seen
+  const wrong = refused.get(from)
+  if (wrong && now - wrong.since <= 3600e3) return ++wrong.count === 10
+  refused.set(from, { count: 1, since: now })
+  return false
+}

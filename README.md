@@ -150,7 +150,8 @@ a mouse connected to the phone.
    like a monitor, and as large as makes one pixel of the window one pixel of the phone screen: its text as sharp
    as it gets (the picture arrives as sharp as on the PC). Smaller is blurrier, larger is not sharper. Its curve is
    in its tab in Settings → Monitors.
-3. Look at the panel and move the mouse that is connected to the **phone**: a white dot is the pointer. The whole
+3. Look at the panel and move the mouse that is connected to the **phone**: the pointer has the shape it has on the
+   PC (an arrow, a text cursor, a hand), a white dot until the PC has told it. The whole
    phone screen stands for the window (from side to side; from top to bottom without the phone's own edges, which
    its pointer does not reach), so the pointer never jumps across it. Left and right button
    and the wheel go to the window. The window that gets the PC's keyboard has a soft coloured light around it.
@@ -205,6 +206,18 @@ menu after connecting.
 Loudness: the volume and mute keys of the PC, as for any output (the system remembers the level), and the phone's
 own volume buttons on top of that.
 Sound is not synchronised with the picture on purpose (that would delay the picture by ~70 ms); it trails slightly.
+
+**The phone's microphone** can be the PC's: switch on Settings → Connect → Phone microphone. While the phone is
+connected, a microphone called **VR-Headset** appears and becomes the system's microphone (the one you had before
+comes back when the phone stops); programs started meanwhile use it, one already running may need it chosen in its
+own settings. The phone asks for permission when the page starts, and shows its microphone sign while it is sent.
+Echo cancellation is on: the phone plays the PC's sound at the same time.
+
+## Notifications
+
+GNOME's notifications show in the headset too, for six seconds, above the middle of the view: the application, the
+title and the start of the text. The same ones as GNOME shows as banners on the PC, so "Do Not Disturb" and the
+per-application settings in GNOME Settings → Notifications apply here as well.
 
 ## Phone camera
 
@@ -296,7 +309,8 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 Anyone on the network who has the link with the key can watch your desktop and change the settings, and click in
 the windows shown in the headset. The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
-(then open the codes on the phone again). Never commit `certs/`.
+(then open the codes on the phone again). The server does not start with a key that is missing or shorter than 12
+characters (an empty one would let anyone in); `./setup.sh` makes a new one then. Never commit `certs/`.
 
 With an address on the internet set, the key is 32 characters, too many to guess. An address from the internet (not
 of the home network) that gives 10 wrong keys within an hour gets no answer for the rest of the hour; the journal
@@ -324,6 +338,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
   monitor and ffmpeg for the sound, creates the virtual audio output.
 - `mediamtx.yml` — MediaMTX settings; it starts `capture.py` when a viewer connects.
 - `cert.sh` — the certificate the phone checks this PC by, signed by the CA that `setup.sh` made.
+- `mic.py` — the phone's microphone as the PC's microphone "VR-Headset"; MediaMTX runs it while the phone sends it.
 - `windows.py` — the same for single windows, and puts the pointer, buttons and wheel from the headset into them
   (`orders.js` checks what the headset may ask for).
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the

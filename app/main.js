@@ -32,10 +32,21 @@ const scene = new THREE.Scene(), camera = new THREE.Camera()
 const menuCanvas = Object.assign(document.createElement('canvas'), { width: 1536, height: 864 }) // the list of applications, see below
 const menuTexture = new THREE.CanvasTexture(menuCanvas)
 const pickCanvas = Object.assign(document.createElement('canvas'), { width: 1200, height: 640 }) // the backgrounds, below in the arranging mode
-const pickTexture = new THREE.CanvasTexture(pickCanvas)
 const clockCanvas = Object.assign(document.createElement('canvas'), { width: 640, height: 230 }) // the clock, above
-const clockTexture = new THREE.CanvasTexture(clockCanvas)
-for (const sheet of [menuTexture, pickTexture, clockTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
+const noteCanvas = Object.assign(document.createElement('canvas'), { width: 1000, height: 220 }) // a notification of the PC
+// Those three go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
+// shader 16 pictures, and each panel takes one.
+const SHEETS = { pick: [0, 0], clock: [0, 640], note: [0, 870] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 1090 })
+const sheetsTexture = new THREE.CanvasTexture(sheets)
+for (const sheet of [menuTexture, sheetsTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
+function toSheets(canvas, [x, y]) { // a sheet drawn anew: into its place
+  const c = sheets.getContext('2d')
+  c.clearRect(x, y, canvas.width, canvas.height)
+  c.drawImage(canvas, x, y)
+  sheetsTexture.needsUpdate = true
+}
+// Where a sheet is in that picture, for the shader: its corner and size, 0..1 from the top left
+const region = (canvas, [x, y]) => [x / sheets.width, y / sheets.height, canvas.width / sheets.width, canvas.height / sheets.height].map(n => n.toFixed(6)).join(', ')
 // In place of the video of a panel out of view: three.js puts a video frame on the graphics card (and makes its mipmaps)
 // only for a texture that is drawn with, so the frames of panels behind the viewer cost nothing there.
 const blankTexture = Object.assign(new THREE.DataTexture(new Uint8Array(4), 1, 1), { needsUpdate: true })
@@ -68,11 +79,12 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
     uMenuSize: { value: new THREE.Vector2(1, 1) }, uMenuLit: { value: new THREE.Vector4(0, 0, -1, -1) }, uMenuDrag: { value: new THREE.Vector4(-1, 0, 0, 0) },
     uMenuAt: { value: new THREE.Vector2() },
     uToYaw: { value: new THREE.Matrix3() },
-    uPick: { value: pickTexture }, uPickOn: { value: 0 }, uPickPlace: { value: new THREE.Vector4() }, uPickSize: { value: new THREE.Vector2(1, 1) },
-    uClock: { value: clockTexture }, uClockOn: { value: 0 }, uClockPlace: { value: new THREE.Vector4() }, uClockSize: { value: new THREE.Vector2(1, 1) },
+    uSheets: { value: sheetsTexture }, uPickOn: { value: 0 }, uPickPlace: { value: new THREE.Vector4() }, uPickSize: { value: new THREE.Vector2(1, 1) },
+    uClockOn: { value: 0 }, uClockPlace: { value: new THREE.Vector4() }, uClockSize: { value: new THREE.Vector2(1, 1) },
+    uNoteOn: { value: 0 }, uNotePlace: { value: new THREE.Vector4() },
     uBg: { value: background }, uToBg: { value: new THREE.Matrix3() }, uBgLook: { value: new THREE.Vector2() },
     uCam: { value: null }, uCamTan: { value: new THREE.Vector2() }, uCamShift: { value: new THREE.Vector2() }, uCamBelow: { value: -2 },
-    uHud: { value: hudTexture }, uHudOn: { value: 0 },
+    uHud: { value: hudTexture }, uHudOn: { value: 0 }, uCursorBox: { value: cursorBox },
     uRes: { value: new THREE.Vector2() }, uCenter: { value: new THREE.Vector2() },
     uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 },
   }
@@ -98,8 +110,9 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       // Sheets hung around the viewer: the list of applications (fixed in the room), the backgrounds and the clock
       // (below and above wherever one looks). Place: pixels per radian, the height of its middle (rad), that middle
       // on the sheet (px). Lit: a rectangle of the sheet that is lit (px; none when its corners are the wrong way).
-      uniform sampler2D uMenu, uPick, uClock;
-      uniform float uMenuOn, uPickOn, uClockOn;  // how much they show
+      uniform sampler2D uMenu, uSheets;          // uSheets: the backgrounds, the clock and a notification, in their places (SHEETS)
+      uniform float uMenuOn, uPickOn, uClockOn, uNoteOn; // how much they show
+      uniform vec4 uNotePlace;                   // a notification: fixed to the head, above the middle of the view
       uniform mat3 uToMenu, uToYaw;              // head space -> where the list hangs; -> a frame that turns with the head, but only around the vertical
       uniform vec4 uMenuPlace, uPickPlace, uClockPlace, uMenuLit;
       uniform vec2 uMenuSize, uPickSize, uClockSize; // px
@@ -112,7 +125,8 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       uniform vec2 uCamShift;                    // where the camera looks relative to the eyes, as tangents
       uniform float uCamBelow;                   // the camera shows where the view's height (sine) is under this; 2: everywhere
       uniform float uHudOn;                      // arranging mode: whether the note is shown
-      uniform sampler2D uHud;
+      uniform sampler2D uHud;                    // the note; outside the arranging mode the PC pointer's picture, at its top left
+      uniform vec4 uCursorBox;                   // that picture: width, height (0: not known, a dot instead; < 0: hidden), hot spot (px)
       uniform vec2 uRes, uCenter;                // px, mm
       uniform float uPxPerMm, uIpd, uLensDist, uK1, uK2;  // lengths in mm
       uniform float uChroma;                     // how much more the lens magnifies blue than green, and green than red
@@ -130,12 +144,12 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       vec3 glowTint(vec2 uv) { return mix(uGlowColor, uGlowColor2, 0.5 + 0.5 * sin(uTime * 1.6 + 2.0 * atan(uv.y - 0.5, uv.x - 0.5))); }
 
       // A sheet's picture where the ray meets it; at: that place on the sheet, px. Its columns follow the azimuth,
-      // its rows the height, both as angles.
-      vec4 sheet(sampler2D tex, mat3 turn, vec4 place, vec2 size, vec3 toward, out vec2 at) {
+      // its rows the height, both as angles. region: where the sheet is in the texture (corner, size; 0..1 from the top left).
+      vec4 sheet(sampler2D tex, vec4 region, mat3 turn, vec4 place, vec2 size, vec3 toward, out vec2 at) {
         vec3 d = turn * toward;
         at = vec2(atan(d.x, -d.z) * place.x + place.z, place.w - (asin(clamp(d.y, -1.0, 1.0)) - place.y) * place.x);
         vec2 uv = at / size;
-        return uv == clamp(uv, 0.0, 1.0) ? textureLod(tex, vec2(uv.x, 1.0 - uv.y), 0.0) : vec4(0.0);
+        return uv == clamp(uv, 0.0, 1.0) ? textureLod(tex, vec2(region.x + uv.x * region.z, 1.0 - region.y - uv.y * region.w), 0.0) : vec4(0.0);
       }
 
       vec3 background(vec3 dir) {
@@ -233,9 +247,15 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
             if (uLook[${i}].x > 0.0 && rim >= 0.0 && rim < 0.005 && menu == 0.0) { // on the window itself: not beyond it, not over its menus
               picture = mix(picture, glowTint(uv), uLook[${i}].x * (1.0 - rim / 0.005));
             }
-            if (uPointer.x == ${i}.0) { // our pointer: a white dot with a dark rim, sized in the window's pixels
-              float off = length((uv - uPointer.yz) * uPointerPx);
-              if (off < 9.0) picture = off < 6.5 ? vec3(1.0) : vec3(0.0);
+            if (uPointer.x == ${i}.0) { // our pointer, in the window's pixels: the shape the PC's pointer has, or a dot until that is known
+              vec2 px = (uv - uPointer.yz) * vec2(1.0, -1.0) * uPointerPx + uCursorBox.zw; // from the top left of its picture
+              if (uCursorBox.x > 0.0 && px == clamp(px, vec2(0.0), uCursorBox.xy)) {
+                vec4 shape = textureLod(uHud, vec2(px.x, vec2(textureSize(uHud, 0)).y - px.y) / vec2(textureSize(uHud, 0)), 0.0);
+                picture = mix(picture, shape.rgb, shape.a);
+              } else if (uCursorBox.x == 0.0) {
+                float off = length((uv - uPointer.yz) * uPointerPx);
+                if (off < 9.0) picture = off < 6.5 ? vec3(1.0) : vec3(0.0);
+              }
             }
             color = mix(color, picture, inside * uLook[${i}].y);
           }
@@ -248,16 +268,20 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
         }
         vec2 at;
         if (uClockOn > 0.0) {
-          vec4 s = sheet(uClock, uToYaw, uClockPlace, uClockSize, toward, at);
+          vec4 s = sheet(uSheets, vec4(${region(clockCanvas, SHEETS.clock)}), uToYaw, uClockPlace, uClockSize, toward, at);
           color = mix(color, s.rgb, s.a * uClockOn);
         }
         if (uPickOn > 0.0) {
-          vec4 s = sheet(uPick, uToYaw, uPickPlace, uPickSize, toward, at);
+          vec4 s = sheet(uSheets, vec4(${region(pickCanvas, SHEETS.pick)}), uToYaw, uPickPlace, uPickSize, toward, at);
           color = mix(color, s.rgb, s.a * uPickOn);
+        }
+        if (uNoteOn > 0.0) { // over the panels, under the list of applications
+          vec4 s = sheet(uSheets, vec4(${region(noteCanvas, SHEETS.note)}), mat3(1.0), uNotePlace, vec2(${noteCanvas.width}.0, ${noteCanvas.height}.0), toward, at);
+          color = mix(color, s.rgb, s.a * uNoteOn);
         }
         if (uMenuOn > 0.0) { // the list of applications: a ribbon of icons around the viewer, fixed in the room, over everything
           color *= 1.0 - 0.8 * uMenuOn; // the whole view goes dark behind it
-          vec4 s = sheet(uMenu, uToMenu, uMenuPlace, uMenuSize, toward, at);
+          vec4 s = sheet(uMenu, vec4(0.0, 0.0, 1.0, 1.0), uToMenu, uMenuPlace, uMenuSize, toward, at);
           if (within(at, uMenuLit)) color = mix(color, vec3(1.0), 0.18 * uMenuOn); // under the pointer
           color = mix(color, s.rgb, s.a * uMenuOn);
           vec2 halfSize = 0.5 * (uMenuDrag.zw - uMenuDrag.xy), q = at - uMenuAt + halfSize; // the icon in hand: its picture, centred on the pointer
@@ -394,11 +418,38 @@ function putDown() { // the panel in hand stays where it was drawn to
 const hud = Object.assign(document.createElement('canvas'), { width: 1408, height: 256 })
 const hudTexture = new THREE.CanvasTexture(hud)
 let hudShown
+// Outside the arranging mode the same canvas holds the PC pointer's picture, drawn over the window worked in: never
+// both at once, and an iPhone gives a shader 16 pictures (each panel takes one).
+const cursorBox = new THREE.Vector4() // its width, height (0: not known yet; -1: hidden), hot spot, px
+let cursorImage, cursorDrawn, cursorSeen // the picture as loaded; the one on the canvas; the number of the latest
+function showCursor() {
+  if (cursorDrawn === cursorImage) return
+  const c = hud.getContext('2d')
+  c.clearRect(0, 0, hud.width, hud.height)
+  if (cursorImage) c.drawImage(cursorImage, 0, 0)
+  hudTexture.needsUpdate = true
+  cursorDrawn = cursorImage
+  hudShown = undefined // the note is to be drawn again
+}
+function cursorFrom(told) { // from the settings: [its picture's number, hot spot x, y, whether shown], or null (not known)
+  const [n, x, y, shown] = told ?? []
+  if (n === cursorSeen) return
+  cursorSeen = n
+  if (!n || !shown) return void cursorBox.set(n ? -1 : 0, 0, 0, 0)
+  const image = new Image()
+  image.onload = () => {
+    if (cursorSeen !== n) return // a newer one is on its way
+    cursorImage = image
+    cursorBox.set(Math.min(image.width, 128), Math.min(image.height, 128), x, y)
+  }
+  image.src = `/cursor?${n}`
+}
 function showArranging() {
   const i = held?.i ?? resizing?.i ?? (pointed.i >= 0 ? pointed.i : looked), m = settings.monitors[i], id = m?.id
   uniforms.uHudOn.value = settings.edit && !pick.fade ? 1 : 0 // not while the backgrounds are looked at, just under it
   uniforms.uDist.value = id ? settings[`${id}.dist`] : 1.5
-  if (!settings.edit) return
+  if (!settings.edit) return showCursor()
+  cursorDrawn = undefined // the note takes the canvas; the pointer comes back after
   const where = held ? held.snap ?? held : resizing ?? { yaw: settings[`${id}.yaw`], pitch: settings[`${id}.pitch`] }
   const lines = [
     id ? `${m.window ? `Окно «${m.name.slice(0, 40)}»` : `Монитор ${i + 1} (${m.name})`}${held ? ': в руке' : resizing ? `: ${resizing.w} × ${resizing.h}` : ''}` : 'Наведите указатель или взгляд на панель',
@@ -482,6 +533,8 @@ watchParams(p => {
     uniforms.uCenter.value.set(p.cx, p.cy)
   }
   setBackground(p.fullscreen && p.autoBlack ? 'black' : p.bg, p.bgBlur > 0) // dark around a film that fills a monitor
+  cursorFrom(p.cursor)
+  noteFrom(p.note)
   uniforms.uBgLook.value.set(p.bgDim / 100, p.bgBlur / 100 * 6)
   uniforms.uSharp.value.set(1 - 0.4 * p.sharpen / 100, 1.2 * p.sharpen / 100)
   uniforms.uGlowColor.value.set(p.glowColor) // and a second colour, a sixth of the way round the colour wheel, to drift to
@@ -577,6 +630,9 @@ renderer.setAnimationLoop(now => {
   clock.fade = Math.max(0, Math.min(1, clock.fade + (tapped && look > 35 ? dt : -dt) / 0.25))
   if (pick.fade > 0) showPick()
   if (clock.fade > 0) showClock()
+  note.fade = Math.max(0, Math.min(1, note.fade + (now < note.until ? dt / 0.25 : -dt / 0.5)))
+  uniforms.uNoteOn.value = ease(note.fade)
+  uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
   uniforms.uPickOn.value = ease(pick.fade)
   uniforms.uClockOn.value = ease(clock.fade)
   if (!SPECTATOR) { // the spectator must not open the PC's own webcam
@@ -875,10 +931,11 @@ function twoLines(c, text, width) {
     if (!lines.at(-1) || c.measureText(longer).width <= width || lines.length === 2) lines[lines.length - 1] = longer
     else lines.push(word)
   }
-  return lines.map(line => {
-    while (c.measureText(line).width > width && line.length > 2) line = line.slice(0, -2) + '…'
-    return line
-  })
+  return lines.map(line => fitLine(c, line, width))
+}
+function fitLine(c, line, width) { // cut short with an ellipsis where it does not fit
+  while (c.measureText(line).width > width && line.length > 2) line = line.slice(0, -2) + '…'
+  return line
 }
 function drawMenu() { // the whole sheet, drawn again only when the list, the field or an icon has changed
   const { items, W, H, field } = menu.layout
@@ -1039,7 +1096,39 @@ function drawPick(pages, hovered) {
       c.fill()
     }
   }
-  pickTexture.needsUpdate = true
+  toSheets(pickCanvas, SHEETS.pick)
+}
+
+// --- a notification of the PC (GNOME's banner), shown for a few seconds above the middle of the view, fixed to the
+// head: who is in the headset would not see it on the PC. As the PC shows banners: not in "Do Not Disturb".
+const NOTE = { across: 40, height: 17, shown: 6000 } // its width and the height of its middle, degrees; ms on view
+const note = { fade: 0, until: 0, seen: undefined }
+function noteFrom(told) { // from the settings: [its number, application, title, body, whether it has an icon], or null
+  const [n, app, title, body, icon] = told ?? []
+  if (!n || n === note.seen) return
+  note.seen = n
+  note.until = performance.now() + NOTE.shown
+  drawNote(app, title, body)
+  if (!icon) return
+  const image = new Image()
+  image.onload = () => note.seen === n && drawNote(app, title, body, image)
+  image.src = `/noteicon?${n}`
+}
+function drawNote(app, title, body, icon) {
+  const c = noteCanvas.getContext('2d'), { width: W, height: H } = noteCanvas, x = icon ? 170 : 40, room = W - x - 40
+  c.clearRect(0, 0, W, H)
+  c.fillStyle = 'rgba(16, 20, 28, 0.92)'
+  c.beginPath()
+  c.roundRect(0, 0, W, H, 36)
+  c.fill()
+  if (icon) c.drawImage(icon, 36, (H - 108) / 2, 108, 108)
+  Object.assign(c, { textAlign: 'left', textBaseline: 'top', fillStyle: '#9fb0c2', font: '500 26px system-ui, sans-serif' })
+  c.fillText(fitLine(c, app, room), x, 26)
+  Object.assign(c, { fillStyle: '#fff', font: '700 36px system-ui, sans-serif' })
+  c.fillText(fitLine(c, title, room), x, 64)
+  Object.assign(c, { fillStyle: '#d8e2ec', font: '400 30px system-ui, sans-serif' })
+  twoLines(c, body.replace(/\s+/g, ' ').trim(), room).forEach((line, i) => line && c.fillText(line, x, 114 + i * 40))
+  toSheets(noteCanvas, SHEETS.note)
 }
 
 // --- the clock, above wherever one looks: the time and, under it, the date. Drawn again when the minute changes.
@@ -1059,7 +1148,7 @@ function showClock() {
     c.fillText(time, W / 2, 92)
     Object.assign(c, { fillStyle: '#d8e2ec', font: '500 44px system-ui, sans-serif' })
     c.fillText(now.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' }), W / 2, 178)
-    clockTexture.needsUpdate = true
+    toSheets(clockCanvas, SHEETS.clock)
   }
   uniforms.uClockPlace.value.set(W / (28 * DEG), 52 * DEG, W / 2, H / 2) // 28 degrees wide, 52 up
   uniforms.uClockSize.value.set(W, H)
@@ -1152,6 +1241,56 @@ function startStreams() { // called after the tap and after every change of sett
   screens.forEach((screen, i) => screen.stop ??= receive(settings.monitors[i].id, 'video', screen.video))
   if (!soundOn && !SPECTATOR) receive('audio', 'audio', sound) // on the PC it would play the PC's sound back into itself
   soundOn = true
+  if (settings.phoneMic && !SPECTATOR) sendMic()
+  else stopMic()
+}
+
+// --- the phone's microphone as the PC's, while the setting phoneMic is on: sent to MediaMTX (WHIP), whose mic.py
+// plays it into the PC's microphone "VR-Headset". With echo cancellation: the phone plays the PC's sound meanwhile.
+let mic // { pc, stream } while sent, { opening } meanwhile, { refused } when the phone said no, { failed: time }
+async function sendMic() {
+  if (mic && !(Date.now() - mic.failed > 3000)) return // sent, opening, refused (until the setting is switched off), or failed just now
+  mic = { opening: true }
+  let stream, pc
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+  } catch (e) {
+    console.warn('microphone:', e.message)
+    return void (mic = { refused: true })
+  }
+  try {
+    if (!settings.phoneMic) throw new Error('switched off meanwhile')
+    pc = new RTCPeerConnection()
+    pc.addTransceiver(stream.getAudioTracks()[0], { direction: 'sendonly' })
+    mic = { pc, stream }
+    // Only when it has failed: "disconnected" often passes by itself within seconds, and closing then would take the
+    // microphone away from the PC, and a call going on would move to another microphone and stay there.
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState !== 'failed' || mic?.pc !== pc) return
+      stopMic()
+      mic = { failed: Date.now() }
+      setTimeout(startStreams, 4000) // again in a moment (the PC restarted, the Wi-Fi went)
+    }
+    await pc.setLocalDescription()
+    await new Promise(done => { // no trickle: the offer carries our addresses (as in receive)
+      pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && done()
+      setTimeout(done, 500)
+    })
+    const answer = await fetch('/whip/mic', { method: 'POST', body: pc.localDescription.sdp, signal: AbortSignal.timeout(8000) })
+    if (!answer.ok) throw new Error(await answer.text())
+    await pc.setRemoteDescription({ type: 'answer', sdp: await answer.text() })
+  } catch (e) {
+    console.warn('microphone:', e.message)
+    pc?.close()
+    stream.getTracks().forEach(track => track.stop())
+    mic = { failed: Date.now() }
+    setTimeout(startStreams, 4000)
+  }
+}
+function stopMic() {
+  mic?.pc?.close()
+  mic?.stream?.getTracks().forEach(track => track.stop())
+  mic = undefined
 }
 const keepAwake = () => navigator.wakeLock?.request('screen').catch(() => {})
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && keepAwake())

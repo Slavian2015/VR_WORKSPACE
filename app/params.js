@@ -36,7 +36,8 @@ const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (
 export function complete(answer) {
   const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0],
     glowColor: '#4fb2ff', focusGlow: true, // the light around panels; around the one that gets the keyboard
-    publicHost: '' } // this PC's address on the internet, for the phone's link from outside the home (server.js)
+    publicHost: '', // this PC's address on the internet, for the phone's link from outside the home (server.js)
+    phoneMic: false } // the phone's microphone as this PC's (mic.py)
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
   answer.monitors.forEach(({ id, virtual, window }, i) => {
     if (virtual) all[`${id}.size`] = answer.virtualSize ?? answer.virtualSizes[0] // its own size, until set: the one for all

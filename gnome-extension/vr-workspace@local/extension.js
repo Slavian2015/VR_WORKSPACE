@@ -25,9 +25,12 @@ import Shell from 'gi://Shell'
 import St from 'gi://St'
 import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js'
 import * as Main from 'resource:///org/gnome/shell/ui/main.js'
+import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js'
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js'
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
 import { http, talk, power } from './link.js'
+
+Gio._promisify(Shell.Screenshot, 'composite_to_stream') // as GNOME Shell's own screenshots do
 
 export default class VrWorkspace extends Extension {
   enable() {
@@ -59,6 +62,13 @@ export default class VrWorkspace extends Extension {
     this._keymap = Clutter.get_default_backend().get_default_seat().get_keymap()
     this._numLock = this._keymap.get_num_lock_state() // only a change counts: Num Lock may be on already at login
     this._keymapChanged = this._keymap.connect('state-changed', () => this._onKeymap())
+    // The pointer's shape (an arrow, a hand, a text cursor), for the pointer the headset draws over a window: GNOME
+    // leaves the pointer out of a window's recording, so the server gets its picture whenever it changes.
+    this._cursorTracker = Meta.CursorTracker.get_for_display(global.display)
+    this._cursorChanged = this._cursorTracker.connect('cursor-changed', () => this._cursorSoon())
+    // GNOME's notifications, to the headset as well: who wears it does not see the banners on the PC.
+    Main.messageTray.connectObject('source-added', (_tray, source) => this._watchSource(source), this)
+    for (const source of Main.messageTray.getSources()) this._watchSource(source)
   }
 
   disable() {
@@ -75,6 +85,11 @@ export default class VrWorkspace extends Extension {
     this._indicator = null
     this._keymap.disconnect(this._keymapChanged)
     global.display.disconnect(this._fullscreenChanged)
+    this._cursorTracker.disconnect(this._cursorChanged)
+    Main.messageTray.disconnectObject(this)
+    for (const source of Main.messageTray.getSources()) source.disconnectObject(this)
+    if (this._cursorTimer) GLib.source_remove(this._cursorTimer)
+    this._cursorTimer = 0
     this._http.abort()
     this._http = null
   }
@@ -155,7 +170,13 @@ export default class VrWorkspace extends Extension {
     talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, ...wish }).then(answer => {
       if (!this._indicator) return // switched off meanwhile
       this._serverSeen = !!answer
+      const before = this._shownWindows.length
       this._shownWindows = answer?.shown ?? []
+      // Windows came into the headset (the pointer may have changed while none was there), or the server started anew
+      if (this._shownWindows.length && (!before || answer.cursor === false)) {
+        this._cursorSent = null
+        this._cursorSoon()
+      }
       this._needApps = !!answer?.needApps
       // Not while a menu of it is open: the menu is what is being worked, and Qt programs (VLC) lose track of their
       // windows when theirs is activated under an open menu.
@@ -169,6 +190,46 @@ export default class VrWorkspace extends Extension {
       // While a window is resized from the headset: the next report in a tenth of a second, not in half of one.
       if (answer?.soon && !this._soon) this._soon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => (this._soon = 0, this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
     })
+  }
+
+  // The pointer's picture and its hot spot (the pixel that points), to the server: only while windows are in the
+  // headset, and at most ten times a second (an animated pointer, "busy", changes all the time).
+  _cursorSoon() {
+    if (this._cursorTimer || !this._shownWindows.length || !this._serverSeen) return
+    this._cursorTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+      this._cursorTimer = 0
+      this._sendCursor().catch(e => console.log(`VR Workspace: the pointer's picture: ${e.message}`))
+      return GLib.SOURCE_REMOVE
+    })
+  }
+
+  async _sendCursor() {
+    const sprite = this._cursorTracker.get_sprite(), [x, y] = this._cursorTracker.get_hot()
+    let png = '' // none: the pointer is hidden
+    if (sprite) {
+      const stream = Gio.MemoryOutputStream.new_resizable()
+      await Shell.Screenshot.composite_to_stream(sprite, 0, 0, -1, -1, 1, null, 0, 0, 1, stream)
+      stream.close(null)
+      png = GLib.base64_encode(stream.steal_as_bytes().toArray())
+    }
+    if (!this._http || `${png}${x},${y}` === this._cursorSent) return
+    this._cursorSent = `${png}${x},${y}`
+    talk(this._http, '/cursor', { png, hot: [x, y] })
+  }
+
+  // A new notification goes to the server when GNOME would show it as a banner (the same rules as its own: not when
+  // already seen, not of low urgency, not in "Do Not Disturb" or for an application whose banners are off, unless it
+  // is urgent), and only while the server runs. Taken when added, before GNOME's own banner marks it as seen (its
+  // request for a banner reaches GNOME first), and not again when it is updated (a download's progress).
+  _watchSource(source) {
+    source.connectObject('notification-added', (_source, notification) => {
+      if (!this._serverSeen || notification.acknowledged || notification.urgency === MessageTray.Urgency.LOW) return
+      if (!source.policy.showBanners && notification.urgency !== MessageTray.Urgency.CRITICAL) return
+      const gicon = notification.gicon ?? source.icon
+      const icon = (gicon && new St.IconTheme().lookup_by_gicon(gicon, 128, St.IconLookupFlags.FORCE_SIZE))?.get_filename() ?? ''
+      const plain = text => (text ?? '').replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&')
+      talk(this._http, '/notify', { app: source.title ?? '', title: plain(notification.title), body: notification.useBodyMarkup ? plain(notification.body) : notification.body ?? '', icon })
+    }, this)
   }
 
   // A size the headset asked for (dragged at a side or a corner there): the opposite sides stay where they are.

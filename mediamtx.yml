@@ -23,5 +23,10 @@ paths:
   vr/m0:
     runOnDemand: ./capture.py
     runOnDemandRestart: true
+  # The phone's microphone, sent by the page while the setting phoneMic is on (WHIP, through server.js): mic.py plays
+  # it into the PC's microphone "VR-Headset" for as long as it comes.
+  vr/mic:
+    runOnReady: ./mic.py
+    runOnReadyRestart: true
   # Any number of monitors (how many there are is decided in capture.py) and of single windows (windows.py).
   '~^vr/(m\d+|w\d+|audio)$':

@@ -207,6 +207,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
           title: _('Sound'),
           subtitle: _('While the phone is connected, the sound of this PC plays on the phone (output “VR-Headset”). The volume and mute keys of the PC work as usual'),
         }),
+        toggle('phoneMic', _('Phone microphone'), _('While the phone is connected, it is the microphone of this PC (input “VR-Headset”, used by default meanwhile). The phone asks for permission when the page starts')),
         action(_('See what the headset shows'), _('One flat picture in the browser that follows the head; record it with any screen recorder'), _('Open'),
           () => Gtk.show_uri(window, 'http://localhost:8080/?spectator', Gdk.CURRENT_TIME)))
 

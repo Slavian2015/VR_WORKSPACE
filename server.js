@@ -10,7 +10,7 @@ import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
-import { cleanOrder } from './orders.js'
+import { cleanOrder, HOME, blocked, wrongKey } from './orders.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -45,9 +45,7 @@ try {
 
 let params = {}
 try { params = JSON.parse(fs.readFileSync(PARAMS_FILE, 'utf8')) } catch {}
-// Addresses of the home network and of this PC (IPv4 private and link-local; IPv6 loopback, unique local, link-local)
-const HOME = /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)|^(::1$|f[cd][0-9a-f]{2}:|fe80:)/i
-const refused = new Map() // address from the internet -> { count, since }: its wrong keys, counted from the first within the hour
+const refused = new Map() // address from the internet -> { count, since }: its wrong keys (orders.js: blocked, wrongKey)
 let phoneSeen = 0 // when a device other than this PC last asked for the settings
 // The headset's view direction, for the spectator page (index.html?spectator); the phone sends it only while
 // somebody watches, which it learns from `spectator` in the settings answer.
@@ -73,6 +71,8 @@ const adopted = new Map()       // window id -> the window it is taken for a dia
 let windowsTold = false         // whether the extension has told the open windows once: before that, none is new
 let focusedWindow = 0           // the window that gets the keyboard on the PC, as the extension last told
 let resizeWish = null, resizeAt = 0 // { id, w, h, edge }: a size the headset asked for a window, until the extension has taken it
+let cursor = { n: 0 }           // the PC's pointer, as the extension last told: { n: its pictures so far, png (empty: hidden), hot: [x, y] }
+let note = null, notes = 0      // the PC's latest notification, for 10 s: { n, app, title, body, icon: its file }; how many so far
 let windowsModule               // the windows.py process, started when first needed
 // The headset's own list of applications: the extension tells which are installed (name and icon file), the headset
 // shows them and names one to start, and the extension starts it and shows its window.
@@ -140,21 +140,22 @@ async function handle(req, res) {
   // the rest of that hour, and the journal tells of it, as of every opening of the link from the internet.
   const from = req.socket.remoteAddress, local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(from), home = HOME.test(from)
   if (!local && url !== '/ca.crt') {
-    const wrong = home ? null : refused.get(from)
-    if (wrong?.count >= 10 && Date.now() - wrong.since < 3600e3) return res.writeHead(403).end()
+    if (blocked(refused, from)) return res.writeHead(403).end()
     if (searchParams.get('k') === TOKEN) {
       res.setHeader('set-cookie', `k=${TOKEN}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Strict`)
       if (!home) console.log(`the phone link was opened from the internet, from ${from}`)
     } else if (!req.headers.cookie?.split('; ').includes(`k=${TOKEN}`)) {
-      if (!home) {
-        if (refused.size > 10000) refused.clear() // shortcut: forgets all at 10000 guessing addresses, a block per network if that is ever seen
-        if (!wrong || Date.now() - wrong.since > 3600e3) refused.set(from, { count: 1, since: Date.now() })
-        else if (++wrong.count === 10) console.log(`blocked for an hour: ${from}, 10 wrong keys`)
-      }
+      if (wrongKey(refused, from)) console.log(`blocked for an hour: ${from}, 10 wrong keys`)
       return res.writeHead(403).end('Open the full link with ?k=... that the server printed on start')
     }
   }
 
+  // The phone's microphone, while the setting is on: published to MediaMTX (WHIP), which has mic.py play it into the
+  // PC's microphone "VR-Headset" (mediamtx.yml).
+  if (url === '/whip/mic' && req.method === 'POST' && params.phoneMic) {
+    const r = await fetch('http://127.0.0.1:8889/vr/mic/whip', { method: 'POST', headers: { 'content-type': 'application/sdp' }, body: await readBody(req) })
+    return res.writeHead(r.status, { 'content-type': 'application/sdp' }).end(await r.text())
+  }
   const stream = /^\/whep\/(\w+)$/.exec(url)
   if (stream && req.method === 'POST' && (stream[1] === 'audio' || [...CAPTURE.monitors, ...windowPanels()].some(m => m.id === stream[1]))) {
     const r = await fetch(`http://127.0.0.1:8889/vr/${stream[1]}/whep`, { method: 'POST', headers: { 'content-type': 'application/sdp' }, body: await readBody(req) })
@@ -204,7 +205,7 @@ async function handle(req, res) {
     // `active` only while the pointer is at work there: otherwise the desktop's own choice of window stands
     // soon: a window is being resized from the headset; the extension then asks again in a tenth of a second
     const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length,
-      resize: resizeWish, soon: Date.now() - resizeAt < 1000 }
+      resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0 }
     launch = resizeWish = null
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
   }
@@ -223,6 +224,24 @@ async function handle(req, res) {
     headsetClick = { at: Date.now(), in: null }
     return res.writeHead(204).end()
   }
+  // From the extension: the PC pointer's picture (PNG) and its hot spot, whenever its shape changes while windows are
+  // in the headset, which draws it over them. The picture is fetched by its number, from /params.
+  if (url === '/cursor' && req.method === 'POST' && local) {
+    const told = JSON.parse(await readBody(req)), png = Buffer.from(String(told?.png ?? ''), 'base64')
+    if (png.length > 262144 || !Array.isArray(told?.hot) || told.hot.length !== 2 || !told.hot.every(Number.isInteger)) throw new SyntaxError('a picture and its hot spot expected')
+    cursor = { n: cursor.n + 1, png, hot: told.hot }
+    return res.writeHead(204).end()
+  }
+  // From the extension: a notification that GNOME shows as a banner. The headset shows it too, for a few seconds.
+  if (url === '/notify' && req.method === 'POST' && local) {
+    const told = JSON.parse(await readBody(req)), text = (value, length) => String(value ?? '').slice(0, length)
+    const icon = text(told?.icon, 500), n = ++notes
+    note = { n, app: text(told?.app, 60), title: text(told?.title, 160), body: text(told?.body, 400), icon: ['.png', '.svg'].includes(path.extname(icon)) ? icon : '' }
+    setTimeout(() => { if (note?.n === n) note = null }, 10000)
+    return res.writeHead(204).end()
+  }
+  if (url === '/noteicon') return note?.icon ? sendFile(req, res, note.icon) : res.writeHead(404).end('no icon') // only a picture file the extension named
+  if (url === '/cursor') return cursor.png?.length ? res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(cursor.png) : res.writeHead(404).end()
   // From the headset: a new size for a window it shows, dragged at a side or corner (edge: left, right, top, bottom as
   // 0 or 1: the opposite sides stay where they are). The extension resizes the window.
   if (url === '/resize' && req.method === 'POST') {
@@ -318,7 +337,9 @@ async function handle(req, res) {
     const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' } : answer))
+      .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
+        : { ...answer, cursor: cursor.n ? [cursor.n, ...cursor.hot, cursor.png.length ? 1 : 0] : null, // the pointer: its picture's number, hot spot, whether shown
+          note: note && [note.n, note.app, note.title, note.body, note.icon ? 1 : 0] }))
   }
   // What only this PC may know, for the GNOME settings window: the links for the phone (with the key) and the
   // ranges of the settings.
@@ -363,6 +384,10 @@ try {
   console.error('No certificates or MediaMTX yet: run ./setup.sh first')
   process.exit(1)
 }
+if (TOKEN.length < 12) { // an empty key would let in anyone with "?k=" (a file left empty by a power cut while it was written)
+  console.error('The key in certs/token is missing or too short: run ./setup.sh, then open the codes on the phone again')
+  process.exit(1)
+}
 
 // From outside the home the phone names this PC by its address on the internet (`publicHost`, set in the GNOME
 // settings window: an IPv4 address or a name; the router passes 8443 and 8189 on to this PC). The certificate must
@@ -371,7 +396,8 @@ try {
 const OUTSIDE = SETTINGS_ONLY || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(params.publicHost ?? '') || params.publicHost.length > 50 ? '' : params.publicHost.toLowerCase() // 50: the link must fit the settings window's QR code
 if (OUTSIDE && TOKEN.length < 32) {
   TOKEN = crypto.randomBytes(16).toString('hex')
-  fs.writeFileSync(path.join(ROOT, 'certs/token'), TOKEN + '\n')
+  fs.writeFileSync(path.join(ROOT, 'certs/token.tmp'), TOKEN + '\n') // aside and renamed: never a half-written key
+  fs.renameSync(path.join(ROOT, 'certs/token.tmp'), path.join(ROOT, 'certs/token'))
   console.log('A longer key for the phone: open the links from the codes in the settings window again')
 }
 // At home the phone's link names this PC by its address on the Wi-Fi, not by its name (winsbar.local): the name is
