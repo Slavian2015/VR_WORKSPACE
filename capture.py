@@ -201,12 +201,15 @@ def main():
         # Not 17 ms: then repeats also land between real frames (72 fps measured with the pointer moving) and only
         # load the phone's decoder. (videorate cannot cap it: it aborts on these frames, they carry no duration.)
         # max-bframes=0: WebRTC cannot play B-frames.
+        # Variable bitrate, 20 Mbit/s at most: a still screen of text took 0.7 Mbit/s instead of the 19 of a constant
+        # rate, for the same picture (this encoder, 2026-11-20). A constant 20 for each monitor was 18 GB an hour on a
+        # mobile network, and kept the Wi-Fi busy for nothing.
         # memory:DMABuf is essential: frames stay on the GPU. Asked for plain memory, GNOME allocates a new GPU texture
         # for every frame of a virtual monitor and keeps them: moving the pointer there ate 30 GB of RAM in a minute.
         # The older vaapi* elements are used because the newer va* ones cannot take these DMA-BUF frames (GStreamer 1.24).
         return spawn(f'gst-launch-1.0 -q pipewiresrc path={nodes[i]} keepalive-time=34'
                      f' ! video/x-raw(memory:DMABuf),format=BGRx{size},max-framerate=60/1 ! vaapipostproc'
-                     ' ! vaapih264enc rate-control=cbr bitrate=20000 keyframe-period=60 max-bframes=0'
+                     ' ! vaapih264enc rate-control=vbr bitrate=20000 keyframe-period=60 max-bframes=0'
                      ' ! video/x-h264,profile=constrained-baseline'
                      f' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/m{i}')
 

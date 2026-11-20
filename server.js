@@ -4,7 +4,9 @@ import https from 'node:https'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { spawn, execFile, execFileSync } from 'node:child_process'
+import net from 'node:net'
+import crypto from 'node:crypto'
+import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
@@ -43,6 +45,9 @@ try {
 
 let params = {}
 try { params = JSON.parse(fs.readFileSync(PARAMS_FILE, 'utf8')) } catch {}
+// Addresses of the home network and of this PC (IPv4 private and link-local; IPv6 loopback, unique local, link-local)
+const HOME = /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)|^(::1$|f[cd][0-9a-f]{2}:|fe80:)/i
+const refused = new Map() // address from the internet -> { count, since }: its wrong keys, counted from the first within the hour
 let phoneSeen = 0 // when a device other than this PC last asked for the settings
 // The headset's view direction, for the spectator page (index.html?spectator); the phone sends it only while
 // somebody watches, which it learns from `spectator` in the settings answer.
@@ -131,10 +136,23 @@ async function handle(req, res) {
   const { pathname: url, searchParams } = new URL(req.url, 'http://x')
 
   // The stream is the user's whole desktop: other devices must open the link with the key once (it is then kept in a cookie).
-  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+  // An address from the internet (not of the home network) that gave 10 wrong keys within an hour is not answered for
+  // the rest of that hour, and the journal tells of it, as of every opening of the link from the internet.
+  const from = req.socket.remoteAddress, local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(from), home = HOME.test(from)
   if (!local && url !== '/ca.crt') {
-    if (searchParams.get('k') === TOKEN) res.setHeader('set-cookie', `k=${TOKEN}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Strict`)
-    else if (!req.headers.cookie?.split('; ').includes(`k=${TOKEN}`)) return res.writeHead(403).end('Open the full link with ?k=... that the server printed on start')
+    const wrong = home ? null : refused.get(from)
+    if (wrong?.count >= 10 && Date.now() - wrong.since < 3600e3) return res.writeHead(403).end()
+    if (searchParams.get('k') === TOKEN) {
+      res.setHeader('set-cookie', `k=${TOKEN}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Strict`)
+      if (!home) console.log(`the phone link was opened from the internet, from ${from}`)
+    } else if (!req.headers.cookie?.split('; ').includes(`k=${TOKEN}`)) {
+      if (!home) {
+        if (refused.size > 10000) refused.clear() // shortcut: forgets all at 10000 guessing addresses, a block per network if that is ever seen
+        if (!wrong || Date.now() - wrong.since > 3600e3) refused.set(from, { count: 1, since: Date.now() })
+        else if (++wrong.count === 10) console.log(`blocked for an hour: ${from}, 10 wrong keys`)
+      }
+      return res.writeHead(403).end('Open the full link with ?k=... that the server printed on start')
+    }
   }
 
   const stream = /^\/whep\/(\w+)$/.exec(url)
@@ -300,7 +318,7 @@ async function handle(req, res) {
     const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      .end(JSON.stringify(searchParams.has('full') ? complete(answer) : answer))
+      .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' } : answer))
   }
   // What only this PC may know, for the GNOME settings window: the links for the phone (with the key) and the
   // ranges of the settings.
@@ -346,13 +364,38 @@ try {
   process.exit(1)
 }
 
-const PHONE_URL = `https://${os.hostname()}.local:8443/?k=${TOKEN}`, CA_URL = `http://${os.hostname()}.local:8080/ca.crt`
+// From outside the home the phone names this PC by its address on the internet (`publicHost`, set in the GNOME
+// settings window: an IPv4 address or a name; the router passes 8443 and 8189 on to this PC). The certificate must
+// name it too (made anew here when it does not), MediaMTX offers it to the phone for the video, and the desktop gets
+// a key that cannot be guessed (the 12 characters of the first ones were enough on the Wi-Fi at home).
+const OUTSIDE = SETTINGS_ONLY || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(params.publicHost ?? '') || params.publicHost.length > 50 ? '' : params.publicHost.toLowerCase() // 50: the link must fit the settings window's QR code
+if (OUTSIDE && TOKEN.length < 32) {
+  TOKEN = crypto.randomBytes(16).toString('hex')
+  fs.writeFileSync(path.join(ROOT, 'certs/token'), TOKEN + '\n')
+  console.log('A longer key for the phone: open the links from the codes in the settings window again')
+}
+// At home the phone's link names this PC by its address on the Wi-Fi, not by its name (winsbar.local): the name is
+// announced with the addresses of Docker's networks as well, and the phone took one of those and waited for nothing.
+let LAN
+try { LAN = /src (\S+)/.exec(execFileSync('ip', ['-4', 'route', 'get', '1.1.1.1'], { encoding: 'utf8' }))[1] } catch { LAN = `${os.hostname()}.local` } // no network: the name
+// The certificate must name both addresses (the one at home changes when the router gives another): made anew when not.
+if (!SETTINGS_ONLY) {
+  const cert = new crypto.X509Certificate(tls.cert), named = host => net.isIPv4(host) ? cert.checkIP(host) : cert.checkHost(host)
+  if (![LAN, OUTSIDE].filter(Boolean).every(named)) {
+    if (spawnSync(path.join(ROOT, 'cert.sh'), OUTSIDE ? [OUTSIDE] : [], { stdio: 'inherit' }).status === 0) {
+      tls = { key: fs.readFileSync(path.join(ROOT, 'certs/server.key')), cert: fs.readFileSync(path.join(ROOT, 'certs/server.crt')) }
+    } else console.error(`The certificate could not be made for ${[LAN, OUTSIDE].join(' and ')}: the phone will not trust this PC`)
+  }
+}
+const PHONE_URL = `https://${LAN}:8443/?k=${TOKEN}`, CA_URL = `http://${LAN}:8080/ca.crt`
+const OUTSIDE_URL = OUTSIDE && `https://${OUTSIDE}:8443/?k=${TOKEN}`
 let mtx
 if (SETTINGS_ONLY) {
   http.createServer(listener).listen(8080, '127.0.0.1')
   console.log('Settings only, for the GNOME settings window: nothing is streamed')
 } else {
-  mtx = spawn(path.join(ROOT, 'bin/mediamtx'), ['mediamtx.yml'], { stdio: 'inherit', cwd: ROOT }) // cwd: mediamtx.yml runs ./capture.py
+  // cwd: mediamtx.yml runs ./capture.py. The address on the internet: a place more where the phone may find the video.
+  mtx = spawn(path.join(ROOT, 'bin/mediamtx'), ['mediamtx.yml'], { stdio: 'inherit', cwd: ROOT, env: OUTSIDE ? { ...process.env, MTX_WEBRTCADDITIONALHOSTS: OUTSIDE } : process.env })
   let stopping = false
   mtx.on('exit', code => process.exit(stopping ? 0 : code ?? 1))
   mtx.on('error', e => { console.error('MediaMTX did not start:', e.message); process.exit(1) })
@@ -371,4 +414,5 @@ if (SETTINGS_ONLY) {
   https.createServer(tls, listener).listen(8443)
   console.log('PC:    http://localhost:8080/control.html (settings)   http://localhost:8080/ (preview)')
   console.log(`Phone: ${PHONE_URL}   (once before that: ${CA_URL})`)
+  if (OUTSIDE) console.log(`Phone from outside the home: ${OUTSIDE_URL}`)
 }

@@ -8,7 +8,8 @@
 set -eu
 P=$(cd "$(dirname "$0")/.." && pwd); D=$1
 mkdir -p "$D"; cd "$D"
-for f in app node_modules certs bin package.json orders.js; do ln -sfn "$P/$f" "$f"; done
+for f in app node_modules bin package.json orders.js cert.sh; do ln -sfn "$P/$f" "$f"; done
+rm -rf certs; cp -r "$P/certs" certs # a copy: the server may make a new certificate and key, the real ones must stay
 sed -e 's/listen(8080/listen(18080/' -e 's/listen(8443)/listen(18443)/' -e 's/127.0.0.1:8889/127.0.0.1:18889/' "$P/server.js" > server.js
 sed -e 's/:8554/:18554/' -e 's/:8889/:18889/' -e 's/:8189/:18189/' -e 's/:1935/:11935/' "$P/mediamtx.yml" > mediamtx.yml
 sed -e 's/:1935/:11935/' "$P/windows.py" > windows.py

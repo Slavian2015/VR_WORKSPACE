@@ -140,6 +140,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
     }
 
     let host, pages // what the server told once; the pages built from it
+    let running = false, showWays = () => {} // whether VR Workspace is on; shows the groups of the chosen way to connect
     let redraw = () => {} // draws the map of the monitors again
     const build = settings => {
       const display = Gdk.Display.get_default()
@@ -163,11 +164,44 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         _('4. Open the link from the code at the top in Safari, then Share → Add to Home Screen. Start it from the home screen: only then it is fullscreen'),
         _('5. Switch off the rotation lock, hold the phone in landscape, tap the screen once and put it in the headset'),
       ]) first.add_row(typeof step === 'string' ? new Adw.ActionRow({ title: step }) : step)
+      // Two ways to connect, a tab and a code each: on the Wi-Fi at home, and from anywhere over the internet. (At home
+      // the second does not work: the router does not take the PC's own address on the internet from inside.) The tabs
+      // are two buttons over groups of the page: a group put into a Gtk.Stack widened the window past its edge.
+      const local = new Gtk.ToggleButton({ label: _('Local Wi-Fi'), active: true }), remote = new Gtk.ToggleButton({ label: _('Remote'), group: local })
+      const switcher = new Gtk.Box({ css_classes: ['linked'], halign: Gtk.Align.CENTER })
+      switcher.append(local)
+      switcher.append(remote)
+      group(connect, {}, switcher)
       const phone = group(connect, {
-        title: _('Phone'),
-        description: _('Point the iPhone camera at the code and open the link. The phone and this PC must be on the same Wi-Fi.'),
+        description: _('Point the iPhone camera at the code and open the link in Safari (Chrome reaches this PC only with the permission for the local network). The phone and this PC must be on the same Wi-Fi.'),
       }, code(host.phone))
       const more = group(connect, {}, link, first)
+      // From outside the home (the mobile internet, another Wi-Fi): this PC's address on the internet, and a second
+      // code with it. The server takes a new address when it starts (certificate, key, video), so it says when.
+      const address = new Adw.EntryRow({ title: _('Address of this PC on the internet'), show_apply_button: true })
+      address.connect('apply', () => {
+        const text = address.text.trim()
+        if (!text || (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(text) && text.length <= 50)) change('publicHost', text) // the same check as the server's
+        else window.add_toast(new Adw.Toast({ title: _('Not an address: an IP address such as 203.0.113.5, or a name') }))
+      })
+      const outsideCode = new Adw.Bin()
+      const outside = group(connect, {}, address, outsideCode)
+      showWays = () => {
+        phone.visible = more.visible = running && local.active // the codes for home only while VR Workspace is on, as before
+        outside.visible = remote.active
+      }
+      local.connect('toggled', showWays)
+      showWays()
+      let addressShown, outsideShown
+      shows.publicHost = value => { if (value !== addressShown) address.text = addressShown = value }
+      shows.outside = url => {
+        if (url !== outsideShown) outsideCode.child = (outsideShown = url) ? code(url) : null
+        const wanted = last.publicHost, using = url.split('/')[2]?.split(':')[0]
+        outside.description = !wanted ? _('For the mobile internet or another Wi-Fi this PC needs an address on the internet that does not change (a static IP from the provider). Enter it here.')
+          : last.settingsOnly ? _('Switch VR Workspace on: the code for outside the home appears here.')
+            : using !== wanted.toLowerCase() ? _('Switch VR Workspace off and on to use this address.')
+              : _('In the router, pass the ports 8443 (TCP) and 8189 (UDP and TCP) on to this PC. Away from home (Wi-Fi off), open the link from this code in Safari and add it to the Home Screen: a second icon, for outside the home. At home use the one from Local Wi-Fi.')
+      }
       const pc = group(connect, { title: _('On This PC') },
         new Adw.ActionRow({
           title: _('Sound'),
@@ -466,7 +500,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
 
       pages = [monitors, background, headset]
       for (const page of pages) window.add(page)
-      pages.push(phone, more, pc)
+      pages.push(pc)
     }
 
     let last, seen, busy = false, asked = 0 // the settings as last answered; the same as text; an answer is awaited; when the settings-only server was last asked for
@@ -489,6 +523,8 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         }
         // The settings work whenever a server answers; the phone's links are of use only while VR Workspace is on.
         for (const part of pages ?? []) part instanceof Adw.PreferencesPage ? part.sensitive = !!settings : part.visible = on
+        running = on
+        showWays()
         if (!settings || !pages || JSON.stringify(settings) === seen) return
         last = settings
         seen = JSON.stringify(settings)

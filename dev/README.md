@@ -19,6 +19,8 @@ Rules learnt the hard way:
 - never listen on port 8080 in a test: the extension of the real desktop asks that port;
 - stop test processes by exact name or by port, never by a pattern that is also in the command being run;
 - tests must not change the default sound output of the real desktop;
+- the monitors' capture (`capture.py`) does not run there: it needs a sound server for its output. Single windows
+  (`windows.py`) do; try what concerns the video on a window's stream;
 - that shell has no X11: GNOME starts Xwayland only through systemd, which the test session lacks. X11 programs
   (Flatpak VLC among them) cannot be tried there;
 - the guard counts the memory of the whole PC: programs the user works with meanwhile (a browser, FreeCAD) can

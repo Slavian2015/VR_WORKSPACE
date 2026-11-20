@@ -14,6 +14,9 @@ webrtc: true
 webrtcAddress: 127.0.0.1:8889
 # The phone must reach this UDP port on the PC.
 webrtcLocalUDPAddress: :8189
+# And the same port over TCP: for mobile networks that let no UDP through. (From outside the home the phone also
+# needs the PC's address on the internet: server.js passes it as MTX_WEBRTCADDITIONALHOSTS.)
+webrtcLocalTCPAddress: :8189
 
 paths:
   # Capture runs only while a viewer of the first monitor is connected. It publishes all the streams below.

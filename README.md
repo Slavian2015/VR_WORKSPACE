@@ -12,7 +12,8 @@ Built for an iPhone 15 Pro in a Gear VR shell and GNOME 46 on Wayland (Ubuntu 24
 - Node 22 or newer, ffmpeg, openssl, curl.
 - GStreamer with VA-API (`vaapih264enc`, `vaapipostproc`, `pipewiresrc`), PipeWire with `pactl`,
   system Python with GNOME bindings (`python3-gi`). An Ubuntu desktop has the last two already.
-- Phone and PC on the same Wi-Fi (5 GHz). The PC firewall must allow TCP 8080, 8443 and UDP 8189.
+- Phone and PC on the same Wi-Fi (5 GHz). The PC firewall must allow TCP 8080, 8443 and 8189, and UDP 8189.
+  (From outside the home: see below.)
 
 ## Install, once
 
@@ -30,11 +31,31 @@ It is safe to run again; do so when the PC gets a new name on the network, and a
 ## Use
 
 1. Click the headset icon in the top bar and switch **VR Workspace** on.
-2. Choose **Settings** in the same menu. The first page shows a QR code: point the iPhone camera at it and open the
-   link. (The very first time, open "First time with this iPhone" on that page and follow its five steps.)
+2. Choose **Settings** in the same menu. The first page, tab **Local Wi-Fi**, shows a QR code: point the iPhone
+   camera at it and open the link in Safari. (The very first time, open "First time with this iPhone" there and
+   follow its five steps.) Chrome on the iPhone reaches the PC at home only with its permission for the local network
+   (iPhone Settings → Privacy & Security → Local Network → Chrome); Safari needs none.
 3. Tap the screen of the phone once and put it in the headset.
 
 The desktop is captured only while a phone is connected. Switch VR Workspace off in the same menu when done.
+
+### From outside the home
+
+Over the mobile internet or another Wi-Fi, if this PC has an address on the internet that does not change (a static
+IP from the provider; a name that points to it works too):
+
+1. Check that it is really this PC's: the address the router shows for its internet side must be the one that a
+   "what is my IP" site shows. If they differ, the provider shares one address among many and this cannot work.
+2. In the router, pass these ports on to this PC: **8443** (TCP, the page) and **8189** (UDP and TCP, the video).
+   Nothing else: 8080 serves the page without encryption and is for the home network only.
+3. In Settings → Connect → **Remote**, enter the address, then switch VR Workspace off and on. The server
+   then puts the address into its certificate (the phone trusts it already) and makes the key of the links longer:
+   open both codes on the iPhone again and add the second link to the Home Screen as a second icon.
+
+The same page works both ways; only the address differs. At home the link from Remote does not open (the router
+does not take its own address on the internet from inside): use the one from Local Wi-Fi there. Over the internet the pointer lags a little more, and a
+still screen costs little, a changing one (a film, scrolling) up to 20 Mbit/s for each monitor and 12 for each
+window: mind the mobile data.
 
 The menu also has **Centre on Gaze** (look where the middle of the monitors should be, then choose it) and
 **Phone Camera as Background**.
@@ -255,9 +276,10 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 - **The switch goes back to off** — the server did not start. The reason is in `journalctl --user -u vr-workspace -e`.
   Usually `./setup.sh` was not run, or the session is not Wayland.
 - **No icon in the top bar** — log out and in after `./setup.sh`; check `gnome-extensions info vr-workspace@local`.
-- **The phone cannot open the link** — same Wi-Fi? Firewall ports open? The link uses the PC's name
-  (`<name>.local`); if the network does not resolve it, use the PC's IP address in the same link, and run
-  `./setup.sh` again if that address has changed since (the certificate names it).
+- **The phone cannot open the link** — same Wi-Fi? Firewall ports open? Chrome on the iPhone needs the permission
+  for the local network; Safari does not. The link names the PC by its address on the Wi-Fi (not by its name: that
+  is announced with Docker's addresses too, and the phone waited on one of those). When the router gives the PC
+  another address, the link changes: open the code again. (Best: give the PC a fixed address in the router.)
 - **Safari warns about the certificate** — the "First time with this iPhone" steps were not finished, or the PC
   was renamed: run `./setup.sh` again.
 - **The desktop stops reacting while the picture goes on** — GNOME Shell has hung (seen once with two virtual
@@ -272,8 +294,13 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 ## Security
 
-Anyone on the network who has the link with the key can watch your desktop and change the settings.
-The key is in `certs/token`; delete it and run `./setup.sh` to get a new one. Never commit `certs/`.
+Anyone on the network who has the link with the key can watch your desktop and change the settings, and click in
+the windows shown in the headset. The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
+(then open the codes on the phone again). Never commit `certs/`.
+
+With an address on the internet set, the key is 32 characters, too many to guess. An address from the internet (not
+of the home network) that gives 10 wrong keys within an hour gets no answer for the rest of the hour; the journal
+(`journalctl --user -u vr-workspace`) tells of each such block and of every opening of the link from the internet.
 
 ## Uninstall
 
@@ -296,6 +323,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `capture.py` — asks GNOME for the monitor streams (creating the virtual monitors), runs one GStreamer encoder per
   monitor and ffmpeg for the sound, creates the virtual audio output.
 - `mediamtx.yml` — MediaMTX settings; it starts `capture.py` when a viewer connects.
+- `cert.sh` — the certificate the phone checks this PC by, signed by the CA that `setup.sh` made.
 - `windows.py` — the same for single windows, and puts the pointer, buttons and wheel from the headset into them
   (`orders.js` checks what the headset may ask for).
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
