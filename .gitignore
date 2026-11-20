@@ -180,3 +180,4 @@ app/bg/
 /bin/
 /certs/
 /params.json*
+.connectors.json

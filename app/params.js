@@ -27,6 +27,7 @@ export const LENS_SPEC = {
   chroma: [0, -3, 3, 0.1, 'Цветные каймы, %'],
   cx: [0, -10, 10, 0.25, 'Сдвиг центра по горизонтали, мм'],
   cy: [0, -10, 10, 0.25, 'Сдвиг центра по вертикали, мм'],
+  glassesFov: [46, 20, 120, 1, 'Очки на кабеле: угол обзора по диагонали, °'], // index.html?glasses; 46: XREAL-like, to be measured
 }
 const DEG = Math.PI / 180
 const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves them: centre, right, left, behind (same list in capture.py)
@@ -34,7 +35,7 @@ const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (
 
 // Server answer -> full settings: every key has a value, monitors included.
 export function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0],
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, menuCall: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0],
     glowColor: '#4fb2ff', focusGlow: true, // the light around panels; around the one that gets the keyboard
     publicHost: '', // this PC's address on the internet, for the phone's link from outside the home (server.js)
     phoneMic: false } // the phone's microphone as this PC's (mic.py)
@@ -139,3 +140,17 @@ export function watchParams(onChange, onLost) {
 // A null value removes the setting, which brings back its default.
 let sending = Promise.resolve()
 export const setParams = patch => (sending = sending.then(() => fetch('/params', { method: 'POST', body: JSON.stringify(patch) })).catch(() => {}))
+
+// A key of the phone's keyboard as it lies (KeyboardEvent.code) -> its Linux key code, for a window on the PC: keys,
+// not letters, so the PC's own layout makes the letters. The first ones in the order of their codes, from 1.
+export const KEYCODES = Object.fromEntries([
+  ...('Escape Digit1 Digit2 Digit3 Digit4 Digit5 Digit6 Digit7 Digit8 Digit9 Digit0 Minus Equal Backspace Tab KeyQ KeyW KeyE KeyR ' +
+    'KeyT KeyY KeyU KeyI KeyO KeyP BracketLeft BracketRight Enter ControlLeft KeyA KeyS KeyD KeyF KeyG KeyH KeyJ KeyK KeyL ' +
+    'Semicolon Quote Backquote ShiftLeft Backslash KeyZ KeyX KeyC KeyV KeyB KeyN KeyM Comma Period Slash ShiftRight ' +
+    'NumpadMultiply AltLeft Space CapsLock F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 NumLock ScrollLock Numpad7 Numpad8 Numpad9 ' +
+    'NumpadSubtract Numpad4 Numpad5 Numpad6 NumpadAdd Numpad1 Numpad2 Numpad3 Numpad0 NumpadDecimal').split(' ').map((code, i) => [code, i + 1]),
+  ['IntlBackslash', 86], ['F11', 87], ['F12', 88], ['NumpadEnter', 96], ['ControlRight', 97], ['NumpadDivide', 98],
+  ['PrintScreen', 99], ['AltRight', 100], ['Home', 102], ['ArrowUp', 103], ['PageUp', 104], ['ArrowLeft', 105],
+  ['ArrowRight', 106], ['End', 107], ['ArrowDown', 108], ['PageDown', 109], ['Insert', 110], ['Delete', 111],
+  ['NumpadEqual', 117], ['Pause', 119], ['MetaLeft', 125], ['MetaRight', 126], ['ContextMenu', 127],
+])

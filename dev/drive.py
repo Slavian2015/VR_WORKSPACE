@@ -11,6 +11,8 @@ usage: drive.py <folder for screenshots> <file with one action per line>
   drag:x1,y1,x2,y2   press, move, release
   down / up          press / release the left button where the pointer is
   wiggle:<seconds>   move the pointer about
+  rel:dx,dy          move the pointer by that much, in steps of 20 px as a real mouse (move: jumps, and GNOME clamps a
+                     jump to the monitor it starts on, so with several monitors move: may land elsewhere)
   scroll:<clicks>    wheel, positive scrolls a page down
   key:<code>         press and release a key (Linux key code: 1 Esc, 69 Num Lock, 2..11 the digits 1..0);
                      key:29+24 holds the first while the second is pressed (Ctrl+O)
@@ -73,6 +75,11 @@ for action in open(sys.argv[2]).read().split('\n'):
             while time.time() < end:
                 i += 1
                 move(7 if i % 40 < 20 else -7, 3 if i % 30 < 15 else -3); time.sleep(0.008)
+        elif kind == 'rel':
+            dx, dy = map(float, arg.split(','))
+            steps = max(1, int(max(abs(dx), abs(dy)) // 20))
+            for _ in range(steps):
+                move(dx / steps, dy / steps); time.sleep(0.01)
         elif kind == 'scroll':
             for _ in range(abs(int(arg))):
                 call(N, session, S, 'NotifyPointerAxisDiscrete', GLib.Variant('(ui)', (0, 1 if int(arg) > 0 else -1))); time.sleep(0.05)

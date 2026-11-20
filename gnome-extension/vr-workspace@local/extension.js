@@ -31,15 +31,22 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
 import { http, talk, power } from './link.js'
 
 Gio._promisify(Shell.Screenshot, 'composite_to_stream') // as GNOME Shell's own screenshots do
+const isGlasses = window => window.get_title()?.startsWith('VR Workspace — glasses') ?? false // the title index.html?glasses gives itself
 
 export default class VrWorkspace extends Extension {
   enable() {
     this._http = http()
     this._shownWindows = [] // GNOME's ids of the windows shown in the headset one by one
     this._copies = new Map() // the copies of popups laid into those windows: copy -> { popup, window }
+    this._inside = null // a headset on a cable: { id, window, rect, corners, barriers, box, push, timer } while the PC's mouse works inside a monitor or window (_follow)
     this._windowCreated = global.display.connect('window-created', (_display, window) => {
       this._copyPopup(window)
       this._note(window, 'opened')
+      // GNOME opens a window where the pointer is, which on a cable is the headset's own screen: there it would lie
+      // over the headset's picture until the pointer went into its panel (VS Code did, 2026-11-20). Moved at once.
+      const types = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG]
+      if (!types.includes(window.get_window_type())) return
+      const shown = window.connect('shown', () => { window.disconnect(shown); this._offHeadset(window) })
     })
     // Until the trouble with VLC's file chooser (2026-11-19) is understood: what windows do while the headset works in them.
     this._focusChanged = global.display.connect('notify::focus-window', () => this._note(global.display.focus_window, 'has the focus'))
@@ -57,7 +64,11 @@ export default class VrWorkspace extends Extension {
       console.log(`VR Workspace: "stop sharing" pressed by ${event.get_source_device()?.get_device_name()} at ${event.get_coords().map(Math.round)}`)
       return Clutter.EVENT_PROPAGATE
     })
-    this._fullscreenChanged = global.display.connect('in-fullscreen-changed', () => this._reportFullscreen())
+    this._fullscreenChanged = global.display.connect('in-fullscreen-changed', () => {
+      this._reportFullscreen()
+      this._keepPointerOn()
+    })
+    Main.layoutManager.connectObject('monitors-changed', () => this._keepPointerOn(), this)
     this._reportFullscreen()
     this._keymap = Clutter.get_default_backend().get_default_seat().get_keymap()
     this._numLock = this._keymap.get_num_lock_state() // only a change counts: Num Lock may be on already at login
@@ -66,6 +77,18 @@ export default class VrWorkspace extends Extension {
     // leaves the pointer out of a window's recording, so the server gets its picture whenever it changes.
     this._cursorTracker = Meta.CursorTracker.get_for_display(global.display)
     this._cursorChanged = this._cursorTracker.connect('cursor-changed', () => this._cursorSoon())
+    // GNOME shows its pointer again at every move of the mouse: hidden again at once while the headset draws it (_follow)
+    this._cursorShown = this._cursorTracker.connect('visibility-changed', () => this._inside && this._cursorTracker.get_pointer_visible() && this._cursorTracker.set_pointer_visible(false))
+    // The emergency key, Ctrl+Alt+Backspace, always: back to the plain desktop, whatever the headset or the glasses
+    // show. Glasses on a cable may be the only screen, and a picture that hangs there would leave one blind.
+    // (Ctrl+Alt+Escape is GNOME's own.) Asked from the window manager: it works in every state of the desktop.
+    this._emergency = global.display.grab_accelerator('<Control><Alt>BackSpace', Meta.KeyBindingFlags.NONE)
+    if (this._emergency === Meta.KeyBindingAction.NONE) console.log('VR Workspace: Ctrl+Alt+Backspace is taken, there is no emergency key')
+    else Main.wm.allowKeybinding(Meta.external_binding_name_for_action(this._emergency), Shell.ActionMode.ALL)
+    this._emergencyPressed = global.display.connect('accelerator-activated', (_display, action) => action === this._emergency && this._emergencyStop())
+    // The Super key (and the Activities corner) call Main.overview.toggle(): through us while we are enabled.
+    this._toggleOverview = Main.overview.toggle
+    Main.overview.toggle = (...args) => this._overview(...args)
     // GNOME's notifications, to the headset as well: who wears it does not see the banners on the PC.
     Main.messageTray.connectObject('source-added', (_tray, source) => this._watchSource(source), this)
     for (const source of Main.messageTray.getSources()) this._watchSource(source)
@@ -73,6 +96,7 @@ export default class VrWorkspace extends Extension {
 
   disable() {
     this._leave()
+    this._out()
     global.display.disconnect(this._windowCreated)
     global.display.disconnect(this._focusChanged)
     for (const copy of this._copies.keys()) copy.destroy()
@@ -85,7 +109,15 @@ export default class VrWorkspace extends Extension {
     this._indicator = null
     this._keymap.disconnect(this._keymapChanged)
     global.display.disconnect(this._fullscreenChanged)
+    Main.layoutManager.disconnectObject(this)
+    for (const barrier of this._barriers ?? []) barrier.destroy()
+    this._barriers = []
     this._cursorTracker.disconnect(this._cursorChanged)
+    this._cursorTracker.disconnect(this._cursorShown)
+    this._nudger = null
+    global.display.disconnect(this._emergencyPressed)
+    Main.overview.toggle = this._toggleOverview
+    if (this._emergency !== Meta.KeyBindingAction.NONE) global.display.ungrab_accelerator(this._emergency)
     Main.messageTray.disconnectObject(this)
     for (const source of Main.messageTray.getSources()) source.disconnectObject(this)
     if (this._cursorTimer) GLib.source_remove(this._cursorTimer)
@@ -172,6 +204,9 @@ export default class VrWorkspace extends Extension {
       this._serverSeen = !!answer
       const before = this._shownWindows.length
       this._shownWindows = answer?.shown ?? []
+      this._phoneOnline = !!answer?.phoneOnline
+      if (this._menuSince && answer?.menuOpen) this._hold()
+      else if (this._menuSince && Date.now() - this._menuSince > 2000) this._leave() // the page has closed it (or is gone)
       // Windows came into the headset (the pointer may have changed while none was there), or the server started anew
       if (this._shownWindows.length && (!before || answer.cursor === false)) {
         this._cursorSent = null
@@ -187,15 +222,19 @@ export default class VrWorkspace extends Extension {
       }
       if (answer?.launch) this._start(answer.launch)
       if (answer?.resize) this._resize(windows.find(w => w.get_id() === answer.resize.id), answer.resize)
-      // While a window is resized from the headset: the next report in a tenth of a second, not in half of one.
-      if (answer?.soon && !this._soon) this._soon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => (this._soon = 0, this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
+      const onCable = !!this._glassesWindow()
+      if (onCable && !this._catcher && !this._editing) this._follow(answer?.enter, windows)
+      else this._out()
+      // While a window is resized from the headset: the next report in a tenth of a second, not in half of one. With
+      // a headset on a cable in a twentieth: its pointer going onto a monitor or window is felt.
+      if ((answer?.soon || onCable) && !this._soon) this._soon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, onCable ? 50 : 100, () => (this._soon = 0, this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
     })
   }
 
   // The pointer's picture and its hot spot (the pixel that points), to the server: only while windows are in the
   // headset, and at most ten times a second (an animated pointer, "busy", changes all the time).
   _cursorSoon() {
-    if (this._cursorTimer || !this._shownWindows.length || !this._serverSeen) return
+    if (this._cursorTimer || (!this._shownWindows.length && !this._inside) || !this._serverSeen) return
     this._cursorTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
       this._cursorTimer = 0
       this._sendCursor().catch(e => console.log(`VR Workspace: the pointer's picture: ${e.message}`))
@@ -215,6 +254,23 @@ export default class VrWorkspace extends Extension {
     if (!this._http || `${png}${x},${y}` === this._cursorSent) return
     this._cursorSent = `${png}${x},${y}`
     talk(this._http, '/cursor', { png, hot: [x, y] })
+  }
+
+  // The emergency key: the glasses view off the screen at once (minimised by the window manager itself, so also when
+  // the page hangs, then asked to close), the mouse let go, and VR Workspace switched off. Its virtual monitors go
+  // with it, and their windows come back to the real screen.
+  _emergencyStop() {
+    const time = global.get_current_time()
+    for (const window of global.get_window_actors().map(actor => actor.meta_window)) {
+      if (!isGlasses(window)) continue
+      if (window.is_fullscreen()) window.unmake_fullscreen()
+      window.minimize()
+      window.delete(time)
+    }
+    this._leave()
+    this._out()
+    this._setPower(false)
+    Main.notify('VR Workspace', _('Switched off by the emergency key (Ctrl+Alt+Backspace)'))
   }
 
   // A new notification goes to the server when GNOME would show it as a banner (the same rules as its own: not when
@@ -325,10 +381,152 @@ export default class VrWorkspace extends Extension {
 
   // shortcut: reported only when it changes, a server started during a fullscreen film learns it at the next change;
   // report on a timer if that ever matters.
-  _reportFullscreen() {
-    let fullscreen = false
-    for (let i = 0; i < global.display.get_n_monitors(); i++) fullscreen ||= global.display.get_monitor_in_fullscreen(i)
+  _reportFullscreen() { // a film, say; not the glasses' own picture (it would turn the scene in it black)
+    const fullscreen = global.get_window_actors().some(({ meta_window: window }) => window.is_fullscreen() && !isGlasses(window))
     this._talk({ fullscreen })
+  }
+
+  // A window off the headset's own screen, where it would lie over the headset's picture: onto another monitor
+  _offHeadset(window) {
+    const glasses = this._glassesWindow(), screen = glasses?.get_monitor()
+    if (glasses?.is_fullscreen() && window !== glasses && window.get_monitor() === screen && global.display.get_n_monitors() > 1)
+      window.move_to_monitor(screen === 0 ? 1 : 0)
+  }
+
+  // The window of a headset on a cable (index.html?glasses), or undefined
+  _glassesWindow() {
+    return global.get_window_actors().map(actor => actor.meta_window).find(isGlasses)
+  }
+
+  // Four barriers on the sides of a box that let the pointer only in, or only out. Mutter blocks a motion unless all
+  // its directions are allowed, so a side lets the motion along it through too (in and down at once is in).
+  _box(x0, y0, x1, y1, onlyIn) {
+    const D = Meta.BarrierDirection, alongY = D.POSITIVE_Y | D.NEGATIVE_Y, alongX = D.POSITIVE_X | D.NEGATIVE_X
+    const barrier = (bx1, by1, bx2, by2, directions) => new Meta.Barrier({ backend: global.backend, x1: bx1, y1: by1, x2: bx2, y2: by2, directions })
+    const [left, right, top, bottom] = onlyIn ? [D.POSITIVE_X, D.NEGATIVE_X, D.POSITIVE_Y, D.NEGATIVE_Y] : [D.NEGATIVE_X, D.POSITIVE_X, D.NEGATIVE_Y, D.POSITIVE_Y]
+    return [barrier(x0, y0, x0, y1, left | alongY), barrier(x1, y0, x1, y1, right | alongY), barrier(x0, y0, x1, y0, top | alongX), barrier(x0, y1, x1, y1, bottom | alongX)]
+  }
+
+  // Puts the pointer there. After a bare warp GNOME and the programs miss the next click until the mouse moves (a
+  // click on a window just entered was lost), so a pixel there and back follows, as from a mouse.
+  _warp(x, y) {
+    const seat = Clutter.get_default_backend().get_default_seat(), now = GLib.get_monotonic_time()
+    seat.warp_pointer(x, y)
+    this._nudger ??= seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE)
+    this._nudger.notify_relative_motion(now, 1, 0)
+    this._nudger.notify_relative_motion(now, -1, 0)
+  }
+
+  // A headset on a cable, its picture filling a screen: the PC's pointer stays on that screen, where the picture takes
+  // it as the headset's own pointer (barriers let it in, not out), except while it works inside a monitor or window
+  // (_follow). A pointer elsewhere is brought to the middle of it.
+  _keepPointerOn() {
+    for (const barrier of this._barriers ?? []) barrier.destroy()
+    this._barriers = []
+    const glasses = this._glassesWindow()
+    if (!glasses?.is_fullscreen() || this._inside || this._catcher) return
+    const { x, y, width, height } = global.display.get_monitor_geometry(glasses.get_monitor()), [px, py] = global.get_pointer()
+    if (px < x || px >= x + width || py < y || py >= y + height) this._warp(x + width / 2, y + height / 2)
+    this._barriers = this._box(x, y, x + width, y + height, true)
+  }
+
+  // A headset on a cable: the PC's mouse goes into the monitor or window the headset's pointer is on (`asked`, from
+  // its page through the server), as the phone's mouse works in the sphere. The real pointer is put there, at that
+  // place, and kept inside (a window: with its open menus) by barriers; a window comes to the front (one on the
+  // headset's own screen, under its picture, is moved to another monitor first). The mouse and the keyboard then work
+  // there directly. GNOME's own pointer is hidden meanwhile: the headset draws it at once, from where it is told
+  // sixty times a second (in the pictures it would come a tenth of a second late). Pushed hard past a side, the
+  // pointer goes back onto the headset's picture, at that side (the panel's corners on the picture come with `asked`).
+  _follow(asked, windows) {
+    const inside = this._inside
+    if (inside) {
+      if (asked?.id === inside.id) inside.corners = asked.corners // the head turns: the panel moves on the picture
+      return this._fit()
+    }
+    if (!asked || asked.u < 0) return // u -1: the headset still thinks the pointer inside, only its corners
+    let window = null, rect
+    if (asked.source) {
+      window = windows.find(w => w.get_id() === asked.source)
+      if (!window) return
+      this._offHeadset(window)
+      window.activate(global.get_current_time())
+      rect = window.get_frame_rect()
+    } else {
+      const screen = global.backend.get_monitor_manager().get_monitor_for_connector(asked.connector)
+      if (screen < 0 || screen === this._glassesWindow()?.get_monitor()) return
+      rect = global.display.get_monitor_geometry(screen)
+    }
+    for (const barrier of this._barriers ?? []) barrier.destroy() // the picture's own, which keep the pointer on it
+    this._barriers = []
+    this._inside = { id: asked.id, window, rect, corners: asked.corners, barriers: [], box: '', push: 0 }
+    this._warp(rect.x + asked.u * rect.width, rect.y + asked.v * rect.height)
+    // Hidden, GNOME's pointer would also stop pointing for the programs (no clicks reach them) unless told to go on
+    Clutter.get_default_backend().get_default_seat().inhibit_unfocus()
+    this._cursorTracker.set_pointer_visible(false)
+    this._fit()
+    this._cursorSent = null // its shape, too
+    this._cursorSoon()
+    let told = ''
+    this._inside.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
+      const now = this._inside, r = now && this._rect(now)
+      if (!r) return GLib.SOURCE_CONTINUE // a window closed: let go at the next report
+      const [px, py] = global.get_pointer(), u = (px - r.x) / r.width, v = (py - r.y) / r.height, place = `${u.toFixed(4)},${v.toFixed(4)}`
+      if (place !== told && this._http) {
+        told = place
+        talk(this._http, '/pointer', { id: now.id, u, v })
+      }
+      return GLib.SOURCE_CONTINUE
+    })
+  }
+
+  // The rectangle of what the PC's mouse works in: a window's frame (null once it is closed), or a monitor
+  _rect(inside) {
+    return inside.window ? (inside.window.get_compositor_private() ? inside.window.get_frame_rect() : null) : inside.rect
+  }
+
+  // The barriers that keep the pointer inside: around a window and its open menus (they come and go), or a monitor.
+  // Pushing on one counts; pushed far enough, the pointer goes back out at that side.
+  _fit() {
+    const inside = this._inside, r = this._rect(inside)
+    if (!r) return
+    const boxes = [r, ...(inside.window ? [...this._copies.values()].filter(c => c.window === inside.window).map(({ popup }) => popup.get_frame_rect()) : [])]
+    const x0 = Math.min(...boxes.map(b => b.x)), y0 = Math.min(...boxes.map(b => b.y))
+    const x1 = Math.max(...boxes.map(b => b.x + b.width)), y1 = Math.max(...boxes.map(b => b.y + b.height))
+    if ([x0, y0, x1, y1].join() === inside.box) return
+    for (const barrier of inside.barriers) barrier.destroy()
+    inside.box = [x0, y0, x1, y1].join()
+    inside.barriers = this._box(x0, y0, x1, y1, true)
+    inside.barriers.forEach((barrier, side) => {
+      barrier.connect('hit', (_barrier, event) => {
+        inside.push += Math.abs(event.dx) + Math.abs(event.dy)
+        if (inside.push > 40 && this._inside === inside) this._out(side) // a deliberate push, not a brush along the side
+      })
+      barrier.connect('left', () => { inside.push = 0 })
+    })
+  }
+
+  // Out of the monitor or window: back onto the headset's picture where the side left by is on it (from the panel's
+  // corners there, a little beyond it), GNOME's pointer shown again, the headset told. Side undefined (the list, the
+  // arranging): just where it is seen on the picture.
+  _out(side) {
+    const inside = this._inside
+    if (!inside) return
+    const r = this._rect(inside), [px, py] = global.get_pointer()
+    GLib.source_remove(inside.timer)
+    for (const barrier of inside.barriers) barrier.destroy()
+    this._inside = null
+    this._cursorTracker.set_pointer_visible(true)
+    Clutter.get_default_backend().get_default_seat().uninhibit_unfocus()
+    if (this._http) talk(this._http, '/pointer', { out: true })
+    const glasses = this._glassesWindow(), g = glasses?.get_frame_rect()
+    if (g && r) {
+      const clamp = n => Math.min(1, Math.max(0, n)), u = clamp((px - r.x) / r.width), v = clamp((py - r.y) / r.height)
+      const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+      const [topLeft, topRight, bottomRight, bottomLeft] = inside.corners, [mx, my] = lerp(lerp(topLeft, topRight, u), lerp(bottomLeft, bottomRight, u), v)
+      const [ox, oy] = [[-1, 0], [1, 0], [0, -1], [0, 1]][side] ?? [0, 0]
+      this._warp(g.x + clamp(mx + 0.02 * ox) * (g.width - 1), g.y + clamp(my + 0.02 * oy) * (g.height - 1))
+    }
+    this._keepPointerOn()
   }
 
   _onKeymap() {
@@ -337,18 +535,30 @@ export default class VrWorkspace extends Extension {
     this._numLock = on
     if (!on) return this._leave()
     // Num Lock is an ordinary key too: the mouse is taken only while a phone is actually connected.
-    this._talk(null, answer => answer?.phoneOnline && this._numLock && this._http && this._enter())
+    this._talk(null, answer => (answer?.phoneOnline || this._glassesWindow()) && this._numLock && this._http && this._enter())
   }
 
-  _enter() {
-    if (this._catcher) return
-    // The mouse: an actor laid over everything takes the clicks and the wheel that would reach windows and panels.
+  // The mouse: an actor laid over everything takes the clicks and the wheel that would reach windows and panels.
+  _takeMouse() {
     this._catcher = new St.Widget({ reactive: true, x: 0, y: 0, width: global.stage.width, height: global.stage.height })
     Main.layoutManager.uiGroup.add_child(this._catcher)
     this._smooth = 0
     this._catcher.connect('button-press-event', (_actor, event) => this._button(event, true))
     this._catcher.connect('button-release-event', (_actor, event) => this._button(event, false))
     this._catcher.connect('scroll-event', (_actor, event) => this._scroll(event))
+    this._hold()
+  }
+
+  _enter() {
+    if (this._editing) return
+    if (this._catcher) this._leave() // our list had it: the arranging mode closes the list anyway
+    this._editing = true
+    // With a headset on a cable its picture takes the mouse itself, as the phone's screen takes the phone's mouse
+    if (!this._glassesWindow()) this._takeMouse()
+    else {
+      this._out() // the arranging works on the panels, not inside them
+      this._keepPointerOn()
+    }
     // The keys 1-5, top row and number pad: asked from the window manager one by one. Every other key stays with
     // the desktop.
     this._keys = new Map() // what the window manager calls the key -> the digit
@@ -366,7 +576,6 @@ export default class VrWorkspace extends Extension {
       else if (digit) this._talk({ toggle: `m${digit - 1}.hidden` }) // hide or show that monitor
     })
     this._talk({ edit: true })
-    this._hold()
     // Repeated every second: the server ends the mode by itself if this stops, and we end it if the server is gone.
     this._beat = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
       this._hold()
@@ -380,6 +589,7 @@ export default class VrWorkspace extends Extension {
   // stops running, the catcher leaves and the desktop has its mouse again.
   _hold() {
     const catcher = this._catcher
+    if (!catcher) return // a headset on a cable: no catcher
     catcher.remove_transition('leave')
     catcher.translation_x = 0
     // An explicit transition: unlike eased properties it also runs with animations switched off in the system.
@@ -388,18 +598,39 @@ export default class VrWorkspace extends Extension {
     catcher.add_transition('leave', leave)
   }
 
-  _leave() {
+  _leave() { // the arranging mode, or our list: the mouse back to the desktop
+    this._menuSince = 0
+    if (this._editing) {
+      this._editing = false
+      GLib.source_remove(this._beat)
+      global.display.disconnect(this._keyPressed)
+      for (const action of this._keys.keys()) global.display.ungrab_accelerator(action)
+      this._talk({ edit: false })
+    }
     if (!this._catcher) return
-    GLib.source_remove(this._beat)
-    global.display.disconnect(this._keyPressed)
-    for (const action of this._keys.keys()) global.display.ungrab_accelerator(action)
     this._catcher.destroy()
     this._catcher = null
-    this._talk({ edit: false, grab: false })
+    this._talk({ grab: false })
+    this._keepPointerOn()
+  }
+
+  // The Super key while the headset is in use (a phone connected, or the picture of a headset on a cable open): our
+  // list of applications in the sphere, not GNOME's overview, which would show flat on a screen no one looks at. The
+  // mouse is held for the list until the page says it is closed (it says it is open every second, so if the page is
+  // gone the mouse comes back within 3 s). Its left button chooses what is looked at; the right one closes it.
+  _overview(...args) {
+    const inHeadset = this._phoneOnline || global.get_window_actors().some(actor => isGlasses(actor.meta_window))
+    if (!inHeadset || !this._http) return this._toggleOverview.apply(Main.overview, args)
+    this._talk({ menuCall: Date.now() })
+    if (this._glassesWindow()) return this._out() // on a cable the headset's picture takes the mouse itself (its pointer out of any window, for the list)
+    if (this._catcher) return // the arranging mode has it (and closes the list), or the list has it already
+    this._takeMouse()
+    this._menuSince = Date.now()
   }
 
   _button(event, pressed) {
     if (event.get_button() === Clutter.BUTTON_PRIMARY) this._talk({ grab: pressed })
+    else if (event.get_button() === Clutter.BUTTON_SECONDARY && pressed && this._menuSince) this._talk({ menuCall: Date.now() }) // closes our list
     return Clutter.EVENT_STOP
   }
 

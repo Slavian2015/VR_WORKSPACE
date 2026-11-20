@@ -26,9 +26,10 @@
   <li>Нажмите на клавиатуре каждую клавишу и сочетание из списка внизу.</li>
 </ol>
 <p id="sent" role="status">Пока ничего не пришло.</p>
-<table id="facts"></table>
+<!-- the keys before the table: the table grows, and the page does not scroll (touch-action: none, for the drags) -->
 <p>Клавиши и сочетания, которые дошли до страницы:</p>
 <p id="keys"></p>
+<table id="facts"></table>
 <div id="dot"></div>
 <script type="module">
   const $ = id => document.getElementById(id)

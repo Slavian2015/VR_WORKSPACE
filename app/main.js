@@ -1,14 +1,27 @@
 // Phone page: draws both eyes in one pass. Every screen pixel is turned into a view ray through the lens,
 // so lens correction costs nothing and the desktop text is sampled only once (no blur from a second pass).
 import * as THREE from 'three'
-import { LAYOUT_SPEC, MONITOR_SPEC, placeIcon, resizeWindow, setParams, snapPanel, watchParams } from './params.js'
+import { KEYCODES, LAYOUT_SPEC, MONITOR_SPEC, placeIcon, resizeWindow, setParams, snapPanel, watchParams } from './params.js'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './orient.js'
 
 const DEG = Math.PI / 180
 // index.html?spectator on the PC: one flat picture of what the headset wearer looks at, to watch or to record.
 // The same shader with lens separation and lens distortion set to zero is an ordinary camera. A number sets the
 // width of the view in degrees: ?spectator=100.
+// index.html?glasses: the picture of a headset on a cable (two displays side by side, a monitor to the PC), drawn
+// here on the PC. It is the headset, as the phone page is with a phone: its list, its arranging, the windows. Only
+// the head's turn comes from elsewhere, pushed by the server: for now the phone's, which then only senses. Always
+// stereo, the left half of the window for the left eye, each eye seeing a flat screen glassesFov across its diagonal.
+// The PC's own mouse works over it as the phone's mouse does over the phone (its own pointer hidden here, ours drawn
+// in the sphere), and inside a monitor or window when ours goes onto it (the extension puts the real one there).
+// Its camera is this PC's webcam for now. The extension finds this window by its title.
+const GLASSES = new URLSearchParams(location.search).has('glasses')
+if (GLASSES) {
+  document.title = 'VR Workspace — glasses'
+  document.documentElement.style.cursor = 'none'
+}
 const SPECTATOR = new URLSearchParams(location.search).has('spectator')
+const sensorOnly = () => !!settings?.glasses && !GLASSES && !SPECTATOR // the phone while a headset on a cable is the headset: it gives the head's turn, nothing more
 const SPECTATOR_FOV = (+new URLSearchParams(location.search).get('spectator') || 90) * DEG
 const WIDTH_AT = 1.5 // metres: a monitor's width in degrees is what it takes up at this distance
 
@@ -36,7 +49,7 @@ const clockCanvas = Object.assign(document.createElement('canvas'), { width: 640
 const noteCanvas = Object.assign(document.createElement('canvas'), { width: 1000, height: 220 }) // a notification of the PC
 // Those three go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
 // shader 16 pictures, and each panel takes one.
-const SHEETS = { pick: [0, 0], clock: [0, 640], note: [0, 870] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 1090 })
+const SHEETS = { pick: [0, 0], clock: [0, 640], note: [0, 870], arrow: [1000, 870] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 1090 })
 const sheetsTexture = new THREE.CanvasTexture(sheets)
 for (const sheet of [menuTexture, sheetsTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
 function toSheets(canvas, [x, y]) { // a sheet drawn anew: into its place
@@ -44,6 +57,21 @@ function toSheets(canvas, [x, y]) { // a sheet drawn anew: into its place
   c.clearRect(x, y, canvas.width, canvas.height)
   c.drawImage(canvas, x, y)
   sheetsTexture.needsUpdate = true
+}
+// Our pointer where it is not in a window (the list, arranging; on a cable everywhere), and in a window until the PC
+// has told its shape: the usual arrow, white with a black edge, drawn twice as large as it shows, its tip at (3, 3).
+const arrowCanvas = Object.assign(document.createElement('canvas'), { width: 32, height: 48 })
+{
+  const c = arrowCanvas.getContext('2d')
+  c.translate(3, 3)
+  c.scale(2, 2)
+  c.beginPath()
+  for (const [x, y] of [[0, 0], [0, 17], [4, 13], [7, 20], [9.5, 19], [6.5, 12], [12, 12]]) c.lineTo(x, y)
+  c.closePath()
+  Object.assign(c, { lineJoin: 'round', lineWidth: 2, strokeStyle: '#000', fillStyle: '#fff' })
+  c.stroke()
+  c.fill()
+  toSheets(arrowCanvas, SHEETS.arrow)
 }
 // Where a sheet is in that picture, for the shader: its corner and size, 0..1 from the top left
 const region = (canvas, [x, y]) => [x / sheets.width, y / sheets.height, canvas.width / sheets.width, canvas.height / sheets.height].map(n => n.toFixed(6)).join(', ')
@@ -71,10 +99,10 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
     uSize: { value: screens.map(() => new THREE.Vector4()) },
     uCrop: { value: screens.map(() => new THREE.Vector4(0, 0, 1, 1)) },
     uPopups: { value: Array.from({ length: count * 3 }, () => new THREE.Vector4()) },
-    uGlow: { value: screens.map(() => new THREE.Vector4()) }, uLook: { value: screens.map(() => new THREE.Vector2(0, 1)) },
+    uGlow: { value: screens.map(() => new THREE.Vector4()) }, uLook: { value: screens.map(() => new THREE.Vector3(0, 1, 0)) },
     uGlowColor: { value: new THREE.Color() }, uGlowColor2: { value: new THREE.Color() }, uTime: { value: 0 }, uSharp: { value: new THREE.Vector2(1, 0) },
     uPointer: { value: new THREE.Vector3(-1, 0, 0) }, uPointerPx: { value: new THREE.Vector2(1, 1) },
-    uRay: { value: new THREE.Vector3(0, 0, -1) }, uRayOn: { value: 0 },
+    uRay: { value: new THREE.Vector3(0, 0, -1) }, uRayOn: { value: 0 }, uArrowPx: { value: 1 },
     uMenu: { value: menuTexture }, uMenuOn: { value: 0 }, uToMenu: { value: new THREE.Matrix3() }, uMenuPlace: { value: new THREE.Vector4() },
     uMenuSize: { value: new THREE.Vector2(1, 1) }, uMenuLit: { value: new THREE.Vector4(0, 0, -1, -1) }, uMenuDrag: { value: new THREE.Vector4(-1, 0, 0, 0) },
     uMenuAt: { value: new THREE.Vector2() },
@@ -99,7 +127,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       uniform vec4 uCrop[${count}];              // the part of the video that is the picture: corner and size, 0..1 (a single window sits in a corner of its video)
       uniform vec4 uPopups[${count * 3}];        // three for each: a single window's open menus where they reach out of it, as corners in its 0..1 (0: none)
       uniform vec4 uGlow[${count}];              // which sides of it glow: left, right, top, bottom as 0 or 1
-      uniform vec2 uLook[${count}];              // how strongly they glow (0: not at all); how much of the panel shows (it fades in)` : ''}
+      uniform vec3 uLook[${count}];              // how strongly they glow (0: not at all); how much of the panel shows (it fades in); 1: no picture yet` : ''}
       uniform vec3 uGlowColor, uGlowColor2;      // the glow drifts between these two
       uniform vec2 uSharp;                       // text sharpening: how much smaller a footprint picks the mipmap level (1: none); how much of the edges is added back
       uniform float uTime;                       // s
@@ -107,6 +135,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       uniform vec2 uPointerPx;                   // that window's size in its own pixels
       uniform vec3 uRay;                         // our pointer as a direction in head space (the list, arranging)
       uniform float uRayOn;
+      uniform float uArrowPx;                    // our arrow's picture: its pixels per radian of view
       // Sheets hung around the viewer: the list of applications (fixed in the room), the backgrounds and the clock
       // (below and above wherever one looks). Place: pixels per radian, the height of its middle (rad), that middle
       // on the sheet (px). Lit: a rectangle of the sheet that is lit (px; none when its corners are the wrong way).
@@ -151,6 +180,10 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
         vec2 uv = at / size;
         return uv == clamp(uv, 0.0, 1.0) ? textureLod(tex, vec2(region.x + uv.x * region.z, 1.0 - region.y - uv.y * region.w), 0.0) : vec4(0.0);
       }
+      vec4 arrow(vec2 px) { // our arrow (SHEETS.arrow) at px of its picture, from the top left; nothing beside it
+        return px == clamp(px, vec2(0.0), vec2(${arrowCanvas.width}.0, ${arrowCanvas.height}.0))
+          ? textureLod(uSheets, vec2(${SHEETS.arrow[0]}.0 + px.x, ${sheets.height - SHEETS.arrow[1]}.0 - px.y) / vec2(${sheets.width}.0, ${sheets.height}.0), 0.0) : vec4(0.0);
+      }
 
       vec3 background(vec3 dir) {
         vec3 sky = uToBg * dir;
@@ -165,6 +198,27 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
           color = mix(color, seen, inFrame * smoothstep(uCamBelow + 0.04, uCamBelow - 0.04, sky.y));
         }
         return color;
+      }
+
+      // A panel whose picture has not come yet (an application just started) is glass: what is behind it, frosted (a
+      // small copy of the background), with a pale outline of a window on it (title bar, lines of text) that breathes,
+      // a soft light passing over it, and a bright edge. uv: 0..1 on the panel; aa: a screen pixel in panel widths.
+      vec3 glass(vec3 dir, vec2 uv, float aspect, float aa, vec2 edgePx) {
+        vec3 sky = uToBg * dir;
+        vec3 c = textureLod(uBg, vec2(atan(sky.x, -sky.z) / 6.2831853 + 0.5, asin(clamp(sky.y, -1.0, 1.0)) / 3.1415927 + 0.5), max(uBgLook.y, 5.0)).rgb * (1.0 - uBgLook.x);
+        c = mix(c, vec3(1.0), 0.07);
+        vec2 q = vec2(uv.x, (1.0 - uv.y) * aspect); // in panel widths, from its top left
+        float outline = 1.0 - smoothstep(-aa, aa, q.y - 0.12 * aspect);
+        const float lengths[5] = float[5](0.62, 0.8, 0.48, 0.72, 0.55);
+        for (int i = 0; i < 5; i++) { // the lines: rounded bars
+          float r = 0.0275 * aspect, y = (0.27 + float(i) * 0.13) * aspect + r, x0 = 0.07 + r, x1 = 0.07 + 0.86 * lengths[i] - r;
+          float d = length(vec2(max(abs(q.x - 0.5 * (x0 + x1)) - 0.5 * (x1 - x0), 0.0), q.y - y)) - r;
+          outline = max(outline, 1.0 - smoothstep(-aa, aa, d));
+        }
+        c = mix(c, vec3(1.0), outline * (0.1 + 0.04 * sin(uTime * 2.2)));
+        float pass = fract(uTime / 1.9) * (1.6 + 0.5 * aspect) - 0.3; // the light, slanted, across in 1.9 s
+        c = mix(c, vec3(1.0), 0.14 * exp(-pow((q.x + 0.5 * q.y - pass) / 0.12, 2.0)));
+        return mix(c, vec3(1.0), 0.18 * (1.0 - smoothstep(0.5, 1.5, min(edgePx.x, edgePx.y))));
       }
 
       void main() {
@@ -211,7 +265,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
             color *= 1.0 - 0.5 * strength * exp(-off / 0.03);
             color = mix(color, glowTint(uv), strength * exp(-off / 0.01));
           }
-          vec2 edge = min(uv, 1.0 - uv) / fwidth(uv);
+          vec2 fw = fwidth(uv), edge = min(uv, 1.0 - uv) / fw;
           float inside = clamp(min(edge.x, edge.y), 0.0, 1.0), menu = 0.0; // 1 px soft edge; menu: an open menu of the window is here
           for (int j = ${i * 3}; j < ${i * 3 + 3}; j++) { // and the window's menus: the video has them also where they reach out of it
             vec2 e = min(uv - uPopups[j].xy, uPopups[j].zw - uv) / fwidth(uv);
@@ -241,6 +295,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
               picture.b = textureGrad(uMonitor[${i}], at + shift, gx, gy).b;
             }
             picture = clamp(picture + sharper, 0.0, 1.0);
+            if (uLook[${i}].z > 0.0) picture = glass(dir, uv, uSize[${i}].y, fw.x, edge); // no picture yet
             // The glowing sides also light the panel's own rim, a few tenths of a degree in: clearly which side it is.
             vec4 into = vec4(uv.x, 1.0 - uv.x, 1.0 - uv.y, uv.y) * vec4(width, width, width * uSize[${i}].y, width * uSize[${i}].y) / away;
             float rim = min(min(mix(1.0, into.x, uGlow[${i}].x), mix(1.0, into.y, uGlow[${i}].y)), min(mix(1.0, into.z, uGlow[${i}].z), mix(1.0, into.w, uGlow[${i}].w)));
@@ -253,8 +308,8 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
                 vec4 shape = textureLod(uHud, vec2(px.x, vec2(textureSize(uHud, 0)).y - px.y) / vec2(textureSize(uHud, 0)), 0.0);
                 picture = mix(picture, shape.rgb, shape.a);
               } else if (uCursorBox.x == 0.0) {
-                float off = length((uv - uPointer.yz) * uPointerPx);
-                if (off < 9.0) picture = off < 6.5 ? vec3(1.0) : vec3(0.0);
+                vec4 a = arrow((uv - uPointer.yz) * vec2(1.0, -1.0) * uPointerPx * 2.0 + 3.0);
+                picture = mix(picture, a.rgb, a.a);
               }
             }
             color = mix(color, picture, inside * uLook[${i}].y);
@@ -290,9 +345,10 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
             color = mix(color, icon.rgb, icon.a);
           }
         }
-        if (uRayOn > 0.0) { // our pointer as a dot in the view
-          float off = degrees(acos(clamp(dot(toward, uRay), -1.0, 1.0)));
-          if (off < 0.5) color = off < 0.36 ? vec3(1.0) : vec3(0.0);
+        if (uRayOn > 0.0 && dot(toward, uRay) > 0.5) { // our pointer: the arrow, its tip where it points, as large as on the PC
+          vec3 right = normalize(cross(uRay, vec3(0.0, 1.0, 0.0))), down = cross(uRay, right);
+          vec4 a = arrow(vec2(dot(toward, right), dot(toward, down)) / dot(toward, uRay) * uArrowPx + 3.0);
+          color = mix(color, a.rgb, a.a);
         }
         gl_FragColor = vec4(color, 1.0);
       }`,
@@ -365,7 +421,7 @@ addEventListener('deviceorientation', e => {
 // Preview on a PC without sensors: drag to look around.
 let dragYaw = 0, dragPitch = 0
 addEventListener('pointermove', e => {
-  if (!e.buttons || sensorSeen || SPECTATOR || settings?.monitors[looked]?.window) return // over a single window the mouse works in it
+  if (!e.buttons || sensorSeen || SPECTATOR || GLASSES || settings?.monitors[looked]?.window) return // over a single window the mouse works in it
   dragYaw += e.movementX * 0.003
   dragPitch = THREE.MathUtils.clamp(dragPitch + e.movementY * 0.003, -1.5, 1.5)
   head.setFromEuler(new THREE.Euler(dragPitch, dragYaw, 0, 'YXZ'))
@@ -390,22 +446,22 @@ function arrange(p) {
     if (p[key] === value || Date.now() - when > 1000) delete pending[key]
     else p[key] = value
   }
-  if (!p.edit || SPECTATOR) { // not arranging: nothing stays in hand; a window being resized keeps the size it got
+  if (!p.edit || SPECTATOR || sensorOnly()) { // not arranging: nothing stays in hand; a window being resized keeps the size it got
     if (resizing) endResize(p)
     held = undefined
     return void (wheelSeen = undefined)
   }
+  // Coming in: our pointer to the middle of the view, for the PC's mouse, which points with the gaze (the panel under
+  // our pointer is found in the drawing loop, so it must be there before the first press). The phone's mouse moves it.
+  if (wheelSeen === undefined && !GLASSES) Object.assign(mouse, { x: 0.5, y: 0.5 }) // (on a cable the PC's mouse is our pointer itself)
   if (menu.open) closeMenu() // its clicks are the arranging's now
   const id = p.monitors[held ? held.i : looked]?.id
   const wheel = [p.wheelSize, p.wheelCurve, p.wheelDist], was = wheelSeen ?? wheel
   wheelSeen = wheel
+  if (pick.fade > 0.5) return void (wheel[0] !== was[0] && pickWheel(wheel[0] - was[0])) // looking down: the wheel turns the backgrounds' pages
   if (id && wheel[0] !== was[0]) change(p, { [`${id}.span`]: clamp(p[`${id}.span`] + 2 * (wheel[0] - was[0]), MONITOR_SPEC.span) })
   if (id && wheel[1] !== was[1]) change(p, { [`${id}.curve`]: clamp(p[`${id}.curve`] + 5 * (wheel[1] - was[1]), MONITOR_SPEC.curve) })
   if (id && wheel[2] !== was[2]) change(p, { [`${id}.dist`]: clamp(Math.round((p[`${id}.dist`] + 0.1 * (wheel[2] - was[2])) * 10) / 10, MONITOR_SPEC.dist) })
-  if (p.grab && !held && id) {
-    const gaze = gazeInLayout(anchor, head)
-    held = { i: looked, dYaw: p[`${id}.yaw`] - gaze.yaw, dPitch: p[`${id}.pitch`] - gaze.pitch, yaw: p[`${id}.yaw`], pitch: p[`${id}.pitch`] }
-  } else if (!p.grab && held && !held.mouse) putDown()
 }
 
 function putDown() { // the panel in hand stays where it was drawn to
@@ -493,10 +549,10 @@ watchParams(p => {
   // opens where the user is looking, as large as makes one of its pixels one pixel of the phone screen there: its
   // text as sharp as it can be (the picture arrives as sharp as on the PC). (Windows that were there when the page
   // started keep their places.)
-  const pxPerDegree = renderer.domElement.width / p.screenW * p.lensDist * DEG // the phone screen's, in the middle of an eye's view
+  const perDegree = pxPerDegree(p)
   for (const m of p.monitors) {
     const { id, window, over, crop } = m
-    if (!window || monitorIds === undefined || monitorIds.split(',').includes(key(m)) || !tapped || SPECTATOR || document.hidden) continue
+    if (!window || monitorIds === undefined || monitorIds.split(',').includes(key(m)) || !tapped || SPECTATOR || sensorOnly() || document.hidden) continue
     const parent = p.monitors.find(o => o.id === over), started = Date.now() - (launchSpot?.at ?? 0) < 20000
     const gaze = parent ? { yaw: p[`${over}.yaw`], pitch: p[`${over}.pitch`] } : started ? launchSpot : gazeInLayout(anchor, head)
     if (!parent && started) launchSpot = undefined
@@ -504,7 +560,7 @@ watchParams(p => {
       [`${id}.yaw`]: Math.round(gaze.yaw), [`${id}.pitch`]: Math.round(clamp(gaze.pitch, MONITOR_SPEC.pitch)),
       // (at most 120 degrees wide: a file chooser as large as the screen, over a small window, would go round the viewer)
       ...parent ? { [`${id}.dist`]: p[`${over}.dist`], [`${id}.curve`]: p[`${over}.curve`], [`${id}.span`]: Math.round(Math.min(120, clamp(p[`${over}.span`] * crop[2] / parent.crop[2], MONITOR_SPEC.span))) }
-        : { [`${id}.span`]: Math.round(Math.min(120, clamp(crop[2] / pxPerDegree * p[`${id}.dist`] / WIDTH_AT, MONITOR_SPEC.span))) },
+        : { [`${id}.span`]: Math.round(Math.min(120, clamp(crop[2] / perDegree * p[`${id}.dist`] / WIDTH_AT, MONITOR_SPEC.span))) },
     })
   }
   // A window just resized from the headset: its panel takes the size the PC really gave it (an application has a
@@ -520,9 +576,12 @@ watchParams(p => {
   monitorIds = ids
   if (recenterSeen !== undefined && p.recenter !== recenterSeen) centring = 'gaze'
   recenterSeen = p.recenter
+  byKeys(p)
   arrange(p)
   settings = p
-  if (SPECTATOR) { // a plain camera: the screen is as wide as the wanted view at this distance; the rest stays zero
+  if (GLASSES) {
+    // their eyes are set up in every frame, from the window's size (see the drawing loop)
+  } else if (SPECTATOR) { // a plain camera: the screen is as wide as the wanted view at this distance; the rest stays zero
     uniforms.uLensDist.value = p.screenW / 2 / Math.tan(SPECTATOR_FOV / 2)
   } else {
     uniforms.uIpd.value = p.ipd
@@ -551,14 +610,15 @@ renderer.setAnimationLoop(now => {
   const dt = Math.min(0.1, (now - frameAt) / 1000)
   // The spectator glides toward the headset's direction, the same over time whatever the frame rate, a quarter of a
   // second behind: the phone's readings come over Wi-Fi in bursts, and a head-worn view shakes on a flat screen.
-  if (SPECTATOR) head.slerp(poseTarget, 1 - Math.exp(-Math.min(now - frameAt, 100) / 250))
-  else if (centring) Object.assign(anchor, gazeOf(head))
+  if (SPECTATOR || GLASSES) head.slerp(poseTarget, 1 - Math.exp(-Math.min(now - frameAt, 100) / (GLASSES ? 40 : 250))) // glasses: worn, any lag is felt
+  if (!SPECTATOR && centring) Object.assign(anchor, gazeOf(head))
   frameAt = now
   if (centring === 'heading') anchor.pitch = 0
   centring = null
   // The panorama keeps its horizon; it turns with the heading of the anchor and with the user's own offset.
   toMatrix3(uniforms.uToBg.value, rotation.setFromAxisAngle(Y, settings.bgYaw * DEG - anchor.yaw).multiply(head))
   uniforms.uTime.value = now / 1000
+  uniforms.uArrowPx.value = 2 * pxPerDegree(settings) / DEG // one of the arrow's pixels on one of the screen's
   const gaze = gazeOf(head)
   toMatrix3(uniforms.uToYaw.value, rotation.setFromAxisAngle(Y, -gaze.yaw).multiply(head)) // what stays below and above wherever one looks
   if (held) { // the panel in hand goes where the head looks (taken with the phone's mouse: where its pointer is), keeping the offset it was taken with
@@ -577,16 +637,18 @@ renderer.setAnimationLoop(now => {
   rayDir.copy(aim())
   settings.monitors.forEach((m, i) => {
     const { id, crop } = m
-    const mine = held?.i === i ? held.snap ?? held : resizing?.i === i ? resizing : null // where the panel in hand, or being resized, is drawn
+    const mine = SPECTATOR ? (moving?.i === i ? moving : null) : held?.i === i ? held.snap ?? held : resizing?.i === i ? resizing : null // where the panel in hand, or being resized, is drawn (the spectator: as the phone has it)
+    const sized = SPECTATOR ? (moving?.i === i && moving.span ? moving : null) : resizing?.i === i ? { span: resizing.span, aspect: resizing.h / resizing.w } : null
     monitorFrame(anchor, mine ? mine.yaw : settings[`${id}.yaw`], mine ? mine.pitch : settings[`${id}.pitch`], rotation).invert().multiply(head)
     toMatrix3(uniforms.uToMonitor.value[i], rotation)
     const { videoWidth, videoHeight } = screens[i].video
     // A panel that has just come fades in, growing a little.
     const shown = Math.min(1, (now - (appeared[`${id}:${m.source ?? ''}`] ??= now)) / 300), grow = shown * shown * (3 - 2 * shown)
     uniforms.uLook.value[i].y = grow
+    uniforms.uLook.value[i].z = screens[i].video.readyState < 2 ? 1 : 0 // HAVE_CURRENT_DATA: a frame to show
     // "Hide all monitors" leaves single windows (crop) in place: that is how to work with windows alone.
-    const span = (settings.hideMonitors && !crop) || settings[`${id}.hidden`] ? 0 : (resizing?.i === i ? resizing.span : settings[`${id}.span`]) * DEG * (0.9 + 0.1 * grow)
-    const aspect = resizing?.i === i ? resizing.h / resizing.w : crop ? crop[3] / crop[2] : videoWidth ? videoHeight / videoWidth : 9 / 16
+    const span = (settings.hideMonitors && !crop) || settings[`${id}.hidden`] ? 0 : (sized ? sized.span : settings[`${id}.span`]) * DEG * (0.9 + 0.1 * grow)
+    const aspect = sized ? sized.aspect : crop ? crop[3] / crop[2] : videoWidth ? videoHeight / videoWidth : 9 / 16
     spans[i] = span / DEG * WIDTH_AT / settings[`${id}.dist`]
     aspects[i] = aspect
     // A single window is cut out of its video: [left, top, width, height] in pixels, top down; the video's v runs up.
@@ -612,8 +674,8 @@ renderer.setAnimationLoop(now => {
     const [x0, y0, x1, y1] = crop ? reach(m).map((d, k) => d / crop[2 + k % 2]) : [0, 0, 1, 1] // a window with its open menus
     // The panels come in the order they are drawn: of those under the centre of the view, the last is on top.
     if (span && u >= x0 && u <= x1 && v >= y0 && v <= y1) looked = i
-    if (!settings.edit || !span) return
-    // While arranging: the panel under our pointer, and whether that is at a side or corner of a window (1.5 degrees deep).
+    if ((!settings.edit && !GLASSES) || !span) return
+    // While arranging (and on a cable always): the panel under our pointer, and whether that is at a side or corner of a window (1.5 degrees deep).
     const ray = rayHere.copy(rayDir).applyQuaternion(rotation)
     const pu = 0.5 + Math.atan2(ray.x, -ray.z) / (2 * halfWidth), pv = 0.5 - Math.asin(ray.y) / (2 * halfWidth * aspect)
     if (pu < 0 || pu > 1 || pv < 0 || pv > 1) return
@@ -635,7 +697,7 @@ renderer.setAnimationLoop(now => {
   uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
   uniforms.uPickOn.value = ease(pick.fade)
   uniforms.uClockOn.value = ease(clock.fade)
-  if (!SPECTATOR) { // the spectator must not open the PC's own webcam
+  if (!SPECTATOR) { // the spectator must not open the PC's own webcam (a headset on a cable takes it for its own)
     // `lowest` is how low the camera picture would reach at this tilt of the head. The camera is opened 5 degrees
     // before that reaches the look-down window, to be ready in time, and closed 2 s after it is 8 degrees clear.
     const aspect = phoneCam?.video?.videoWidth ? phoneCam.video.videoHeight / phoneCam.video.videoWidth : 0.5625
@@ -655,6 +717,13 @@ renderer.setAnimationLoop(now => {
   const canvas = renderer.domElement
   uniforms.uRes.value.set(canvas.width, canvas.height)
   uniforms.uPxPerMm.value = canvas.width / settings.screenW
+  if (GLASSES) { // a plain camera for each eye, on its half of the window
+    const eye = canvas.width / 2, half = Math.tan(settings.glassesFov * DEG / 2) / Math.hypot(1, canvas.height / eye) // the tangent of half the width, from the diagonal
+    // The shader's lengths ("mm") are here such that the middles of the two halves are ipd apart.
+    uniforms.uIpd.value = settings.ipd
+    uniforms.uPxPerMm.value = eye / settings.ipd
+    uniforms.uLensDist.value = settings.ipd / 2 / half
+  }
   renderer.render(scene, camera)
 })
 
@@ -671,8 +740,8 @@ renderer.setAnimationLoop(now => {
 const mouse = { x: 0.5, y: 0.5 } // where the system's pointer is on the phone screen, 0..1 from the top left
 const ROOM = 0.08 // the top and the bottom of the phone screen left out, of its height (as the frame around windows once was)
 let orders = [], sendingOrders = false, pointedAt, pressedIn, wheelRest = 0, clickedAt = 0
-const working = () => tapped && !SPECTATOR && !settings.edit
-const windowLooked = () => working() && settings.monitors[looked]?.window ? settings.monitors[looked] : undefined
+const working = () => tapped && !SPECTATOR && !sensorOnly() && !settings.edit
+const windowLooked = () => working() && !GLASSES && settings.monitors[looked]?.window ? settings.monitors[looked] : undefined // (on a cable: inside it, see glassesPointer)
 const only = (what, ...keys) => Object.keys(what).every(key => keys.includes(key))
 function order(what) { // a movement replaces a movement that still waits; presses and the wheel are never dropped
   const last = orders.at(-1)
@@ -700,16 +769,35 @@ const place = target => {
 // pointer crosses the phone (the phone's own round pointer, seen by one eye at a time, is no longer where ours is).
 const aimed = new THREE.Vector3(), aimTurn = new THREE.Quaternion(), FORWARD = new THREE.Vector3(0, 0, -1)
 function aim() {
+  if (GLASSES) {
+    const [h, v] = glassesTan()
+    return aimed.set((mouse.x - 0.5) * 2 * h, (0.5 - mouse.y) * 2 * v, -1).normalize()
+  }
   const mm = settings.screenW / innerWidth
   const x = (mouse.x - 0.5) * innerWidth / 2 * mm / settings.lensDist, y = ((0.5 - mouse.y) * innerHeight * mm - settings.cy) / settings.lensDist
   const r2 = x * x + y * y, more = 1 + settings.k1 * r2 + settings.k2 * r2 * r2
   return aimed.set(x * more, y * more, -1).normalize()
 }
+// A headset on a cable: the tangents of half one eye's view across and up (glassesFov is its diagonal)
+// Pixels of the screen per degree of view in the middle of an eye's view: the phone's screen behind its lens, or the
+// flat screen of each of the glasses’ eyes (with the phone’s lens settings the glasses’ windows came 2.4 times too large)
+function pxPerDegree(p) {
+  return GLASSES ? renderer.domElement.width / 4 / glassesTan(p)[0] * DEG : renderer.domElement.width / p.screenW * p.lensDist * DEG
+}
+function glassesTan(p = settings) {
+  const eye = innerWidth / 2, across = Math.tan(p.glassesFov * DEG / 2) / Math.hypot(1, innerHeight / eye)
+  return [across, across * innerHeight / eye]
+}
 const pointerInLayout = () => gazeInLayout(anchor, aimTurn.setFromUnitVectors(FORWARD, aim()).premultiply(head)) // as the gaze, for the pointer
 function point(dt) { // every frame: the list of applications, or our pointer on the window looked at; and what is owed to the PC
   menu.fade = Math.max(0, Math.min(1, menu.fade + (menu.open ? dt : -dt) / 0.18)) // it comes and goes in a fifth of a second
+  if (menu.open && !SPECTATOR && performance.now() - (menu.told ?? 0) > 1000) { // still open: else the extension lets the mouse go after 3 s
+    menu.told = performance.now()
+    setParams({ menuOpen: true })
+  }
   uniforms.uMenuOn.value = menu.fade * menu.fade * (3 - 2 * menu.fade)
   if (menu.fade > 0) showMenu()
+  if (GLASSES) return glassesPointer()
   const target = menu.open ? undefined : windowLooked()
   const at = target && place(target)
   if (SPECTATOR) { // where the phone has our pointer: its panel and place, sent with the head's direction
@@ -731,10 +819,61 @@ function point(dt) { // every frame: the list of applications, or our pointer on
   fetch('/input', { method: 'POST', body: JSON.stringify(orders.splice(0)) }).catch(() => {}).finally(() => sendingOrders = false)
 }
 addEventListener('pointermove', e => Object.assign(mouse, { x: e.clientX / innerWidth, y: e.clientY / innerHeight, moved: true }))
+
+// --- a headset on a cable: the PC's mouse. Over this window it is our pointer, drawn in the sphere at once, for the
+// list, the arranging, the backgrounds and empty space. When it goes onto a monitor or a window (not while arranging
+// or in the list), the extension is asked to put the real pointer there, at that place, and keeps it inside: the
+// mouse and the keyboard then work there directly, and the extension tells where the pointer is, which is drawn
+// here, at once (not in the picture, a tenth of a second late). Pushed past a side, it comes back here at that side
+// (the panel's corners on this window go with the asking, and while inside).
+let poseSeen = false, inside = null, askedAt = 0 // inside: { id: the panel, u, v } while the real pointer works in it
+function glassesPointer() {
+  uniforms.uRayOn.value = inside ? 0 : 1
+  uniforms.uRay.value.copy(aim())
+  const i = inside ? settings.monitors.findIndex(m => m.id === inside.id) : -1, m = settings.monitors[i]
+  uniforms.uPointer.value.set(i, inside?.u ?? 0, 1 - (inside?.v ?? 0))
+  if (m) uniforms.uPointerPx.value.set(...(m.crop ? m.crop.slice(2) : [screens[i].video.videoWidth || 1920, screens[i].video.videoHeight || 1080]))
+  const over = inside ? i : !settings.edit && !menu.open ? pointed.i : -1, panel = settings.monitors[over]
+  if (!panel || performance.now() - askedAt < 50) return
+  askedAt = performance.now()
+  // inside: only the corners, u -1 (never taken for going in: the extension may have come out before we know it)
+  setParams({ enter: { id: panel.id, source: panel.source ?? 0, connector: panel.connector ?? '', u: inside ? -1 : pointed.u, v: inside ? -1 : pointed.v, corners: panelCorners(over) } })
+}
+// Where the corners of panel i are on this window (top left, top right, bottom right, bottom left), as our pointer's
+// place there (0..1 from the top left): a plain camera's view of the panel's surface, flat or bent.
+const cornerTurn = new THREE.Quaternion(), headBack = new THREE.Quaternion(), corner = new THREE.Vector3()
+function panelCorners(i) {
+  const { id } = settings.monitors[i], away = settings[`${id}.dist`], bend = settings[`${id}.curve`] / 100
+  const width = WIDTH_AT * settings[`${id}.span`] * DEG, height = width * aspects[i], [h, v] = glassesTan()
+  monitorFrame(anchor, settings[`${id}.yaw`], settings[`${id}.pitch`], cornerTurn)
+  headBack.copy(head).invert()
+  return [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([sx, sy]) => {
+    const along = sx * width / 2, r = away / Math.max(bend, 1e-6)
+    if (bend < 0.01) corner.set(along, sy * height / 2, -away)
+    else corner.set(r * Math.sin(along / r), sy * height / 2, (r - away) - r * Math.cos(along / r))
+    corner.applyQuaternion(cornerTurn).applyQuaternion(headBack)
+    const ahead = Math.max(-corner.z, 1e-3) // behind the eyes: as far out as it goes
+    return [0.5 + corner.x / ahead / (2 * h), 0.5 - corner.y / ahead / (2 * v)].map(n => Math.round(n * 1e4) / 1e4)
+  })
+}
+if (GLASSES) { // the head's turn and the real pointer inside a monitor or window, as the server has them
+  const live = new EventSource('/live?glasses')
+  live.addEventListener('pose', e => {
+    poseTarget.fromArray(JSON.parse(e.data)) // the first four: the head
+    if (poseSeen) return
+    poseSeen = true
+    head.copy(poseTarget)
+    centring = 'heading' // the first reading: straight ahead is where the head looks now, level
+  })
+  live.addEventListener('pointer', e => {
+    const told = JSON.parse(e.data)
+    inside = told.out ? null : told
+  })
+}
 // A press and the wheel carry the place they are meant for: the PC has one pointer, and it may have been moved by
 // the PC's own mouse since our last movement.
 function press(e, down) {
-  if (!tapped || !settings || SPECTATOR) return
+  if (!tapped || !settings || SPECTATOR || sensorOnly()) return
   clickedAt = performance.now()
   const left = e.pointerType !== 'mouse' || e.button === 0 // a drag with the button held reaches the page as a finger: the left button
   if (settings.edit) return editPress(e, down, left)
@@ -747,19 +886,50 @@ function press(e, down) {
 for (const type of ['pointerdown', 'pointerup', 'pointercancel']) addEventListener(type, e => press(e, type === 'pointerdown'))
 addEventListener('contextmenu', e => tapped && e.preventDefault()) // the right button belongs to the window, or opens our list
 addEventListener('wheel', e => {
-  if (!tapped || !settings || SPECTATOR || menu.open) return // the list of applications is looked through by turning the head
+  if (!tapped || !settings || SPECTATOR || sensorOnly() || menu.open) return // the list of applications is looked through by turning the head
   // The phone gives the wheel in pixels, 29 to a click on the iPhone, late and in bursts. For a window: clicks of
   // 25 px. For a panel's size while arranging: a degree for every 10 px, so that a burst is a glide and not a jump.
   const step = settings.edit ? 10 : 25
   wheelRest += e.deltaY
-  const clicks = Math.trunc(wheelRest / step)
+  let clicks = Math.trunc(wheelRest / step)
   if (!clicks) return
   wheelRest -= clicks * step
+  if (GLASSES) clicks = -clicks // a PC's mouse: away from you is up, bigger, the page before
   // Signs: the iPhone reports the wheel as a finger pushing the page ("natural scrolling"), the other way than a PC.
   if (settings.edit) return editWheel(clicks)
   const target = windowLooked()
   if (target) order({ ...place(target), wheel: Math.max(-10, Math.min(10, -clicks)) })
 }, { passive: true })
+
+// --- the phone's keyboard (Bluetooth, or a receiver in its port): into the window that gets the PC's keyboard (lit
+// with focusGlow), else into the one looked at, which the PC then brings to the front. Holding a key repeats it on
+// the PC, as there, so the phone's repeats are not sent. Not Num Lock: on the PC it is the arranging mode, and in
+// that mode no key is sent, so the phone could switch it on and not off again.
+const keysDown = new Map() // code -> the window it went to, so that its release goes there too
+addEventListener('keydown', e => {
+  const key = e.code !== 'NumLock' && KEYCODES[e.code], target = key && settings && working() && !GLASSES && (settings.monitors.find(m => m.window && m.focused) ?? windowLooked())
+  if (!target) return
+  e.preventDefault() // Space, Tab and the arrows would scroll the page or move its focus
+  if (e.repeat || keysDown.has(e.code)) return
+  keysDown.set(e.code, target.id)
+  order({ to: target.id, key, down: true })
+})
+addEventListener('keyup', e => {
+  const to = keysDown.get(e.code)
+  if (!to) return
+  keysDown.delete(e.code)
+  order({ to, key: KEYCODES[e.code], down: false })
+})
+// Keys held as the page goes away (another app, the screen off) would stay pressed on the PC, Ctrl for ever: let go
+// now, with what still waits, as a hidden page draws no frames (the drawing loop sends the orders).
+function releaseKeys() {
+  if (!keysDown.size) return
+  const ups = [...keysDown].map(([code, to]) => ({ to, key: KEYCODES[code], down: false }))
+  keysDown.clear()
+  navigator.sendBeacon('/input', JSON.stringify([...orders.splice(0), ...ups]))
+}
+addEventListener('blur', releaseKeys)
+document.addEventListener('visibilitychange', () => document.hidden && releaseKeys())
 
 // --- arranging with the phone's mouse, while the arranging mode is on (Num Lock; the PC's mouse, which the extension
 // catches then, works too: see arrange). A panel is taken anywhere with the left button and goes with the pointer
@@ -847,6 +1017,7 @@ const menu = { open: false, fade: 0, names: [], ids: [], icons: new Map(), drawn
 let launchSpot // { yaw, pitch, at }: where the user looked before calling the list, for the window of what was started from it
 const menuTurn = new THREE.Quaternion() // head space -> the frame the ribbon hangs in: level, -Z at the middle of the field
 function openMenu() {
+  setParams({ menuOpen: true }) // the extension holds the PC's mouse for it while it is open (Super key)
   Object.assign(menu, { open: true, yaw: anchor.yaw, spot: gazeInLayout(anchor, head), press: null, drag: -1 })
   loadApps()
 }
@@ -901,7 +1072,31 @@ function showMenu() { // every frame while the list shows: where it hangs, what 
   uniforms.uMenuAt.value.set(spot.x, spot.y)
 }
 function closeMenu() {
+  setParams({ menuOpen: false })
   Object.assign(menu, { open: false, press: null, drag: -1 })
+}
+// The Super key in the headset (the extension, instead of GNOME's overview) opens and closes the list: the PC's
+// mouse is held for it meanwhile, its left button arriving as `grab` (as in the arranging mode).
+let menuCallSeen, grabSeen
+function byKeys(p) {
+  if (SPECTATOR || sensorOnly()) return // the spectator shows the phone's list; a phone that only senses has none
+  if (menuCallSeen !== undefined && p.menuCall !== menuCallSeen) {
+    if (menu.open) closeMenu()
+    else if (!p.edit && tapped) {
+      if (!GLASSES) Object.assign(mouse, { x: 0.5, y: 0.5 }) // our pointer in the middle of the view: the gaze points (on a cable the mouse does)
+      openMenu()
+    }
+  }
+  menuCallSeen = p.menuCall
+  // The PC's left button does what the phone mouse's does, with our pointer in the middle of the view, so the gaze
+  // points. Arranging: a panel is carried, a side or corner of a window resizes the window, the backgrounds below are
+  // chosen and their sliders moved. The list: what is looked at is started, or carried into the field.
+  if (grabSeen !== undefined && p.grab !== grabSeen && (p.edit || menu.open)) {
+    Object.assign(mouse, { x: 0.5, y: 0.5 })
+    if (p.edit) editPress({ type: 'grab' }, p.grab, true)
+    else menuPress({ type: 'grab' }, p.grab, true)
+  }
+  grabSeen = p.grab
 }
 // Puts application n into place k of the field (-1: out of it); places of uninstalled applications become free.
 function dropIcon(n, k) {
@@ -1157,15 +1352,25 @@ function showClock() {
 // --- the headset tells the spectator page where it looks
 const pause = ms => new Promise(done => setTimeout(done, ms))
 const poseTarget = new THREE.Quaternion(), phonePointer = new THREE.Vector3(-1, 0, 0)
+let moving // the spectator: the panel the phone has in hand or resizes, { i, yaw, pitch, span (0: not resized), aspect }, or null
+// The panel in hand or being resized, for the spectator (a headset on a cable shows the phone's view): its place,
+// and while resized its width and shape. -1: none.
+function movingNow() {
+  const where = held ? held.snap ?? held : resizing
+  if (!where) return [-1, 0, 0, 0, 0]
+  return [held ? held.i : resizing.i, where.yaw, where.pitch, resizing && !held ? resizing.span : 0, resizing && !held ? resizing.h / resizing.w : 0]
+}
 async function sharePose() {
   for (;;) {
     const started = performance.now()
     try {
       if (SPECTATOR) {
-        const sent = await (await fetch('/pose')).json()
+        const sent = await (await fetch(GLASSES ? '/pose?glasses' : '/pose')).json() // the server: a headset on a cable is in use
         if (sent) {
           poseTarget.fromArray(sent)
-          const [, , , , anchorYaw, anchorPitch, open, yaw, drag, x, y, ...pointer] = sent
+          const [, , , , anchorYaw, anchorPitch, open, yaw, drag, x, y, p0, p1, p2, mi, myaw, mpitch, mspan, maspect] = sent
+          const pointer = [p0, p1, p2]
+          moving = mi >= 0 ? { i: mi, yaw: myaw, pitch: mpitch, span: mspan, aspect: maspect } : null
           Object.assign(anchor, { yaw: anchorYaw, pitch: anchorPitch })
           // The list of applications and our pointer, as the phone shows them: the spectator draws them the same way.
           if (open && !menu.names.length) loadApps()
@@ -1173,11 +1378,11 @@ async function sharePose() {
           Object.assign(mouse, { x, y })
           phonePointer.fromArray(pointer)
         }
-      } else if (settings?.spectator && !document.hidden) {
+      } else if (settings?.spectator && !document.hidden && !GLASSES) {
         // Only the page on screen: a second copy left open in Safari keeps running behind the home-screen one (it
         // plays sound), and its head, without sensors, stays where it started: the spectator jumped back to it.
         await fetch('/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch,
-          menu.open ? 1 : 0, menu.yaw, menu.drag, mouse.x, mouse.y, ...uniforms.uPointer.value.toArray()]) })
+          menu.open ? 1 : 0, menu.yaw, menu.drag, mouse.x, mouse.y, ...uniforms.uPointer.value.toArray(), ...movingNow()]) })
       }
     } catch {} // the server is restarting: go on asking
     await pause(SPECTATOR || settings?.spectator ? Math.max(0, 33 - (performance.now() - started)) : 500) // 30 a second, however long the request took
@@ -1239,9 +1444,9 @@ let tapped = false, soundOn = false
 function startStreams() { // called after the tap and after every change of settings: starts what is not running yet
   if (!tapped || !settings) return
   screens.forEach((screen, i) => screen.stop ??= receive(settings.monitors[i].id, 'video', screen.video))
-  if (!soundOn && !SPECTATOR) receive('audio', 'audio', sound) // on the PC it would play the PC's sound back into itself
+  if (!soundOn && !SPECTATOR && !GLASSES) receive('audio', 'audio', sound) // on the PC it would play the PC's sound back into itself
   soundOn = true
-  if (settings.phoneMic && !SPECTATOR) sendMic()
+  if (settings.phoneMic && !SPECTATOR && !GLASSES) sendMic()
   else stopMic()
 }
 
@@ -1297,7 +1502,10 @@ document.addEventListener('visibilitychange', () => document.visibilityState ===
 const button = document.getElementById('start')
 button.onclick = async () => {
   sound.play().catch(() => {}) // inside the tap: unlocks this element, so the stream that arrives later may play
-  const answer = await (window.DeviceOrientationEvent?.requestPermission?.().catch(() => 'denied') ?? 'granted')
+  // Android: the whole screen and landscape at once, also in a browser tab (only inside the tap). An iPhone has no
+  // such thing for a page; there the home screen icon gives the whole screen.
+  if (!SPECTATOR && !GLASSES) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {})
+  const answer = GLASSES ? 'granted' : await (window.DeviceOrientationEvent?.requestPermission?.().catch(() => 'denied') ?? 'granted') // a PC has no motion sensors to ask for
   if (answer !== 'granted') return void (button.textContent = 'Нет доступа к датчикам движения. Разрешите его в настройках Safari и обновите страницу.')
   button.hidden = true
   bgVideo?.play().catch(() => {})
@@ -1308,3 +1516,4 @@ button.onclick = async () => {
   // headset; the drawing loop closes it again when it is not looked at.
   if ((settings?.camBelow > 0 || settings?.passthrough) && !SPECTATOR) openCamera()
 }
+if (GLASSES) button.click() // the glasses' picture has no sound or sensors to unlock: no tap to start

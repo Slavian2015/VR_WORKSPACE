@@ -6,6 +6,8 @@ Tools for trying changes without touching the desktop you are working on. They a
   (clicks, keys, screenshots, JavaScript inside the shell). The project's extension is loaded there and asks port
   18080 instead of 8080. Read its header for the options.
 - `drive.py` — carries out the actions; the list of them is in its header.
+- `webview.py` — a page in a window of that shell (WebKitGTK; the snap browsers cannot reach it), titled as the
+  headset-on-a-cable window: `INSIDE="dev/webview.py http://127.0.0.1:18080/?glasses --fullscreen &"`.
 
 ```bash
 printf 'eval:Main.overview.hide()\nprefs\nwait:4\nshot:settings\n' > /tmp/actions.txt

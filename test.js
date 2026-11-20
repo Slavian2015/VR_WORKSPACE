@@ -4,7 +4,7 @@ import { Euler, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 import { blocked, cleanOrder, wrongKey } from './orders.js'
-import { placeIcon, resizeWindow, snapPanel } from './app/params.js'
+import { KEYCODES, placeIcon, resizeWindow, snapPanel } from './app/params.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -140,4 +140,10 @@ test('an address from the internet that keeps giving wrong keys is refused for t
   }
   for (let i = 0; i < 10; i++) wrongKey(refused, '::ffff:100.64.0.1', t) // a mobile network's shared address is not home
   assert.equal(blocked(refused, '::ffff:100.64.0.1', t), true)
+})
+
+test('the phone keyboard\'s keys get the Linux key codes', () => {
+  assert.deepEqual([KEYCODES.Escape, KEYCODES.Digit0, KEYCODES.KeyA, KEYCODES.KeyM, KEYCODES.Space, KEYCODES.F10, KEYCODES.NumLock, KEYCODES.NumpadDecimal],
+    [1, 11, 30, 50, 57, 68, 69, 83])
+  assert.deepEqual([KEYCODES.ArrowUp, KEYCODES.Delete, KEYCODES.MetaLeft], [103, 111, 125])
 })

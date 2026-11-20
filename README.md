@@ -39,6 +39,22 @@ It is safe to run again; do so when the PC gets a new name on the network, and a
 
 The desktop is captured only while a phone is connected. Switch VR Workspace off in the same menu when done.
 
+### Android phone
+
+The same page works in Chrome on Android.
+
+1. The first time, install the certificate: open the code under "First time with this phone", then Settings →
+   Security → Encryption and credentials → Install a certificate → CA certificate, and pick the downloaded file
+   (the names differ by maker: search the settings for "certificate"). Chrome trusts certificates installed so.
+2. Open the link from Local Wi-Fi in Chrome and tap: the page takes the whole screen in landscape. ⋮ → Add to Home
+   screen gives an icon that opens it so.
+3. The lens settings were measured for an iPhone 15 Pro. For another phone set its screen width in mm (Settings →
+   Headset → Phone), then the lens distance and k1, k2 until straight lines look straight.
+4. The video is H.264: nearly every Android phone plays it; one that does not shows no picture.
+5. A Samsung phone in a Gear VR starts the Oculus app when it is put in. Switch the Gear VR service off once,
+   with the phone on a cable and USB debugging on: `adb shell pm disable-user --user 0 com.samsung.android.hmt.vrsvc`
+   (`pm enable` brings it back; the name may differ on some models).
+
 ### From outside the home
 
 Over the mobile internet or another Wi-Fi, if this PC has an address on the internet that does not change (a static
@@ -88,8 +104,10 @@ Settings are kept in `params.json` in this folder.
 Press **Num Lock** while a phone is connected: the mouse stops reaching the desktop and works in the headset.
 Look at a monitor (a soft light comes around it, and a note with its numbers appears under the centre of the view),
 hold the left button and carry it with your gaze; near another monitor it is drawn to sit beside it or in line with
-it. The mouse connected to the phone works in this mode too: see "Single windows", step 6. Looking down shows the
-backgrounds, with darkening and blur.
+it. The gaze points as the phone's mouse would: look at a side or corner of a single window, hold the left button and
+turn your head to change the window's size; look down at the backgrounds and click one, or hold on a slider (darkening,
+blur) and look along it; the wheel turns their pages there. The mouse connected to the phone works in this mode too:
+see "Single windows", step 6.
 
 | Input | Does |
 | --- | --- |
@@ -151,7 +169,7 @@ a mouse connected to the phone.
    as it gets (the picture arrives as sharp as on the PC). Smaller is blurrier, larger is not sharper. Its curve is
    in its tab in Settings → Monitors.
 3. Look at the panel and move the mouse that is connected to the **phone**: the pointer has the shape it has on the
-   PC (an arrow, a text cursor, a hand), a white dot until the PC has told it. The whole
+   PC (an arrow, a text cursor, a hand), an arrow until the PC has told it. The whole
    phone screen stands for the window (from side to side; from top to bottom without the phone's own edges, which
    its pointer does not reach), so the pointer never jumps across it. Left and right button
    and the wheel go to the window. The window that gets the PC's keyboard has a soft coloured light around it.
@@ -161,12 +179,14 @@ a mouse connected to the phone.
    In its middle is your own field of 4 × 4 places with larger icons; the other
    applications are to its left and right by name. Turn your head to see the rest; a click starts an application,
    and its window opens where you looked when you pressed the right button. A click beside the icons closes the
-   list.
+   list. **The Super (Windows) key** opens the same list while the headset is in use, instead of GNOME's overview:
+   look at an application and click with the PC's mouse (it works for the list until it closes); hold the button
+   and look elsewhere to carry an icon; the right button or Super again closes it.
 5. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
    stays there (if the place is taken, the icons move one place toward the nearest free place); let go beside the
    field and it leaves it. The field is kept on the PC.
 6. **To move and resize windows**, switch on the arranging mode with Num Lock on the PC's keyboard. Our pointer is
-   then a dot in the view, and the panel under it lights up:
+   then an arrow in the view, as large as on the PC, and the panel under it lights up:
    - hold the left button anywhere on a panel and move the mouse or turn your head: it goes along, and near another
      panel it is drawn to sit beside it, over or under it, or in line with it;
    - at a side or a corner of a window that side lights up: drag it to make the window itself wider or taller on
@@ -183,7 +203,7 @@ What to know:
   open, the pointer reaches its part outside the window too, so the pointer moves a little when it opens. A menu
   reaching out to the left of or above the window is cut there.
 - A dialog of a window in the headset (a file chooser, a question) comes into the headset by itself, lying on
-  its window, and leaves when it is closed. It appears dark first; the picture follows in 3–4 seconds. It takes one
+  its window, and leaves when it is closed. It shows a spinner first; the picture follows in 3–4 seconds (so does any panel before its picture comes). It takes one
   of the eight places. So does any window that opens within 15 seconds after a click from the headset: a file
   chooser that a Flatpak application asks the system for, the second window of an application. Such a window lies
   on the window you clicked in, with its text as large, and leaves the headset with it.
@@ -191,8 +211,14 @@ What to know:
 - The PC has one pointer: while you work in a window from the headset, the PC's pointer is there, and the window is
   brought to the front.
 - Whoever has the link with the key can now click in these windows, not only watch.
-- The keyboard is not passed on yet.
-- Settings → Headset → **Text sharpness** (40 % at first) makes letters crisper through the lenses; too much draws
+- **A keyboard connected to the phone** (Bluetooth, or a receiver in its port) types into the window that gets the
+  PC's keyboard (the lit one), else into the one looked at, which comes to the front first. Keys are passed as keys,
+  not letters, so the PC's layout makes the letters (Russian or English, switched as on the PC). Holding a key
+  repeats it as on the PC. Keys held when the page leaves the screen, or when the phone goes silent for 3 seconds,
+  are let go on the PC. Not passed on: Num Lock (on the PC it is the arranging mode) and what the iPhone keeps for
+  itself (Cmd+Tab, Cmd+Space; Alt+Tab did not arrive either). The number pad works as the PC's does with Num Lock
+  off: Home, End, Page Up and Down, the arrows. To monitors the phone's keyboard goes nowhere yet.
+- Settings → Headset → Picture → **Text sharpness** (40 % at first) makes letters crisper through the lenses; too much draws
   bright edges around them.
 - A still window takes little Wi-Fi (about 0.4 Mbit/s); one that changes, up to 12.
 
@@ -212,6 +238,37 @@ connected, a microphone called **VR-Headset** appears and becomes the system's m
 comes back when the phone stops); programs started meanwhile use it, one already running may need it chosen in its
 own settings. The phone asks for permission when the page starts, and shows its microphone sign while it is sent.
 Echo cancellation is on: the phone plays the PC's sound at the same time.
+
+## Glasses on a cable (in preparation)
+
+Glasses that are a monitor of this PC (USB-C with DisplayPort, a motion sensor and cameras inside, nothing else):
+the PC draws their picture itself, with no Wi-Fi and no video compression on the way. For now, before such glasses
+are here, the parts are tried with what there is:
+
+- **Their picture:** Settings → Headset → Glasses → The glasses' picture → Open. A window shows what the glasses would, its
+  left half for the left eye and the right half for the right. Each eye sees a
+  flat screen as wide as "Field of view across the diagonal" (as the maker gives it). The same is
+  `http://localhost:8080/?glasses` in any browser. Always stereo: the left half for the left eye.
+- **The head's turn:** from the phone, which must be running in the headset as usual (later from the glasses' own
+  sensor, read as [XRLinuxDriver](https://github.com/wheaney/XRLinuxDriver) does).
+- **Their camera:** this PC's webcam, wherever the phone's camera would show (Phone Camera as Background, or below).
+
+**The mouse** works there as the phone's mouse works on the phone's screen. While the glasses' picture fills a
+screen, the pointer stays on that screen and the picture draws it itself, at once. Moved onto a monitor or a single
+window's panel, the real pointer goes into that monitor or window, at that place: the mouse and the keyboard work
+there directly, and the window comes to the front. The pointer is drawn over the panel at once; GNOME's own, which
+would come with the picture a tenth of a second late, is hidden meanwhile. Pushed hard past a side of the panel, the
+pointer comes back out onto the picture. Num Lock (arranging) and Super (the list of applications) bring it out too:
+panels are carried and resized with it, and the list and the backgrounds (looking down) are chosen with it. The right
+button beside the panels opens the list. A window lying on the headset's own screen, under its picture, is moved to
+another monitor first, and so is a new window that opens there. New windows come as large as makes one of their
+pixels one pixel of the glasses' screen. The picture needs no tap to start.
+
+The picture's own "Black while a window is fullscreen" does not count it as a film.
+
+**The emergency key: Ctrl+Alt+Backspace**, always, from anywhere. It takes the glasses' window off the screen (also
+when it hangs), lets go of the mouse and switches VR Workspace off, so that its virtual monitors go and every window
+comes back to the plain screen. Glasses may be the only screen; a picture that hangs there must not leave you blind.
 
 ## Notifications
 

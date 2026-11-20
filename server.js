@@ -25,7 +25,7 @@ const MOUNTS = [
   ['/', path.join(ROOT, 'app/')],
 ]
 const TYPES = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.webmanifest': 'application/manifest+json', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.ico': 'image/x-icon', '.crt': 'application/x-x509-ca-cert',
 }
 
@@ -57,6 +57,22 @@ const live = { fullscreen: false, passthrough: false, grab: false, wheelSize: 0,
 // says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
 // added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
 let editSeen = 0
+let menuOpenAt = 0 // when the headset page last said its list of applications is open (it says so every second)
+// A headset on a cable: its picture (index.html?glasses) listens here for what is pushed to it as it comes (`live`:
+// the head's turn, the PC's pointer inside a monitor or window), and asks for the PC's mouse to go into the panel our
+// pointer is on (`enter`, said again and again while it is over one), which the extension carries out.
+const listeners = new Set() // { res, glasses }
+const glassesOn = () => [...listeners].some(l => l.glasses)
+const push = (event, data) => { for (const l of listeners) l.res.write(`event: ${event}\ndata: ${data}\n\n`) }
+let enter = { at: 0 }, enterQuiet = 0 // where the glasses page asks the PC's mouse into a monitor or window; no asks taken before enterQuiet
+// Keys of the phone's keyboard held down in windows ("w0 30" -> the order). Should the phone go silent meanwhile (its
+// Wi-Fi gone, its battery flat), they are let go: else they would stay pressed on the PC, Ctrl for ever.
+const keysHeld = new Map()
+setInterval(() => {
+  if (!keysHeld.size || Date.now() - phoneSeen < 3000) return
+  for (const order of keysHeld.values()) tellWindows({ ...order, down: false })
+  keysHeld.clear()
+}, 1000)
 
 // --- single application windows in the headset. The GNOME extension tells which windows are open and which of them
 // the user wants there; windows.py records those and works them. A wanted window that is open takes a slot and is
@@ -139,7 +155,9 @@ async function handle(req, res) {
   // An address from the internet (not of the home network) that gave 10 wrong keys within an hour is not answered for
   // the rest of that hour, and the journal tells of it, as of every opening of the link from the internet.
   const from = req.socket.remoteAddress, local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(from), home = HOME.test(from)
-  if (!local && url !== '/ca.crt') {
+  // Without the key: the CA certificate (to be installed first), and what Android fetches for a home screen icon
+  // without cookies (the manifest and its icons). Nothing in them is private.
+  if (!local && !['/ca.crt', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'].includes(url)) {
     if (blocked(refused, from)) return res.writeHead(403).end()
     if (searchParams.get('k') === TOKEN) {
       res.setHeader('set-cookie', `k=${TOKEN}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Strict`)
@@ -205,7 +223,9 @@ async function handle(req, res) {
     // `active` only while the pointer is at work there: otherwise the desktop's own choice of window stands
     // soon: a window is being resized from the headset; the extension then asks again in a tenth of a second
     const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length,
-      resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0 }
+      resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0,
+      phoneOnline: Date.now() - phoneSeen < 2000, menuOpen: Date.now() - menuOpenAt < 3000, // for the Super key: our list instead of GNOME's overview
+      enter: glassesOn() && Date.now() - enter.at < 400 ? enter : null } // the monitor or window the PC's mouse is to go into
     launch = resizeWish = null
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
   }
@@ -230,6 +250,23 @@ async function handle(req, res) {
     const told = JSON.parse(await readBody(req)), png = Buffer.from(String(told?.png ?? ''), 'base64')
     if (png.length > 262144 || !Array.isArray(told?.hot) || told.hot.length !== 2 || !told.hot.every(Number.isInteger)) throw new SyntaxError('a picture and its hot spot expected')
     cursor = { n: cursor.n + 1, png, hot: told.hot }
+    return res.writeHead(204).end()
+  }
+  // A headset on a cable, from this PC only: what is pushed to its picture as it comes (Server-Sent Events).
+  if (url === '/live' && local) {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' }).write(': open\n\n')
+    const listener = { res, glasses: searchParams.has('glasses') }
+    listeners.add(listener)
+    req.on('close', () => listeners.delete(listener))
+    return
+  }
+  // From the extension: where the PC's pointer is inside the monitor or window it works in (u, v: 0..1 from its top
+  // left), or that it has come out (out). For the headset on a cable, which draws it.
+  if (url === '/pointer' && req.method === 'POST' && local) {
+    const told = JSON.parse(await readBody(req))
+    const ok = told?.out === true || (/^[mw]\d+$/.test(told?.id) && [told.u, told.v].every(Number.isFinite))
+    if (!ok) throw new SyntaxError('a panel and a place, or out, expected')
+    push('pointer', JSON.stringify(told.out ? { out: true } : { id: told.id, u: told.u, v: told.v }))
     return res.writeHead(204).end()
   }
   // From the extension: a notification that GNOME shows as a banner. The headset shows it too, for a few seconds.
@@ -273,6 +310,13 @@ async function handle(req, res) {
         console.log('a press from the headset was held back: its window was brought to the front less than 0.7 s ago')
         continue
       }
+      // A key only into the window that has the PC's keyboard: until the extension has brought this one to the front,
+      // the keyboard is with another, maybe one not in the headset at all. A release only of a key that went through.
+      if ('key' in order) {
+        const id = `${order.to} ${order.key}`
+        if (order.down ? source !== focusedWindow : !keysHeld.has(id)) continue
+        order.down ? keysHeld.set(id, order) : keysHeld.delete(id)
+      }
       if (order.down && 'button' in order) headsetClick = { at: Date.now(), in: source }
       // Until the trouble with VLC's file chooser (2026-11-19) is understood: every button from the headset.
       if ('button' in order) console.log(`input: button ${order.button} ${order.down ? 'down' : 'up'} in ${order.to} (window ${source}) at ${Math.round(order.x)},${Math.round(order.y)}`)
@@ -290,9 +334,11 @@ async function handle(req, res) {
     // Only the phone's: a preview page left open on this PC sends its own, and the spectator jumped between the two.
     if (local) return res.writeHead(204).end()
     const sent = JSON.parse(await readBody(req))
-    // head (4), anchor (2), the list of applications (open, yaw, the icon carried), the mouse (2), our pointer (3)
-    if (!Array.isArray(sent) || sent.length !== 14 || !sent.every(Number.isFinite)) throw new SyntaxError('fourteen numbers expected')
+    // head (4), anchor (2), the list of applications (open, yaw, the icon carried), the mouse (2), our pointer (3),
+    // the panel in hand or being resized (index or -1, yaw, pitch, width or 0, shape)
+    if (!Array.isArray(sent) || sent.length !== 19 || !sent.every(Number.isFinite)) throw new SyntaxError('nineteen numbers expected')
     pose = JSON.stringify(sent)
+    push('pose', pose)
     return res.writeHead(204).end()
   }
   if (url === '/pose') {
@@ -306,6 +352,16 @@ async function handle(req, res) {
     const patch = JSON.parse(await readBody(req))
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new SyntaxError('object expected')
     if ('edit' in patch) editSeen = patch.edit === true ? Date.now() : 0
+    if ('menuOpen' in patch) menuOpenAt = patch.menuOpen === true ? Date.now() : 0
+    const e = patch.enter
+    if (e && Date.now() > enterQuiet && /^[mw]\d+$/.test(e.id) && Number.isInteger(e.source) && typeof e.connector === 'string' && [e.u, e.v].every(Number.isFinite)
+      && Array.isArray(e.corners) && e.corners.length === 4 && e.corners.every(c => Array.isArray(c) && c.length === 2 && c.every(Number.isFinite)))
+      enter = { id: e.id, source: e.source, connector: e.connector.slice(0, 40), u: e.u, v: e.v, corners: e.corners, at: Date.now() }
+    // The list or the arranging: the pointer stays ours, not inside a panel. Asks already on their way are not taken
+    // either: the page learns of it with its next reading of the settings, up to a fifth of a second later.
+    if ('menuCall' in patch || 'edit' in patch) [enter, enterQuiet] = [{ at: 0 }, Date.now() + 600]
+    delete patch.menuOpen
+    delete patch.enter
     // `toggle: "m1.hidden"` flips that monitor's visibility: the keys 1-4 of the arranging mode do not know its state.
     const flip = /^(m\d)\.hidden$/.exec(patch.toggle)
     if (flip && CAPTURE.monitors.some(m => m.id === flip[1])) patch[patch.toggle] = !params[patch.toggle]
@@ -333,8 +389,10 @@ async function handle(req, res) {
   }
   if (url === '/params') {
     if (!local) phoneSeen = Date.now()
-    const monitors = [...CAPTURE.monitors, ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
-    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000, settingsOnly: SETTINGS_ONLY }
+    let connectors = {} // capture.py: which GNOME connector each monitor is
+    try { connectors = JSON.parse(fs.readFileSync(path.join(ROOT, '.connectors.json'), 'utf8')) } catch {}
+    const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id] })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: glassesOn(), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }

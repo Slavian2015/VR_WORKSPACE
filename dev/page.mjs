@@ -1,16 +1,21 @@
 // Plays the phone: opens a page in headless Chromium and does what the arguments say, in order. It may be opened over
 // https at the PC's network address, as the phone does (the certificate is accepted without a question).
 //
-//   node dev/page.mjs <url> [width height] <action>...
+//   node dev/page.mjs <url> [width height] [android] <action>...
+//
+//   android: as Chrome on an Android phone (its browser name, a phone's pixel density, touch), from the first request.
+//   Chromium is the same engine as Chrome on Android, so the page's own logic, video and sensors are tried as there.
 //
 //   wait:<seconds>      eval:<js expression, printed>      shot:<file.png>
 //   move:x,y            path:x1,y1,x2,y2 (a run of small movements, as a real mouse)
 //   press / release     (the left button, where the pointer is)      click:x,y      rclick:x,y      wheel:<pixels>
 //   orient:alpha,beta,gamma   (the phone's orientation sensor; 0,90,0 looks at the horizon, a larger alpha turns left)
+//   key:<code>          a key pressed and let go, as KeyboardEvent.code names it (KeyA, Digit7, ControlLeft); keydown:<code> / keyup:<code>
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 const [url, ...rest] = process.argv.slice(2)
 const [width, height] = /^\d+$/.test(rest[0]) ? rest.splice(0, 2).map(Number) : [1280, 590]
+const android = rest[0] === 'android' && rest.shift()
 const chrome = spawn('chromium', ['--headless=new', '--remote-debugging-port=9333', `--window-size=${width},${height}`,
   `--user-data-dir=${process.env.HOME}/snap/chromium/common/vr-test-profile`, '--autoplay-policy=no-user-gesture-required', '--mute-audio',
   '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors', 'about:blank'], { stdio: 'ignore' })
@@ -35,7 +40,11 @@ try {
   }
   const send = (method, params = {}) => new Promise(r => { pending.set(++id, r); ws.send(JSON.stringify({ id, method, params })) })
   await send('Runtime.enable'); await send('Page.enable')
-  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+  await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: android ? 2.625 : 1, mobile: !!android })
+  if (android) {
+    await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36', platform: 'Android' })
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+  }
   await send('Page.navigate', { url })
   let at = [0, 0]
   const mouse = (type, x, y, more = {}) => send('Input.dispatchMouseEvent', { type, x, y, ...more })
@@ -60,6 +69,11 @@ try {
       await mouse('mouseReleased', ...at, { button: 'right', clickCount: 1 })
     } else if (kind === 'orient') await send('DeviceOrientation.setDeviceOrientationOverride', { alpha: numbers[0], beta: numbers[1], gamma: numbers[2] })
     else if (kind === 'wheel') await mouse('mouseWheel', ...at, { deltaX: 0, deltaY: +arg })
+    else if (['key', 'keydown', 'keyup'].includes(kind)) {
+      if (kind !== 'keyup') await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', code: arg, key: arg })
+      if (kind === 'key') await sleep(60)
+      if (kind !== 'keydown') await send('Input.dispatchKeyEvent', { type: 'keyUp', code: arg, key: arg })
+    }
     else throw new Error(`unknown action ${action}`)
     if (kind !== 'wait') log(action.slice(0, 60))
   }

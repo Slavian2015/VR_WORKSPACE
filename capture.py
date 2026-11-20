@@ -336,6 +336,10 @@ def main():
         and makes sure the real monitors are being recorded."""
         if len(connectors) < len(sources):
             return  # not all monitors are up yet
+        # Which GNOME connector each monitor is, for the extension (through the server): with a headset on a cable the
+        # PC's mouse goes into the monitor the headset's pointer is on.
+        with open(os.path.join(ROOT, '.connectors.json'), 'w') as f:
+            json.dump({f'm{i}': name for i, name in connectors.items()}, f)
         try:
             serial, physical, logical, _ = mutter('DisplayConfig', DISPLAY_CONFIG, 'GetCurrentState')
             now = {specs[0][0]: (x, y, scale, transform, primary) for x, y, scale, transform, primary, specs, _ in logical}

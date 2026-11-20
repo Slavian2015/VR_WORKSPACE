@@ -93,6 +93,19 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       page.add(box)
       return box
     }
+    // Tabs on a page: linked buttons over groups of the page, each group shown while its tab is chosen (and its own
+    // condition holds). Not a Gtk.Stack: a preferences group inside one did not wrap its text and widened the window.
+    const tabbed = (page, ...names) => {
+      const buttons = names.map((label, i) => new Gtk.ToggleButton({ label, active: i === 0 }))
+      for (const button of buttons.slice(1)) button.group = buttons[0]
+      const box = new Gtk.Box({ css_classes: ['linked'], halign: Gtk.Align.CENTER })
+      for (const button of buttons) box.append(button)
+      group(page, {}, box)
+      const parts = [] // [group, its tab, its condition]
+      const show = () => { for (const [part, tab, when] of parts) part.visible = buttons[tab].active && when() }
+      for (const button of buttons) button.connect('toggled', show)
+      return { show, add: (tab, part, when = () => true) => (parts.push([part, tab, when]), show(), part) }
+    }
     const code = text => { // a QR code
       const dark = qr(text), cells = dark.length + 8 // with a white margin of four modules, which scanners need
       const area = new Gtk.DrawingArea({ content_width: cells * 5, content_height: cells * 5 })
@@ -155,27 +168,24 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       })
       const link = new Adw.ActionRow({ title: _('Link'), subtitle: GLib.markup_escape_text(host.phone, -1), subtitle_selectable: true, css_classes: ['property'] })
       link.add_suffix(copy)
-      const first = new Adw.ExpanderRow({ title: _('First time with this iPhone'), subtitle: _('Once: the phone has to trust this PC') })
+      const first = new Adw.ExpanderRow({ title: _('First time with this phone'), subtitle: _('Once: the phone has to trust this PC') })
       for (const step of [
-        _('1. Point the camera at the code below and allow the download of the profile'),
+        _('1. Point the camera at the code below and allow the download of the certificate'),
         code(host.ca),
-        _('2. On the iPhone: Settings → General → VPN and Device Management → install the profile'),
-        _('3. Settings → General → About → Certificate Trust Settings → switch on “VR Workspace local CA”'),
-        _('4. Open the link from the code at the top in Safari, then Share → Add to Home Screen. Start it from the home screen: only then it is fullscreen'),
-        _('5. Switch off the rotation lock, hold the phone in landscape, tap the screen once and put it in the headset'),
+        _('2. iPhone: Settings → General → VPN and Device Management → install the profile; then Settings → General → About → Certificate Trust Settings → switch on “VR Workspace local CA”'),
+        _('2. Android: Settings → Security → Encryption and credentials → Install a certificate → CA certificate → the downloaded file (the names differ by maker: search the settings for “certificate”)'),
+        _('3. Open the link from the code at the top: iPhone in Safari, Android in Chrome. Then Share → Add to Home Screen (Chrome: ⋮ → Add to Home screen) and start it from there: on an iPhone only then it is fullscreen'),
+        _('4. Switch off the rotation lock, hold the phone in landscape, tap the screen once and put it in the headset'),
+        _('A Samsung phone in a Gear VR starts the Oculus app when put in: switch that off once (see the README, “Android phone”)'),
       ]) first.add_row(typeof step === 'string' ? new Adw.ActionRow({ title: step }) : step)
       // Two ways to connect, a tab and a code each: on the Wi-Fi at home, and from anywhere over the internet. (At home
       // the second does not work: the router does not take the PC's own address on the internet from inside.) The tabs
-      // are two buttons over groups of the page: a group put into a Gtk.Stack widened the window past its edge.
-      const local = new Gtk.ToggleButton({ label: _('Local Wi-Fi'), active: true }), remote = new Gtk.ToggleButton({ label: _('Remote'), group: local })
-      const switcher = new Gtk.Box({ css_classes: ['linked'], halign: Gtk.Align.CENTER })
-      switcher.append(local)
-      switcher.append(remote)
-      group(connect, {}, switcher)
-      const phone = group(connect, {
-        description: _('Point the iPhone camera at the code and open the link in Safari (Chrome reaches this PC only with the permission for the local network). The phone and this PC must be on the same Wi-Fi.'),
-      }, code(host.phone))
-      const more = group(connect, {}, link, first)
+      // The codes for home only while VR Workspace is on, as before.
+      const ways = tabbed(connect, _('Local Wi-Fi'), _('Remote'))
+      ways.add(0, group(connect, {
+        description: _('Point the phone camera at the code and open the link: on an iPhone in Safari (Chrome there reaches this PC only with the permission for the local network), on Android in Chrome. The phone and this PC must be on the same Wi-Fi.'),
+      }, code(host.phone)), () => running)
+      ways.add(0, group(connect, {}, link, first), () => running)
       // From outside the home (the mobile internet, another Wi-Fi): this PC's address on the internet, and a second
       // code with it. The server takes a new address when it starts (certificate, key, video), so it says when.
       const address = new Adw.EntryRow({ title: _('Address of this PC on the internet'), show_apply_button: true })
@@ -185,13 +195,8 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
         else window.add_toast(new Adw.Toast({ title: _('Not an address: an IP address such as 203.0.113.5, or a name') }))
       })
       const outsideCode = new Adw.Bin()
-      const outside = group(connect, {}, address, outsideCode)
-      showWays = () => {
-        phone.visible = more.visible = running && local.active // the codes for home only while VR Workspace is on, as before
-        outside.visible = remote.active
-      }
-      local.connect('toggled', showWays)
-      showWays()
+      const outside = ways.add(1, group(connect, {}, address, outsideCode))
+      showWays = ways.show
       let addressShown, outsideShown
       shows.publicHost = value => { if (value !== addressShown) address.text = addressShown = value }
       shows.outside = url => {
@@ -461,9 +466,11 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
 
       // ---- Headset: the phone's camera and the lenses
       const headset = new Adw.PreferencesPage({ title: _('Headset'), icon_name: 'camera-photo-symbolic' })
+      // Three tabs: a phone in a headset, glasses on a cable, and what both show alike.
+      const kinds = tabbed(headset, _('Phone'), _('Glasses'), _('Picture'))
       const camera = new Adw.ActionRow({ title: _('Camera the phone gave'), css_classes: ['property'], visible: false })
       shows.camLabel = label => Object.assign(camera, { subtitle: GLib.markup_escape_text(label, -1), visible: true })
-      group(headset, {
+      kinds.add(0, group(headset, {
         title: _('Phone Camera'),
         description: _('See the room through the camera of the phone. It is open only while its picture is needed.'),
       },
@@ -473,18 +480,8 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('camFov', host.layout.camFov, _('Camera view angle, °'), _('Set it so that things look their real size')),
       number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
       number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
-      camera)
-      group(headset, {
-        title: _('Picture'),
-      },
-      number('sharpen', host.layout.sharpen, _('Text sharpness, %'), _('Crisper letters through the lenses; too much draws bright edges around them')))
-      group(headset, {
-        title: _('Highlights'),
-        description: _('A soft light around panels: the one in the arranging mode under the pointer, being carried or resized, and the window that gets the keyboard.'),
-      },
-      colour('glowColor', _('Colour'), _('It drifts a little around the panel')),
-      toggle('focusGlow', _('Light the window that gets the keyboard'), _('What you type on the PC goes there')))
-      group(headset, {
+      camera))
+      kinds.add(0, group(headset, {
         title: _('Lens Calibration'),
         description: _('First the two distances, until both pictures merge without eye strain. Then k1 and k2, until straight lines are straight at the edges. Then the colour fringes, until white text near the edge has no red and blue outlines. The background “test grid” shows all of it best.'),
       },
@@ -497,7 +494,45 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('cx', host.lens.cx, _('Centre shift, horizontal, mm')),
       number('cy', host.lens.cy, _('Centre shift, vertical, mm')),
       action(_('Reset the calibration'), _('Back to the values found for an iPhone 15 Pro in a Gear VR'), _('Reset'),
-        () => talk(session, '/params', Object.fromEntries(Object.keys(host.lens).map(key => [key, null]))), 'destructive-action'))
+        () => talk(session, '/params', Object.fromEntries(Object.keys(host.lens).map(key => [key, null]))), 'destructive-action')))
+      // Glasses on a cable: a monitor to the PC, which draws their picture itself. For now a window, turned by the phone.
+      kinds.add(1, group(headset, {
+        title: _('Glasses on a Cable'),
+        description: _('Glasses that are a monitor of this PC: it draws their picture itself. For now the picture is a window here, turned by the phone (which must be running), and this PC’s webcam stands for their camera. Ctrl+Alt+Backspace always brings the plain desktop back: it closes that window and switches VR Workspace off.'),
+      },
+        number('glassesFov', host.lens.glassesFov, _('Field of view across the diagonal, °'), _('As the maker gives it; on a monitor 90 shows more')),
+        action(_('The glasses’ picture'), _('A window, always stereo: its left half for the left eye, the right half for the right'), _('Open'), () => {
+          const url = 'http://localhost:8080/?glasses'
+          try { // a window of its own, so that the emergency key closes only that
+            Gio.Subprocess.new(['chromium', `--app=${url}`, '--window-size=1920,540'], Gio.SubprocessFlags.NONE)
+          } catch {
+            Gtk.show_uri(window, url, Gdk.CURRENT_TIME)
+          }
+        })))
+      // Before the glasses are here: this PC's own screen stands for theirs, and the phone in the hand for their sensor.
+      kinds.add(1, group(headset, {
+        title: _('Try It on a Monitor'),
+        description: _('Your screen stands for the glasses, the phone in your hand for their sensor.'),
+      }, ...[
+        _('1. Once: Monitors → Virtual Monitors → Number: 1. Your own screen stays hidden in the headset (it would show itself), the virtual one is the desktop to look at'),
+        _('2. On the phone start VR Workspace from its icon and tap; hold it in landscape, screen towards you, as in the headset'),
+        _('3. Here: The glasses’ picture → Open, press F11 for the whole screen'),
+        _('4. Turn the phone: the picture turns with it. The mouse moves the pointer drawn in the picture, and it stays on that screen'),
+        _('5. Move it onto a monitor or an application’s panel: the mouse and the keyboard work in there. Push hard past a side of the panel to come back out'),
+        _('6. Num Lock: arranging with the mouse (carry a panel, drag a side of a window; tilt the phone down for the backgrounds). Super, or the right button beside the panels: the list of applications'),
+        _('7. F11 leaves the whole screen and gives the pointer back. Ctrl+Alt+Backspace: back to the plain desktop, VR Workspace switches off'),
+        _('Phone Camera as Background (top bar menu) shows this PC’s webcam in the picture, as the glasses’ camera would'),
+      ].map(title => new Adw.ActionRow({ title }))))
+      kinds.add(2, group(headset, {
+        title: _('Picture'),
+      },
+      number('sharpen', host.layout.sharpen, _('Text sharpness, %'), _('Crisper letters through the lenses; too much draws bright edges around them'))))
+      kinds.add(2, group(headset, {
+        title: _('Highlights'),
+        description: _('A soft light around panels: the one in the arranging mode under the pointer, being carried or resized, and the window that gets the keyboard.'),
+      },
+      colour('glowColor', _('Colour'), _('It drifts a little around the panel')),
+      toggle('focusGlow', _('Light the window that gets the keyboard'), _('What you type on the PC goes there'))))
 
       pages = [monitors, background, headset]
       for (const page of pages) window.add(page)
