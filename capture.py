@@ -444,8 +444,9 @@ def main():
             loop.quit()
         # A headset on a cable has come or gone, or the monitor that shows its picture is known now: the monitors
         # are taken the other way from here on.
-        if children and cable() != mode[0]:
-            mode[0] = cable()
+        now = cable()
+        if children and now != mode[0]:
+            mode[0] = now
             if mode[0] is None and stand_in[0]:  # the encoder of the first monitor publishes "vr/m0" again
                 stand_in[0].terminate()
                 stand_in[0].wait()

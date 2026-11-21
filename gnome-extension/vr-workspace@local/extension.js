@@ -179,6 +179,12 @@ export default class VrWorkspace extends Extension {
     const kinds = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG]
     const windows = global.get_window_actors().map(actor => actor.meta_window).filter(w => kinds.includes(w.get_window_type()))
     this._showStarted(windows, wish)
+    // A window of the headset never stays on the screen that shows the headset's picture, where it covers it: also
+    // one that its program put back after it was shown (VS Code goes back to its last place). Once a second.
+    if (Date.now() - (this._offAt ?? 0) > 1000) {
+      this._offAt = Date.now()
+      for (const w of windows) if (this._shownWindows.includes(w.get_id())) this._offHeadset(w)
+    }
     if (this._needApps) wish.apps = this._apps()
     this._needApps = false
     const open = windows.map(w => {
@@ -460,7 +466,13 @@ export default class VrWorkspace extends Extension {
       if (asked?.id === inside.id) inside.corners = asked.corners // the head turns: the panel moves on the picture
       return this._fit()
     }
-    if (!asked || asked.u < 0) return // u -1: the headset still thinks the pointer inside, only its corners
+    if (!asked || asked.u < 0) {
+      // u -1: the headset thinks the pointer inside (it sends only the corners), and it is not. Told again: the news
+      // of its coming out was lost, or a place sent just before it arrived after it, and the two waited for each
+      // other for ever (the pointer stuck in a window, 2026-11-21).
+      if (asked && this._http) talk(this._http, '/pointer', { out: true })
+      return
+    }
     let window = null, rect
     if (asked.source) {
       window = windows.find(w => w.get_id() === asked.source)
@@ -475,8 +487,8 @@ export default class VrWorkspace extends Extension {
     }
     for (const barrier of this._barriers ?? []) barrier.destroy() // the picture's own, which keep the pointer on it
     this._barriers = []
-    this._inside = { id: asked.id, window, rect, corners: asked.corners, barriers: [], box: '', push: 0 }
-    this._warp(rect.x + asked.u * rect.width, rect.y + asked.v * rect.height)
+    this._inside = { id: asked.id, window, rect, corners: asked.corners, barriers: [], box: '', push: 0, since: Date.now() }
+    this._warp(Math.min(rect.x + asked.u * rect.width, rect.x + rect.width - 1), Math.min(rect.y + asked.v * rect.height, rect.y + rect.height - 1))
     // Hidden, GNOME's pointer would also stop pointing for the programs (no clicks reach them) unless told to go on
     Clutter.get_default_backend().get_default_seat().inhibit_unfocus()
     this._cursorTracker.set_pointer_visible(false)
@@ -486,7 +498,7 @@ export default class VrWorkspace extends Extension {
     let told = ''
     this._inside.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 16, () => {
       const now = this._inside, r = now && this._rect(now)
-      if (!r) return GLib.SOURCE_CONTINUE // a window closed: let go at the next report
+      if (!r) return GLib.SOURCE_CONTINUE // a window closed: let go at the next report (_fit)
       const [px, py] = global.get_pointer(), u = (px - r.x) / r.width, v = (py - r.y) / r.height, place = `${u.toFixed(4)},${v.toFixed(4)}`
       if (place !== told && this._http) {
         told = place
@@ -505,10 +517,15 @@ export default class VrWorkspace extends Extension {
   // Pushing on one counts; pushed far enough, the pointer goes back out at that side.
   _fit() {
     const inside = this._inside, r = this._rect(inside)
-    if (!r) return
+    if (!r) return this._out() // the window was closed under the pointer
     const boxes = [r, ...(inside.window ? [...this._copies.values()].filter(c => c.window === inside.window).map(({ popup }) => popup.get_frame_rect()) : [])]
     const x0 = Math.min(...boxes.map(b => b.x)), y0 = Math.min(...boxes.map(b => b.y))
     const x1 = Math.max(...boxes.map(b => b.x + b.width)), y1 = Math.max(...boxes.map(b => b.y + b.height))
+    // The barriers keep in only what is in. A window that became smaller or went elsewhere under the pointer (out
+    // of fullscreen, a menu closed) leaves it outside, unseen and free on the desktop: then it comes out for good.
+    // Not right after going in: the pointer gets there a moment after it is put.
+    const [px, py] = global.get_pointer()
+    if (Date.now() - inside.since > 200 && (px < x0 - 1 || px > x1 || py < y0 - 1 || py > y1)) return this._out()
     if ([x0, y0, x1, y1].join() === inside.box) return
     for (const barrier of inside.barriers) barrier.destroy()
     inside.box = [x0, y0, x1, y1].join()

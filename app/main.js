@@ -1484,12 +1484,12 @@ function receive(name, kind, element) {
 // Returns a function that stops the stream for good.
 function receivePlain(screen, id) {
   const stopper = new AbortController(), gone = () => stopper.signal.aborted
-  const { port: first, key } = settings.raw ?? {} // given to pages on the PC only
-  const port = first + (id[0] === 'w' ? 10 : 0) + Number(id.slice(1))
   ;(async () => {
     let memory = new ArrayBuffer(1 << 16)
     while (!gone()) {
       try {
+        const { port: first, key } = settings.raw ?? {} // given to pages on the PC only; a server started anew has a new key
+        const port = first + (id[0] === 'w' ? 10 : 0) + Number(id.slice(1))
         const answer = await fetch(`http://127.0.0.1:${port}/?k=${key}`, { signal: stopper.signal })
         if (!answer.ok) throw new Error(answer.status)
         // Read into memory we give, where the browser can (Chromium): else it makes 900 MB of new buffers a second

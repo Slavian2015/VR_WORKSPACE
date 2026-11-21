@@ -55,7 +55,9 @@ def serve(conn):
                 return
             request += piece
         asked = request.split(b'\r\n')[0].decode('latin-1').split(' ')
-        if not KEY or len(asked) < 2 or asked[0] != 'GET' or f'k={KEY}' not in asked[1].partition('?')[2].split('&'):
+        # Asked for by this PC's own address: a web page from elsewhere whose name was pointed at this PC is not served.
+        named = any(line.lower().startswith(b'host: 127.0.0.1:') for line in request.split(b'\r\n')[1:])
+        if not KEY or not named or len(asked) < 2 or asked[0] != 'GET' or f'k={KEY}' not in asked[1].partition('?')[2].split('&'):
             conn.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             return
         conn.settimeout(None)

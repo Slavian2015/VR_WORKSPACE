@@ -217,7 +217,7 @@ async function handle(req, res) {
     const told = JSON.parse(await readBody(req))
     let opened = [] // windows that were not there at the last report
     if (Number.isFinite(told?.focus)) focusedWindow = told.focus
-    if (told && 'picture' in told) { // the monitor that shows the picture of a headset on a cable, of those capture.py named
+    if (told?.picture !== undefined) { // the monitor that shows the picture of a headset on a cable, of those capture.py named
       pictureScreen = Object.values(connectors).includes(told.picture) ? told.picture : null
       tellCable()
     }
@@ -427,7 +427,7 @@ async function handle(req, res) {
     }
     // self: this monitor shows the picture of a headset on a cable, so it is not a panel there
     const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
-    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: glassesOn(), ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
