@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Puts VR Workspace into GNOME (setup.sh runs this; safe to run again):
 # - links the extension (the top bar icon with its menu and settings window) into your GNOME profile and enables it;
-# - writes two systemd user services, so that the menu can start and stop the server and the settings window can
-#   read the settings while it is off. Nothing is started at login.
+# - writes three systemd user services, so that the menu can start and stop the server and the recording, and the
+#   settings window can read the settings while the server is off. Nothing is started at login.
 # GNOME loads the extension at the next login.
-# To remove: gnome-extensions disable vr-workspace@local, then delete the two files this script names at the end.
+# To remove: gnome-extensions disable vr-workspace@local, then delete the files this script names at the end.
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(dirname "$PWD")
@@ -36,6 +36,20 @@ Description=VR Workspace settings (no stream, this PC only)
 WorkingDirectory=$ROOT
 ExecStart="$NODE" server.js --settings
 UNIT
+# The recording of what the headset shows ("Record Video" in the menu). Stopped with SIGINT, as Ctrl+C in a terminal:
+# it then finishes its file. PartOf: it stops with VR Workspace, and saves what it has.
+cat > ~/.config/systemd/user/vr-workspace-record.service <<UNIT
+[Unit]
+Description=VR Workspace: a video of what the headset shows, into ~/Videos
+PartOf=vr-workspace.service
+After=vr-workspace.service
+
+[Service]
+WorkingDirectory=$ROOT
+ExecStart="$NODE" record.mjs
+KillSignal=SIGINT
+KillMode=mixed
+UNIT
 systemctl --user daemon-reload
 
 # GSETTINGS_SCHEMA_DIR is unset because the VS Code snap terminal points it at schemas without GNOME Shell's.
@@ -49,5 +63,5 @@ if 'vr-workspace@local' not in enabled:
 "
 echo "Installed:"
 echo "  ~/.local/share/gnome-shell/extensions/vr-workspace@local   (a link to this folder)"
-echo "  ~/.config/systemd/user/vr-workspace.service and vr-workspace-settings.service"
+echo "  ~/.config/systemd/user/vr-workspace.service, vr-workspace-settings.service and vr-workspace-record.service"
 echo "Log out and in again: the headset icon appears in the top bar."

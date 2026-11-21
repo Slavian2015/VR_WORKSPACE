@@ -73,8 +73,8 @@ does not take its own address on the internet from inside): use the one from Loc
 still screen costs little, a changing one (a film, scrolling) up to 20 Mbit/s for each monitor and 12 for each
 window: mind the mobile data.
 
-The top bar menu has three items: **VR Workspace** (the server on or off), **Headset on a Cable** (see below) and
-**Settings**. **Centre on gaze** is in Settings → Monitors (and key 5 in the arranging mode); the camera as the
+The top bar menu has four items: **VR Workspace** (the server on or off), **Headset on a Cable** (see below),
+**Record Video** (see "Recording what you see") and **Settings**. **Centre on gaze** is in Settings → Monitors (and key 5 in the arranging mode); the camera as the
 background in Settings → Headset → Phone Camera.
 
 ## Settings
@@ -249,7 +249,8 @@ Glasses that are a monitor of this PC (USB-C with DisplayPort, a motion sensor a
 the PC draws their picture itself, with no Wi-Fi and no video compression on the way. For now, before such glasses
 are here, the parts are tried with what there is:
 
-- **Their picture:** top bar menu → **Headset on a Cable** (switching it off closes the picture). A window on the
+- **Their picture:** top bar menu → **Headset on a Cable**, or the **Pause** key from anywhere (switching it off closes
+  the picture). A window on the
   whole screen it opens on shows what the glasses would, its left half for the left eye and the right half for the
   right. Each eye sees a flat screen as wide as Settings → Headset → Picture → **Field of view on a cable** (across
   the diagonal, as the maker gives it). The same is `http://localhost:8080/?glasses` in any browser.
@@ -267,8 +268,10 @@ are here, the parts are tried with what there is:
   at once, without making the virtual monitors anew.
 - **The monitor that shows the picture** is no panel in it: it would show itself.
 - **The phone meanwhile** is the sensor and nothing else: a dark screen with one line of text, no pictures taken
-  over Wi-Fi, the sound still played. A spectator page and the preview get no picture while the cable picture is
-  on. Switched off, the picture comes back to the phone by itself within some ten to twenty seconds.
+  over Wi-Fi, the sound still played. The spectator page on this PC (so the preview and `record.mjs` too)
+  then shows what the wearer of the headset on the cable sees: the same pictures, and that picture's pointer and
+  list. A spectator on another device gets no pictures meanwhile. Switched off, the picture comes back to the phone
+  by itself within some ten to twenty seconds.
 
 **The mouse** works there as the phone's mouse works on the phone's screen. While the glasses' picture fills a
 screen, the pointer stays on that screen and the picture draws it itself, at once. Moved onto a monitor or a single
@@ -321,7 +324,9 @@ curl -s -X POST http://localhost:8080/toggle/passthrough
 
 ## Recording what you see
 
-In the project folder, while VR Workspace runs:
+Top bar menu → **Record Video**, or the **Scroll Lock** key from anywhere (a notification in the headset says which
+way it went): on starts it, off stops it and saves the video, with the PC's sound, into `~/Videos` (switching VR
+Workspace off saves it too). The same from a terminal, in the project folder, while VR Workspace runs:
 
 ```bash
 node record.mjs          # Ctrl+C stops; the video, with the PC's sound, goes to ~/Videos
@@ -331,7 +336,7 @@ node record.mjs 110      # a wider view: 110 degrees instead of 90
 It records one flat picture of what the wearer is looking at (no stereo, no lens distortion), following the head a
 quarter of a second behind so that it stays smooth. Nothing appears on the screen: an invisible Chromium draws the
 picture on the graphics card. Our pointer and the list of applications are in it, as the phone shows them; the
-phone camera is not.
+phone camera is not. With a headset on a cable it records what that headset's wearer sees, the same way.
 
 To only watch: Settings → Connect → "See what the headset shows" opens http://localhost:8080/?spectator in the
 browser (click it once). As a window on the PC it gets covered by the windows the headset brings to the front.

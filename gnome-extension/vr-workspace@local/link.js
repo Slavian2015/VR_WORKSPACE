@@ -33,9 +33,17 @@ export async function talk(session, path, values) {
 }
 
 // The server is two systemd user services, which gnome-extension/install.sh writes; starting one stops the other.
+// (Services, because GNOME Shell does not see a node installed with nvm.)
 const service = (name, on) => Gio.Subprocess.new(['systemctl', '--user', on ? 'start' : 'stop', `${name}.service`], Gio.SubprocessFlags.NONE)
 // VR Workspace itself: the phone can connect.
 export const power = on => service('vr-workspace', on)
 // Only its settings, for the settings window while VR Workspace is off: nothing is streamed, the answers say
 // `settingsOnly`.
 export const settingsOnly = on => service('vr-workspace-settings', on)
+// The recording of what the headset shows (record.mjs), into ~/Videos. Stopped, it finishes its file; it stops with
+// VR Workspace too.
+export const record = on => service('vr-workspace-record', on)
+export const recording = () => new Promise(done => {
+  const asked = Gio.Subprocess.new(['systemctl', '--user', 'is-active', '--quiet', 'vr-workspace-record.service'], Gio.SubprocessFlags.NONE)
+  asked.wait_async(null, () => done(asked.get_exit_status() === 0))
+})

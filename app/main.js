@@ -22,6 +22,10 @@ if (GLASSES) {
 }
 const SPECTATOR = new URLSearchParams(location.search).has('spectator')
 const sensorOnly = () => !!settings?.glasses && !GLASSES && !SPECTATOR // the phone while a headset on a cable is the headset: it gives the head's turn, nothing more
+// The spectator while a headset on a cable shows its picture: it shows what that headset's wearer sees (that page's
+// pointer and list, not the phone's), and on the PC it gets the pictures as that page does, as they are (plain).
+const cabled = (p = settings) => SPECTATOR && !!p?.glasses
+const plain = (p = settings) => GLASSES || (cabled(p) && !!p.raw)
 const SPECTATOR_FOV = (+new URLSearchParams(location.search).get('spectator') || 90) * DEG
 const WIDTH_AT = 1.5 // metres: a monitor's width in degrees is what it takes up at this distance
 
@@ -82,16 +86,16 @@ const blankTexture = Object.assign(new THREE.DataTexture(new Uint8Array(4), 1, 1
 const crisp = texture => Object.assign(texture, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
   anisotropy: renderer.capabilities.getMaxAnisotropy() })
 let screens = [], uniforms, monitorIds
-function build(keys) { // keys: what each monitor shows. One that stays keeps its video and its connection: no blink
+function build(keys, asIs) { // keys: what each monitor shows. One that stays keeps its video and its connection: no blink
   const old = screens, count = keys.length
   scene.children[0]?.material.dispose()
   scene.clear()
   const background = uniforms?.uBg.value ?? null // stays as it is
-  screens = keys.map(key => old.find(s => s.key === key) ?? (() => {
-    // A headset on a cable gets the pictures as they are, with no video in between (receivePlain): what stands for
-    // the video there only tells the picture's size and whether one has come.
-    const video = GLASSES ? { videoWidth: 0, videoHeight: 0, readyState: 0, remove() {} } : hiddenVideo()
-    return { key, video, texture: crisp(GLASSES ? new THREE.DataTexture(new Uint8Array(4), 1, 1) : new THREE.VideoTexture(video)) }
+  screens = keys.map(key => old.find(s => s.key === key && s.asIs === asIs) ?? (() => {
+    // asIs: the pictures come as they are, with no video in between (receivePlain; see `plain`). What stands for the
+    // video then only tells the picture's size and whether one has come.
+    const video = asIs ? { videoWidth: 0, videoHeight: 0, readyState: 0, remove() {} } : hiddenVideo()
+    return { key, asIs, video, texture: crisp(asIs ? new THREE.DataTexture(new Uint8Array(4), 1, 1) : new THREE.VideoTexture(video)) }
   })())
   for (const { video, texture, stop } of old.filter(s => !screens.includes(s))) { stop?.(); texture.dispose(); video.remove() }
   uniforms = {
@@ -544,7 +548,7 @@ const anchor = { yaw: 0, pitch: 0 }
 watchParams(p => {
   const key = m => `${m.id}:${m.source ?? ''}` // another window in the same place of the list is another stream
   const ids = p.monitors.map(key).join()
-  if (ids !== monitorIds) build(p.monitors.map(key))
+  if (ids !== monitorIds || screens.some(s => s.asIs !== plain(p))) build(p.monitors.map(key), plain(p)) // also when a headset on a cable comes or goes
   // Where a single window that has just come into the sphere stands. A dialog (`over`: the panel of its window) lies
   // on its window as on the PC, at its distance and with its text as large as the window's. The first window after
   // a start from the list of applications opens where the user looked before calling the list. Any other window
@@ -776,6 +780,7 @@ const place = target => {
 // pointer crosses the phone (the phone's own round pointer, seen by one eye at a time, is no longer where ours is).
 const aimed = new THREE.Vector3(), aimTurn = new THREE.Quaternion(), FORWARD = new THREE.Vector3(0, 0, -1)
 function aim() {
+  if (cabled()) return aimed.set(mouse.x, mouse.y, -1).normalize() // sent as a direction already (sharePose)
   if (GLASSES) {
     const [h, v] = glassesTan()
     return aimed.set((mouse.x - 0.5) * 2 * h, (0.5 - mouse.y) * 2 * v, -1).normalize()
@@ -795,7 +800,7 @@ function pxPerDegree(p) {
 // degrees across one eye's view. A headset on a cable shows them taking the same share of its own view (in degrees
 // they were wider than the whole view of a monitor standing for one, 39 degrees: "very close to the face").
 const PHONE_VIEW = 96
-const sheetScale = () => GLASSES ? PHONE_VIEW / (2 * Math.atan(glassesTan()[0]) / DEG) : 1
+const sheetScale = () => GLASSES || cabled() ? PHONE_VIEW / (2 * Math.atan(glassesTan()[0]) / DEG) : 1
 function glassesTan(p = settings) {
   const eye = innerWidth / 2, across = Math.tan(p.glassesFov * DEG / 2) / Math.hypot(1, innerHeight / eye)
   return [across, across * innerHeight / eye]
@@ -817,8 +822,9 @@ function point(dt) { // every frame: the list of applications, or our pointer on
     const crop = settings.monitors[phonePointer.x]?.crop
     if (crop) uniforms.uPointerPx.value.set(crop[2], crop[3])
   } else uniforms.uPointer.value.set(target ? looked : -1, at ? at.x / target.crop[2] : 0, at ? 1 - at.y / target.crop[3] : 0)
-  // Our pointer as a dot in the view: over the list, and while arranging.
-  uniforms.uRayOn.value = menu.open || settings.edit ? 1 : 0
+  // Our pointer as a dot in the view: over the list, and while arranging. A headset on a cable: wherever it is not
+  // inside a monitor or window.
+  uniforms.uRayOn.value = (cabled() ? phonePointer.x < 0 : menu.open || settings.edit) ? 1 : 0
   uniforms.uRay.value.copy(aim())
   if (target) {
     uniforms.uPointerPx.value.set(target.crop[2], target.crop[3])
@@ -1417,11 +1423,14 @@ async function sharePose() {
           Object.assign(mouse, { x, y })
           phonePointer.fromArray(pointer)
         }
-      } else if (settings?.spectator && !document.hidden && !GLASSES) {
+      } else if (GLASSES ? settings?.watched : settings?.spectator && !document.hidden) {
         // Only the page on screen: a second copy left open in Safari keeps running behind the home-screen one (it
         // plays sound), and its head, without sensors, stays where it started: the spectator jumped back to it.
-        await fetch('/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch,
-          menu.open ? 1 : 0, menu.yaw, menu.drag, mouse.x, mouse.y, ...uniforms.uPointer.value.toArray(), ...movingNow()]) })
+        // The picture of a headset on a cable tells its own (while somebody watches): there the pointer and the list
+        // are its. Its mouse goes as a direction: the spectator does not know that window's shape.
+        const ray = GLASSES && aim(), [x, y] = ray ? [ray.x / -ray.z, ray.y / -ray.z] : [mouse.x, mouse.y]
+        await fetch(GLASSES ? '/pose?glasses' : '/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch,
+          menu.open ? 1 : 0, menu.yaw, menu.drag, x, y, ...uniforms.uPointer.value.toArray(), ...movingNow()]) })
       }
     } catch {} // the server is restarting: go on asking
     await pause(SPECTATOR || settings?.spectator ? Math.max(0, 33 - (performance.now() - started)) : 500) // 30 a second, however long the request took
@@ -1543,7 +1552,7 @@ function startStreams() { // called after the tap and after every change of sett
     if (sensorOnly() || settings.monitors[i].self) {
       screen.stop?.()
       screen.stop = null
-    } else screen.stop ??= GLASSES ? receivePlain(screen, settings.monitors[i].id) : receive(settings.monitors[i].id, 'video', screen.video)
+    } else screen.stop ??= screen.asIs ? receivePlain(screen, settings.monitors[i].id) : receive(settings.monitors[i].id, 'video', screen.video)
   })
   // MediaMTX runs the capture only while somebody takes "vr/m0" from it. On a cable that is a small black stand-in.
   if (GLASSES) keepCapture ??= receive('m0', 'video', hiddenVideo())

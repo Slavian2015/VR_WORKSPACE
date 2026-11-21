@@ -28,7 +28,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js'
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js'
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js'
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
-import { http, talk, power, SERVER } from './link.js'
+import { http, talk, power, record, recording, SERVER } from './link.js'
 
 Gio._promisify(Shell.Screenshot, 'composite_to_stream') // as GNOME Shell's own screenshots do
 const isGlasses = window => window.get_title()?.startsWith('VR Workspace — glasses') ?? false // the title index.html?glasses gives itself
@@ -85,7 +85,19 @@ export default class VrWorkspace extends Extension {
     this._emergency = global.display.grab_accelerator('<Control><Alt>BackSpace', Meta.KeyBindingFlags.NONE)
     if (this._emergency === Meta.KeyBindingAction.NONE) console.log('VR Workspace: Ctrl+Alt+Backspace is taken, there is no emergency key')
     else Main.wm.allowKeybinding(Meta.external_binding_name_for_action(this._emergency), Shell.ActionMode.ALL)
-    this._emergencyPressed = global.display.connect('accelerator-activated', (_display, action) => action === this._emergency && this._emergencyStop())
+    // Two more keys that work from anywhere, as Num Lock does for the arranging: in the sphere there is no menu.
+    // Scroll Lock: the recording on and off (the menu's Record Video). Pause: the picture of a headset on a cable.
+    this._hotkeys = new Map() // the window manager's number of each -> what it does
+    for (const [name, press] of [['Scroll_Lock', () => this._switchRecord()], ['Pause', () => this._switchPicture()]]) {
+      const action = global.display.grab_accelerator(name, Meta.KeyBindingFlags.IGNORE_AUTOREPEAT)
+      if (action === Meta.KeyBindingAction.NONE) {
+        console.log(`VR Workspace: the key ${name} is taken`)
+        continue
+      }
+      Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.ALL)
+      this._hotkeys.set(action, press)
+    }
+    this._emergencyPressed = global.display.connect('accelerator-activated', (_display, action) => action === this._emergency ? this._emergencyStop() : this._hotkeys.get(action)?.())
     // The Super key (and the Activities corner) call Main.overview.toggle(): through us while we are enabled.
     this._toggleOverview = Main.overview.toggle
     Main.overview.toggle = (...args) => this._overview(...args)
@@ -119,6 +131,7 @@ export default class VrWorkspace extends Extension {
     global.display.disconnect(this._emergencyPressed)
     Main.overview.toggle = this._toggleOverview
     if (this._emergency !== Meta.KeyBindingAction.NONE) global.display.ungrab_accelerator(this._emergency)
+    for (const action of this._hotkeys.keys()) global.display.ungrab_accelerator(action)
     Main.messageTray.disconnectObject(this)
     for (const source of Main.messageTray.getSources()) source.disconnectObject(this)
     if (this._cursorTimer) GLib.source_remove(this._cursorTimer)
@@ -141,12 +154,12 @@ export default class VrWorkspace extends Extension {
     menu.addMenuItem(this._power)
     // A headset on a cable: its picture, a window of its own filling the screen it opens on
     this._cable = new PopupMenu.PopupSwitchMenuItem(_('Headset on a Cable'), false)
-    this._cable.connect('toggled', (_item, on) => {
-      if (on) return this._openPicture()
-      this._pictureAsked = 0
-      this._glassesWindow()?.delete(global.get_current_time())
-    })
+    this._cable.connect('toggled', (_item, on) => this._setPicture(on))
     menu.addMenuItem(this._cable)
+    // What the headset shows, as a flat video with the PC's sound, into ~/Videos (record.mjs)
+    this._record = new PopupMenu.PopupSwitchMenuItem(_('Record Video'), false)
+    this._record.connect('toggled', (_item, on) => record(on))
+    menu.addMenuItem(this._record)
     menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
     menu.addAction(_('Settings'), () => this.openPreferences())
     // The state is asked for only while the menu is open: nothing runs in the background for an icon.
@@ -168,6 +181,11 @@ export default class VrWorkspace extends Extension {
       // (the picture takes a few seconds to open and to be known by its title)
       this._cable.setToggleState(!!this._glassesWindow() || Date.now() - (this._pictureAsked ?? 0) < 8000)
       this._cable.setSensitive(on || !!this._glassesWindow()) // a picture left open can be closed here also with the server off
+      recording().then(now => {
+        if (!this._indicator) return
+        this._record.setToggleState(now)
+        this._record.setSensitive(on || now)
+      })
     })
   }
 
@@ -262,6 +280,29 @@ export default class VrWorkspace extends Extension {
     if (!this._http || `${png}${x},${y}` === this._cursorSent) return
     this._cursorSent = `${png}${x},${y}`
     talk(this._http, '/cursor', { png, hot: [x, y] })
+  }
+
+  // The picture of a headset on a cable on or off: the menu's switch, and the Pause key (not on while VR Workspace
+  // is off: there would be nothing to show).
+  _setPicture(on) {
+    if (on) return this._openPicture()
+    this._pictureAsked = 0
+    this._glassesWindow()?.delete(global.get_current_time())
+  }
+
+  _switchPicture() {
+    const open = !!this._glassesWindow()
+    if (open || this._serverSeen) this._setPicture(!open)
+  }
+
+  // The Scroll Lock key: the recording on or off. Said in a notification, which the headset shows: there is no
+  // switch to look at in the sphere.
+  _switchRecord() {
+    recording().then(now => {
+      if (!this._indicator || (!now && !this._serverSeen)) return
+      record(!now)
+      Main.notify('VR Workspace', now ? _('Recording stopped: the video is in Videos') : _('Recording started'))
+    })
   }
 
   // The emergency key: the glasses view off the screen at once (minimised by the window manager itself, so also when

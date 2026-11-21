@@ -50,6 +50,7 @@ let phoneSeen = 0 // when a device other than this PC last asked for the setting
 // The headset's view direction, for the spectator page (index.html?spectator); the phone sends it only while
 // somebody watches, which it learns from `spectator` in the settings answer.
 let pose = 'null', spectatorSeen = 0
+let picturePose = { text: 'null', at: 0 } // the same from the picture of a headset on a cable, while there is one and somebody watches
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
 const live = { fullscreen: false, passthrough: false, grab: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 }
@@ -364,18 +365,21 @@ async function handle(req, res) {
 
   if (url === '/pose' && req.method === 'POST') {
     // Only the phone's: a preview page left open on this PC sends its own, and the spectator jumped between the two.
-    if (local) return res.writeHead(204).end()
+    // And that of the picture of a headset on a cable (?glasses), for the spectator alone: the pointer, the list and
+    // the arranging are that page's there, not the phone's.
+    const picture = local && searchParams.has('glasses')
+    if (local && !picture) return res.writeHead(204).end()
     const sent = JSON.parse(await readBody(req))
     // head (4), anchor (2), the list of applications (open, yaw, the icon carried), the mouse (2), our pointer (3),
     // the panel in hand or being resized (index or -1, yaw, pitch, width or 0, shape)
     if (!Array.isArray(sent) || sent.length !== 19 || !sent.every(Number.isFinite)) throw new SyntaxError('nineteen numbers expected')
-    pose = JSON.stringify(sent)
-    push('pose', pose)
+    if (picture) picturePose = { text: JSON.stringify(sent), at: Date.now() }
+    else push('pose', pose = JSON.stringify(sent))
     return res.writeHead(204).end()
   }
   if (url === '/pose') {
     spectatorSeen = Date.now()
-    return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(pose)
+    return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(Date.now() - picturePose.at < 1000 ? picturePose.text : pose)
   }
 
   // Live settings: pages poll GET a few times a second, POST merges a JSON object into them (null removes a key).
@@ -427,7 +431,7 @@ async function handle(req, res) {
     }
     // self: this monitor shows the picture of a headset on a cable, so it is not a panel there
     const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
-    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), watched: Date.now() - spectatorSeen < 2000, ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
