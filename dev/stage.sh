@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Makes a copy of the project that can run next to the real one: spare ports (18080 pages, 18443 HTTPS, 11935 and
-# 18554 the streams, 18889 and 18189 WebRTC), a test sound output, no sound capture, its own settings.
+# 18554 the streams, 18889 and 18189 WebRTC, 18700 and up the plain pictures for a headset on a cable), a test sound output, no sound capture, its own settings.
 #
 #   dev/stage.sh <folder>       then, for example:  cd <folder> && node server.js
 #
@@ -8,15 +8,26 @@
 set -eu
 P=$(cd "$(dirname "$0")/.." && pwd); D=$1
 mkdir -p "$D"; cd "$D"
-for f in app node_modules bin package.json orders.js cert.sh; do ln -sfn "$P/$f" "$f"; done
+for f in app node_modules bin package.json orders.js cert.sh raw.py; do ln -sfn "$P/$f" "$f"; done
 rm -rf certs; cp -r "$P/certs" certs # a copy: the server may make a new certificate and key, the real ones must stay
-sed -e 's/listen(8080/listen(18080/' -e 's/listen(8443)/listen(18443)/' -e 's/127.0.0.1:8889/127.0.0.1:18889/' "$P/server.js" > server.js
+sed -e 's/listen(8080/listen(18080/' -e 's/listen(8443)/listen(18443)/' -e 's/127.0.0.1:8889/127.0.0.1:18889/' -e 's/RAW_PORT = 8700/RAW_PORT = 18700/' "$P/server.js" > server.js
 sed -e 's/:8554/:18554/' -e 's/:8889/:18889/' -e 's/:8189/:18189/' -e 's/:1935/:11935/' "$P/mediamtx.yml" > mediamtx.yml
-sed -e 's/:1935/:11935/' "$P/windows.py" > windows.py
+# The encoders on the processor (x264): the GPU's video engine can hang, and a hang there freezes the real desktop
+# too (2026-11-21). Every replacement must take place: one that silently did not would let a test use that engine.
+SOFT='video/x-raw,format=NV12 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=30'
+/usr/bin/python3 - "$P/windows.py" "$SOFT" > windows.py <<'PY'
+import sys
+s, old = open(sys.argv[1]).read().replace(':1935', ':11935'), 'vaapih264enc rate-control=vbr bitrate=12000 keyframe-period=30 max-bframes=0'
+assert s.count(old) == 1 and s.count('vaapih264enc') == 1, 'stage.sh: windows.py has changed, cannot take the GPU encoder out of its test copy'
+print(s.replace(old, sys.argv[2]), end='')
+PY
 # the capture without sound: that session has no sound server, and the test must not touch the real one
-/usr/bin/python3 - "$P/capture.py" > capture.py <<'PY'
+/usr/bin/python3 - "$P/capture.py" "$SOFT" > capture.py <<'PY'
 import sys
 s = open(sys.argv[1]).read().replace(':8554', ':18554').replace(':1935', ':11935').replace(':8080', ':18080').replace("SINK = 'vr_headset'", "SINK = 'vr_test'")
+old = 'vaapih264enc rate-control=vbr bitrate=20000 keyframe-period=60 max-bframes=0'
+assert s.count(old) == 1 and s.count('vaapih264enc ') == 1, 'stage.sh: capture.py has changed, cannot take the GPU encoder out of its test copy'
+s = s.replace(old, sys.argv[2])
 i = s.index("    spawn(f'ffmpeg -hide_banner"); j = s.index('\n\n', i)
 print(s[:i] + "    spawn('sleep 100000')  # staged copy: no sound" + s[j:], end='')
 PY

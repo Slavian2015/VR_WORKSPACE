@@ -306,9 +306,10 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
           () => talk(session, '/params', { recenter: Date.now() }), 'suggested-action'),
         new Adw.ActionRow({
           title: _('Arrange in the headset: Num Lock'),
-          subtitle: _('While Num Lock is on, the mouse works in the headset. Look at a monitor, hold the left button and carry it with your gaze. Wheel: size. Shift+wheel: curve. Ctrl+wheel: distance. Keys 1–4: hide or show a monitor, 5: centre. Num Lock again gives the mouse back; the rest of the keyboard works as usual.'),
+          subtitle: _('While Num Lock is on (F12 on a keyboard connected to the phone), the mouse works in the headset. Look at a monitor, hold the left button and carry it with your gaze. Wheel: size. Shift+wheel: curve. Ctrl+wheel: distance. Keys 1–4: hide or show a monitor, 5: centre. Num Lock again gives the mouse back; the rest of the keyboard works as usual.'),
         }),
         toggle('hideMonitors', _('Hide all monitors'), _('To look at the background, or to work with single windows alone: those stay')),
+        number('windowDist', host.layout.windowDist, _('Distance of new windows, m'), _('Farther is smaller. At 1.5 one pixel of a window is one pixel of the screen, the sharpest text; farther it is softer')),
         // 'dist': the distance used to be one for all monitors
         action(_('Reset the arrangement'), _('Every monitor back to its place, size and distance'), _('Reset'),
           () => talk(session, '/params', Object.fromEntries([...monitorKeys().filter(key => !key.endsWith('.size')), 'dist'].map(key => [key, null]))), 'destructive-action')) // not the pixel sizes: that would restart the picture
@@ -466,23 +467,12 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
 
       // ---- Headset: the phone's camera and the lenses
       const headset = new Adw.PreferencesPage({ title: _('Headset'), icon_name: 'camera-photo-symbolic' })
-      // Three tabs: a phone in a headset, glasses on a cable, and what both show alike.
-      const kinds = tabbed(headset, _('Phone'), _('Glasses'), _('Picture'))
+      // Three tabs: the phone's lenses, the phone's camera, and what every headset shows alike. (The picture of a
+      // headset on a cable is switched on in the top bar menu.)
+      const kinds = tabbed(headset, _('Lens Calibration'), _('Phone Camera'), _('Picture'))
       const camera = new Adw.ActionRow({ title: _('Camera the phone gave'), css_classes: ['property'], visible: false })
       shows.camLabel = label => Object.assign(camera, { subtitle: GLib.markup_escape_text(label, -1), visible: true })
       kinds.add(0, group(headset, {
-        title: _('Phone Camera'),
-        description: _('See the room through the camera of the phone. It is open only while its picture is needed.'),
-      },
-      toggle('passthrough', _('Camera as the background'), _('Pass-through: the room instead of the scene, the monitors stay')),
-      number('camBelow', host.layout.camBelow, _('Camera when looking down, °'), _('To see the keyboard and your hands: the camera shows below this angle under the horizon. 0 switches it off')),
-      toggle('camKeep', _('Keep the camera open'), _('The phone then asks for permission once, at the start, and not at every look down; its camera sign stays on. For a page started from the iPhone home screen, which does not remember the permission')),
-      number('camFov', host.layout.camFov, _('Camera view angle, °'), _('Set it so that things look their real size')),
-      number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
-      number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
-      camera))
-      kinds.add(0, group(headset, {
-        title: _('Lens Calibration'),
         description: _('First the two distances, until both pictures merge without eye strain. Then k1 and k2, until straight lines are straight at the edges. Then the colour fringes, until white text near the edge has no red and blue outlines. The background “test grid” shows all of it best.'),
       },
       number('lensDist', host.lens.lensDist, _('Screen to lens, mm')),
@@ -495,38 +485,21 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('cy', host.lens.cy, _('Centre shift, vertical, mm')),
       action(_('Reset the calibration'), _('Back to the values found for an iPhone 15 Pro in a Gear VR'), _('Reset'),
         () => talk(session, '/params', Object.fromEntries(Object.keys(host.lens).map(key => [key, null]))), 'destructive-action')))
-      // Glasses on a cable: a monitor to the PC, which draws their picture itself. For now a window, turned by the phone.
       kinds.add(1, group(headset, {
-        title: _('Glasses on a Cable'),
-        description: _('Glasses that are a monitor of this PC: it draws their picture itself. For now the picture is a window here, turned by the phone (which must be running), and this PC’s webcam stands for their camera. Ctrl+Alt+Backspace always brings the plain desktop back: it closes that window and switches VR Workspace off.'),
+        description: _('See the room through the camera of the phone. It is open only while its picture is needed.'),
       },
-        number('glassesFov', host.lens.glassesFov, _('Field of view across the diagonal, °'), _('As the maker gives it; on a monitor 90 shows more')),
-        action(_('The glasses’ picture'), _('A window, always stereo: its left half for the left eye, the right half for the right'), _('Open'), () => {
-          const url = 'http://localhost:8080/?glasses'
-          try { // a window of its own, so that the emergency key closes only that
-            Gio.Subprocess.new(['chromium', `--app=${url}`, '--window-size=1920,540'], Gio.SubprocessFlags.NONE)
-          } catch {
-            Gtk.show_uri(window, url, Gdk.CURRENT_TIME)
-          }
-        })))
-      // Before the glasses are here: this PC's own screen stands for theirs, and the phone in the hand for their sensor.
-      kinds.add(1, group(headset, {
-        title: _('Try It on a Monitor'),
-        description: _('Your screen stands for the glasses, the phone in your hand for their sensor.'),
-      }, ...[
-        _('1. Once: Monitors → Virtual Monitors → Number: 1. Your own screen stays hidden in the headset (it would show itself), the virtual one is the desktop to look at'),
-        _('2. On the phone start VR Workspace from its icon and tap; hold it in landscape, screen towards you, as in the headset'),
-        _('3. Here: The glasses’ picture → Open, press F11 for the whole screen'),
-        _('4. Turn the phone: the picture turns with it. The mouse moves the pointer drawn in the picture, and it stays on that screen'),
-        _('5. Move it onto a monitor or an application’s panel: the mouse and the keyboard work in there. Push hard past a side of the panel to come back out'),
-        _('6. Num Lock: arranging with the mouse (carry a panel, drag a side of a window; tilt the phone down for the backgrounds). Super, or the right button beside the panels: the list of applications'),
-        _('7. F11 leaves the whole screen and gives the pointer back. Ctrl+Alt+Backspace: back to the plain desktop, VR Workspace switches off'),
-        _('Phone Camera as Background (top bar menu) shows this PC’s webcam in the picture, as the glasses’ camera would'),
-      ].map(title => new Adw.ActionRow({ title }))))
+      toggle('passthrough', _('Camera as the background'), _('Pass-through: the room instead of the scene, the monitors stay')),
+      number('camBelow', host.layout.camBelow, _('Camera when looking down, °'), _('To see the keyboard and your hands: the camera shows below this angle under the horizon. 0 switches it off')),
+      toggle('camKeep', _('Keep the camera open'), _('The phone then asks for permission once, at the start, and not at every look down; its camera sign stays on. For a page started from the iPhone home screen, which does not remember the permission')),
+      number('camFov', host.layout.camFov, _('Camera view angle, °'), _('Set it so that things look their real size')),
+      number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
+      number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
+      camera))
       kinds.add(2, group(headset, {
         title: _('Picture'),
       },
-      number('sharpen', host.layout.sharpen, _('Text sharpness, %'), _('Crisper letters through the lenses; too much draws bright edges around them'))))
+      number('sharpen', host.layout.sharpen, _('Text sharpness, %'), _('Crisper letters through the lenses; too much draws bright edges around them')),
+      number('glassesFov', host.lens.glassesFov, _('Field of view on a cable, °'), _('Of a headset on a cable, across the diagonal, as the maker gives it. On a monitor standing in for one, 90 shows more'))))
       kinds.add(2, group(headset, {
         title: _('Highlights'),
         description: _('A soft light around panels: the one in the arranging mode under the pointer, being carried or resized, and the window that gets the keyboard.'),

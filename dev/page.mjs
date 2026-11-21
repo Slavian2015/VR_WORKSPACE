@@ -3,6 +3,7 @@
 //
 //   node dev/page.mjs <url> [width height] [android] <action>...
 //
+//   CHROMIUM_FLAGS in the environment: more flags for Chromium (drawing on the graphics card: see record.mjs).
 //   android: as Chrome on an Android phone (its browser name, a phone's pixel density, touch), from the first request.
 //   Chromium is the same engine as Chrome on Android, so the page's own logic, video and sensors are tried as there.
 //
@@ -18,7 +19,8 @@ const [width, height] = /^\d+$/.test(rest[0]) ? rest.splice(0, 2).map(Number) : 
 const android = rest[0] === 'android' && rest.shift()
 const chrome = spawn('chromium', ['--headless=new', '--remote-debugging-port=9333', `--window-size=${width},${height}`,
   `--user-data-dir=${process.env.HOME}/snap/chromium/common/vr-test-profile`, '--autoplay-policy=no-user-gesture-required', '--mute-audio',
-  '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors', 'about:blank'], { stdio: 'ignore' })
+  '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors',
+  ...(process.env.CHROMIUM_FLAGS ?? '').split(' ').filter(Boolean), 'about:blank'], { stdio: 'ignore' })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const started = Date.now(), log = (...what) => console.log(((Date.now() - started) / 1000).toFixed(1).padStart(5), ...what)
 try {

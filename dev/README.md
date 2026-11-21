@@ -21,8 +21,12 @@ Rules learnt the hard way:
 - never listen on port 8080 in a test: the extension of the real desktop asks that port;
 - stop test processes by exact name or by port, never by a pattern that is also in the command being run;
 - tests must not change the default sound output of the real desktop;
-- the monitors' capture (`capture.py`) does not run there: it needs a sound server for its output. Single windows
-  (`windows.py`) do; try what concerns the video on a window's stream;
+- the copy that `stage.sh` makes has processor encoders (x264) in place of the graphics card's: its video engine
+  can hang, and that freezes the real desktop too. Never run the real encoders there;
+- the monitors' capture (`capture.py`) runs there from a `stage.sh` copy with `{"virtual": 1}` in its `params.json`,
+  without sound;
+- the picture of a headset on a cable with real pictures in it: the staged server inside `iso.sh`, and outside it
+  `CHROMIUM_FLAGS="--enable-gpu --ignore-gpu-blocklist --use-angle=vulkan --enable-features=Vulkan" node dev/page.mjs 'http://127.0.0.1:18080/?glasses' 1920 1080 wait:15 shot:...`;
 - that shell has no X11: GNOME starts Xwayland only through systemd, which the test session lacks. X11 programs
   (Flatpak VLC among them) cannot be tried there;
 - the guard counts the memory of the whole PC: programs the user works with meanwhile (a browser, FreeCAD) can

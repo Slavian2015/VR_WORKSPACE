@@ -10,7 +10,7 @@ import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
-import { cleanOrder, HOME, blocked, wrongKey } from './orders.js'
+import { cleanOrder, HOME, blocked, passKey, wrongKey } from './orders.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -63,7 +63,36 @@ let menuOpenAt = 0 // when the headset page last said its list of applications i
 // pointer is on (`enter`, said again and again while it is over one), which the extension carries out.
 const listeners = new Set() // { res, glasses }
 const glassesOn = () => [...listeners].some(l => l.glasses)
-const push = (event, data) => { for (const l of listeners) l.res.write(`event: ${event}\ndata: ${data}\n\n`) }
+// While that picture is shown, on this very PC, nothing is compressed for it: raw.py hands it every monitor and
+// window as plain pictures, each from a port of its own on this PC (the monitors from RAW_PORT on, the windows ten
+// higher), to who gives the key. capture.py reads from .cable.json that it is so, and which monitor shows the
+// picture (that one is not taken: a picture of itself); windows.py is told with every order. Three seconds longer
+// than the picture is there: reloaded, it is back at once.
+const RAW_PORT = 8700
+Object.assign(process.env, { VR_RAW_PORT: String(RAW_PORT), VR_RAW_KEY: crypto.randomBytes(16).toString('hex') }) // for capture.py and windows.py
+const CABLE_FILE = path.join(ROOT, '.cable.json')
+let pictureScreen = null, glassesSeen = 0, cableTold = 'null' // pictureScreen: the GNOME connector of the monitor that shows the picture, from the extension
+const cableOn = () => glassesOn() || Date.now() - glassesSeen < 3000
+function tellCable() {
+  if (glassesOn()) glassesSeen = Date.now()
+  const now = JSON.stringify(cableOn() ? { screen: pictureScreen } : null)
+  if (now === cableTold) return
+  cableTold = now
+  if (now === 'null') return fs.rmSync(CABLE_FILE, { force: true })
+  fs.writeFileSync(CABLE_FILE + '.new', now) // put in place whole: half a file would read as "no cable"
+  fs.renameSync(CABLE_FILE + '.new', CABLE_FILE)
+}
+fs.rmSync(CABLE_FILE, { force: true }) // left by a run that was killed
+setInterval(tellCable, 1000)
+process.on('exit', () => fs.rmSync(CABLE_FILE, { force: true }))
+const push = (event, data) => {
+  for (const l of listeners) {
+    // A reader that stopped reading (its page hangs) would have everything kept here for it: let go (EventSource comes back)
+    if (l.res.writableLength > 1e6) { listeners.delete(l); l.res.destroy(); continue }
+    l.res.write(`event: ${event}\ndata: ${data}\n\n`)
+  }
+}
+let connectors = {}, connectorsAt = 0 // capture.py's .connectors.json (which GNOME connector each monitor is), read at most every 2 s
 let enter = { at: 0 }, enterQuiet = 0 // where the glasses page asks the PC's mouse into a monitor or window; no asks taken before enterQuiet
 // Keys of the phone's keyboard held down in windows ("w0 30" -> the order). Should the phone go silent meanwhile (its
 // Wi-Fi gone, its battery flat), they are let go: else they would stay pressed on the PC, Ctrl for ever.
@@ -120,7 +149,9 @@ function syncWindows() {
     if (!openWindows.some(w => w.id === id)) { wantedWindows.delete(id); adopted.delete(id) }
   }
   if (SETTINGS_ONLY || (!wantedWindows.size && !windowsModule)) return
-  tellWindows({ streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1] }])) })
+  // need: how much of its picture a window uses, from the top left: itself and its open menus (which may reach out of it)
+  tellWindows({ raw: cableOn(), streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1],
+    need: [0, 1].map(k => Math.ceil(p.crop[k] + Math.max(p.crop[2 + k], ...p.popups.map(r => r[k] + r[2 + k])))) }])) })
 }
 process.on('exit', () => windowsModule?.kill())
 
@@ -186,6 +217,10 @@ async function handle(req, res) {
     const told = JSON.parse(await readBody(req))
     let opened = [] // windows that were not there at the last report
     if (Number.isFinite(told?.focus)) focusedWindow = told.focus
+    if (told && 'picture' in told) { // the monitor that shows the picture of a headset on a cable, of those capture.py named
+      pictureScreen = Object.values(connectors).includes(told.picture) ? told.picture : null
+      tellCable()
+    }
     if (Array.isArray(told?.open)) {
       const before = new Set(openWindows.map(w => w.id))
       openWindows = told.open.filter(w => [w?.id, w?.left, w?.top].every(Number.isFinite) && w.w > 0 && w.h > 0)
@@ -225,6 +260,8 @@ async function handle(req, res) {
     const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length,
       resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0,
       phoneOnline: Date.now() - phoneSeen < 2000, menuOpen: Date.now() - menuOpenAt < 3000, // for the Super key: our list instead of GNOME's overview
+      numLock: params.numLock ?? 0, // F12 on the phone's keyboard: the extension presses the PC's Num Lock
+      connectors: Object.values(connectors), // GNOME's names of the monitors in the headset: the extension says which shows the picture
       enter: glassesOn() && Date.now() - enter.at < 400 ? enter : null } // the monitor or window the PC's mouse is to go into
     launch = resizeWish = null
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
@@ -257,6 +294,7 @@ async function handle(req, res) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' }).write(': open\n\n')
     const listener = { res, glasses: searchParams.has('glasses') }
     listeners.add(listener)
+    tellCable()
     req.on('close', () => listeners.delete(listener))
     return
   }
@@ -310,13 +348,7 @@ async function handle(req, res) {
         console.log('a press from the headset was held back: its window was brought to the front less than 0.7 s ago')
         continue
       }
-      // A key only into the window that has the PC's keyboard: until the extension has brought this one to the front,
-      // the keyboard is with another, maybe one not in the headset at all. A release only of a key that went through.
-      if ('key' in order) {
-        const id = `${order.to} ${order.key}`
-        if (order.down ? source !== focusedWindow : !keysHeld.has(id)) continue
-        order.down ? keysHeld.set(id, order) : keysHeld.delete(id)
-      }
+      if ('key' in order && !passKey(order, source, focusedWindow, keysHeld)) continue // only into the window with the keyboard
       if (order.down && 'button' in order) headsetClick = { at: Date.now(), in: source }
       // Until the trouble with VLC's file chooser (2026-11-19) is understood: every button from the headset.
       if ('button' in order) console.log(`input: button ${order.button} ${order.down ? 'down' : 'up'} in ${order.to} (window ${source}) at ${Math.round(order.x)},${Math.round(order.y)}`)
@@ -389,10 +421,13 @@ async function handle(req, res) {
   }
   if (url === '/params') {
     if (!local) phoneSeen = Date.now()
-    let connectors = {} // capture.py: which GNOME connector each monitor is
-    try { connectors = JSON.parse(fs.readFileSync(path.join(ROOT, '.connectors.json'), 'utf8')) } catch {}
-    const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id] })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
-    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: glassesOn(), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
+    if (Date.now() - connectorsAt > 2000) { // the pages ask up to 25 times a second
+      connectorsAt = Date.now()
+      try { connectors = JSON.parse(fs.readFileSync(path.join(ROOT, '.connectors.json'), 'utf8')) } catch { connectors = {} }
+    }
+    // self: this monitor shows the picture of a headset on a cable, so it is not a panel there
+    const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: glassesOn(), ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }

@@ -78,6 +78,9 @@ const region = (canvas, [x, y]) => [x / sheets.width, y / sheets.height, canvas.
 // In place of the video of a panel out of view: three.js puts a video frame on the graphics card (and makes its mipmaps)
 // only for a texture that is drawn with, so the frames of panels behind the viewer cost nothing there.
 const blankTexture = Object.assign(new THREE.DataTexture(new Uint8Array(4), 1, 1), { needsUpdate: true })
+// A monitor is shown slightly smaller than 1:1, mipmaps stop the text from shimmering
+const crisp = texture => Object.assign(texture, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+  anisotropy: renderer.capabilities.getMaxAnisotropy() })
 let screens = [], uniforms, monitorIds
 function build(keys) { // keys: what each monitor shows. One that stays keeps its video and its connection: no blink
   const old = screens, count = keys.length
@@ -85,12 +88,10 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
   scene.clear()
   const background = uniforms?.uBg.value ?? null // stays as it is
   screens = keys.map(key => old.find(s => s.key === key) ?? (() => {
-    const video = hiddenVideo()
-    const texture = new THREE.VideoTexture(video)
-    texture.generateMipmaps = true // a monitor is shown slightly smaller than 1:1, mipmaps stop the text from shimmering
-    texture.minFilter = THREE.LinearMipmapLinearFilter
-    texture.anisotropy = renderer.capabilities.getMaxAnisotropy()
-    return { key, video, texture }
+    // A headset on a cable gets the pictures as they are, with no video in between (receivePlain): what stands for
+    // the video there only tells the picture's size and whether one has come.
+    const video = GLASSES ? { videoWidth: 0, videoHeight: 0, readyState: 0, remove() {} } : hiddenVideo()
+    return { key, video, texture: crisp(GLASSES ? new THREE.DataTexture(new Uint8Array(4), 1, 1) : new THREE.VideoTexture(video)) }
   })())
   for (const { video, texture, stop } of old.filter(s => !screens.includes(s))) { stop?.(); texture.dispose(); video.remove() }
   uniforms = {
@@ -114,7 +115,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
     uCam: { value: null }, uCamTan: { value: new THREE.Vector2() }, uCamShift: { value: new THREE.Vector2() }, uCamBelow: { value: -2 },
     uHud: { value: hudTexture }, uHudOn: { value: 0 }, uCursorBox: { value: cursorBox },
     uRes: { value: new THREE.Vector2() }, uCenter: { value: new THREE.Vector2() },
-    uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 },
+    uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 }, uSheetsAt: { value: 1.5 },
   }
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -160,6 +161,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
       uniform float uPxPerMm, uIpd, uLensDist, uK1, uK2;  // lengths in mm
       uniform float uChroma;                     // how much more the lens magnifies blue than green, and green than red
       uniform float uDist;                       // m: how far away the arranging note is drawn
+      uniform float uSheetsAt;                   // m: how far away the list, the backgrounds, the clock, a notification and our pointer are (as new windows)
 
       // View ray in head space through a point of the screen; q: its offset from the lens axis over the lens distance.
       vec3 ray(vec2 q) {
@@ -227,7 +229,7 @@ function build(keys) { // keys: what each monitor shows. One that stays keeps it
         vec2 fromAxis = p - vec2(side * 0.5 * uIpd, 0.0);              // mm from the lens axis
         vec3 dir = ray(fromAxis / uLensDist);                          // view ray and eye position, in head space
         vec3 eye = vec3(side * 0.0005 * uIpd, 0.0, 0.0);               // m
-        vec3 toward = normalize(eye + 1.5 * dir); // from between the eyes to where this ray is 1.5 m away: where the sheets and our pointer are, for both eyes
+        vec3 toward = normalize(eye + uSheetsAt * dir); // from between the eyes to where this ray is that far away: where the sheets and our pointer are, for both eyes
 
         // The lens spreads colours: the blue picture comes out larger than the red one, more so toward the edge.
         // So red is drawn as if its pixel were a little nearer to the lens axis and blue a little farther.
@@ -459,7 +461,7 @@ function arrange(p) {
   const wheel = [p.wheelSize, p.wheelCurve, p.wheelDist], was = wheelSeen ?? wheel
   wheelSeen = wheel
   if (pick.fade > 0.5) return void (wheel[0] !== was[0] && pickWheel(wheel[0] - was[0])) // looking down: the wheel turns the backgrounds' pages
-  if (id && wheel[0] !== was[0]) change(p, { [`${id}.span`]: clamp(p[`${id}.span`] + 2 * (wheel[0] - was[0]), MONITOR_SPEC.span) })
+  if (id && wheel[0] !== was[0]) zoomPanel(p, id, 0.06 * (wheel[0] - was[0])) // the PC's wheel through the extension: notches
   if (id && wheel[1] !== was[1]) change(p, { [`${id}.curve`]: clamp(p[`${id}.curve`] + 5 * (wheel[1] - was[1]), MONITOR_SPEC.curve) })
   if (id && wheel[2] !== was[2]) change(p, { [`${id}.dist`]: clamp(Math.round((p[`${id}.dist`] + 0.1 * (wheel[2] - was[2])) * 10) / 10, MONITOR_SPEC.dist) })
 }
@@ -546,9 +548,9 @@ watchParams(p => {
   // Where a single window that has just come into the sphere stands. A dialog (`over`: the panel of its window) lies
   // on its window as on the PC, at its distance and with its text as large as the window's. The first window after
   // a start from the list of applications opens where the user looked before calling the list. Any other window
-  // opens where the user is looking, as large as makes one of its pixels one pixel of the phone screen there: its
-  // text as sharp as it can be (the picture arrives as sharp as on the PC). (Windows that were there when the page
-  // started keep their places.)
+  // opens where the user is looking, at the distance of the setting windowDist, as large as it would be at 1.5 m
+  // with one of its pixels on one pixel of the screen there (text as sharp as it can be: the picture arrives as sharp
+  // as on the PC); farther it is smaller. (Windows that were there when the page started keep their places.)
   const perDegree = pxPerDegree(p)
   for (const m of p.monitors) {
     const { id, window, over, crop } = m
@@ -560,7 +562,7 @@ watchParams(p => {
       [`${id}.yaw`]: Math.round(gaze.yaw), [`${id}.pitch`]: Math.round(clamp(gaze.pitch, MONITOR_SPEC.pitch)),
       // (at most 120 degrees wide: a file chooser as large as the screen, over a small window, would go round the viewer)
       ...parent ? { [`${id}.dist`]: p[`${over}.dist`], [`${id}.curve`]: p[`${over}.curve`], [`${id}.span`]: Math.round(Math.min(120, clamp(p[`${over}.span`] * crop[2] / parent.crop[2], MONITOR_SPEC.span))) }
-        : { [`${id}.span`]: Math.round(Math.min(120, clamp(crop[2] / perDegree * p[`${id}.dist`] / WIDTH_AT, MONITOR_SPEC.span))) },
+        : { [`${id}.dist`]: p.windowDist, [`${id}.span`]: Math.round(Math.min(120, clamp(crop[2] / perDegree * 1.5 / WIDTH_AT, MONITOR_SPEC.span))) },
     })
   }
   // A window just resized from the headset: its panel takes the size the PC really gave it (an application has a
@@ -603,6 +605,7 @@ watchParams(p => {
 
 const Y = new THREE.Vector3(0, 1, 0), forward = new THREE.Vector3(), rotation = new THREE.Quaternion(), matrix = new THREE.Matrix4()
 const toMatrix3 = (target, q) => target.setFromMatrix4(matrix.makeRotationFromQuaternion(q))
+const sensorNote = document.getElementById('sensor')
 let frameAt = 0
 const appeared = {}, spans = [], aspects = [] // when each panel first showed (it fades in); from the last frame: degrees across (0: hidden), height / width
 renderer.setAnimationLoop(now => {
@@ -619,6 +622,7 @@ renderer.setAnimationLoop(now => {
   toMatrix3(uniforms.uToBg.value, rotation.setFromAxisAngle(Y, settings.bgYaw * DEG - anchor.yaw).multiply(head))
   uniforms.uTime.value = now / 1000
   uniforms.uArrowPx.value = 2 * pxPerDegree(settings) / DEG // one of the arrow's pixels on one of the screen's
+  uniforms.uSheetsAt.value = settings.windowDist
   const gaze = gazeOf(head)
   toMatrix3(uniforms.uToYaw.value, rotation.setFromAxisAngle(Y, -gaze.yaw).multiply(head)) // what stays below and above wherever one looks
   if (held) { // the panel in hand goes where the head looks (taken with the phone's mouse: where its pointer is), keeping the offset it was taken with
@@ -647,7 +651,8 @@ renderer.setAnimationLoop(now => {
     uniforms.uLook.value[i].y = grow
     uniforms.uLook.value[i].z = screens[i].video.readyState < 2 ? 1 : 0 // HAVE_CURRENT_DATA: a frame to show
     // "Hide all monitors" leaves single windows (crop) in place: that is how to work with windows alone.
-    const span = (settings.hideMonitors && !crop) || settings[`${id}.hidden`] ? 0 : (sized ? sized.span : settings[`${id}.span`]) * DEG * (0.9 + 0.1 * grow)
+    // (self: the monitor that shows the picture of a headset on a cable; a picture of itself would be a tunnel of mirrors)
+    const span = (settings.hideMonitors && !crop) || settings[`${id}.hidden`] || m.self ? 0 : (sized ? sized.span : zoomed(id, now) ?? settings[`${id}.span`]) * DEG * (0.9 + 0.1 * grow)
     const aspect = sized ? sized.aspect : crop ? crop[3] / crop[2] : videoWidth ? videoHeight / videoWidth : 9 / 16
     spans[i] = span / DEG * WIDTH_AT / settings[`${id}.dist`]
     aspects[i] = aspect
@@ -669,6 +674,7 @@ renderer.setAnimationLoop(now => {
     // (Not on the PC: a recording may be asked for a wider view than an eye's.)
     const seen = span > 0 && (SPECTATOR || Math.acos(Math.max(-1, Math.min(1, -ahead.z))) / DEG < 65 + Math.hypot(spans[i], spans[i] * aspect) / 2 + 12)
     uniforms.uSize.value[i].x = seen ? span : 0
+    screens[i].seen = seen
     uniforms.uMonitor.value[i] = seen ? screens[i].texture : blankTexture
     const u = 0.5 + Math.atan2(ahead.x, -ahead.z) / (2 * halfWidth), v = 0.5 - Math.asin(ahead.y) / (2 * halfWidth * aspect)
     const [x0, y0, x1, y1] = crop ? reach(m).map((d, k) => d / crop[2 + k % 2]) : [0, 0, 1, 1] // a window with its open menus
@@ -694,7 +700,7 @@ renderer.setAnimationLoop(now => {
   if (clock.fade > 0) showClock()
   note.fade = Math.max(0, Math.min(1, note.fade + (now < note.until ? dt / 0.25 : -dt / 0.5)))
   uniforms.uNoteOn.value = ease(note.fade)
-  uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
+  uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG) * sheetScale(), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
   uniforms.uPickOn.value = ease(pick.fade)
   uniforms.uClockOn.value = ease(clock.fade)
   if (!SPECTATOR) { // the spectator must not open the PC's own webcam (a headset on a cable takes it for its own)
@@ -724,7 +730,8 @@ renderer.setAnimationLoop(now => {
     uniforms.uPxPerMm.value = eye / settings.ipd
     uniforms.uLensDist.value = settings.ipd / 2 / half
   }
-  renderer.render(scene, camera)
+  sensorNote.hidden = !sensorOnly()
+  if (!sensorOnly()) renderer.render(scene, camera) // a phone that is only the sensor draws nothing: it lies in a pocket and must not get hot
 })
 
 // --- working a single window from the headset with a mouse connected to the phone. The page cannot hold that mouse
@@ -784,6 +791,11 @@ function aim() {
 function pxPerDegree(p) {
   return GLASSES ? renderer.domElement.width / 4 / glassesTan(p)[0] * DEG : renderer.domElement.width / p.screenW * p.lensDist * DEG
 }
+// The list, the backgrounds, the clock and a notification are laid out in degrees for a phone in a Gear VR, about 96
+// degrees across one eye's view. A headset on a cable shows them taking the same share of its own view (in degrees
+// they were wider than the whole view of a monitor standing for one, 39 degrees: "very close to the face").
+const PHONE_VIEW = 96
+const sheetScale = () => GLASSES ? PHONE_VIEW / (2 * Math.atan(glassesTan()[0]) / DEG) : 1
 function glassesTan(p = settings) {
   const eye = innerWidth / 2, across = Math.tan(p.glassesFov * DEG / 2) / Math.hypot(1, innerHeight / eye)
   return [across, across * innerHeight / eye]
@@ -826,18 +838,24 @@ addEventListener('pointermove', e => Object.assign(mouse, { x: e.clientX / inner
 // mouse and the keyboard then work there directly, and the extension tells where the pointer is, which is drawn
 // here, at once (not in the picture, a tenth of a second late). Pushed past a side, it comes back here at that side
 // (the panel's corners on this window go with the asking, and while inside).
-let poseSeen = false, inside = null, askedAt = 0 // inside: { id: the panel, u, v } while the real pointer works in it
+let poseSeen = false, inside = null, askedAt = 0, asked = { text: '', at: 0 } // inside: { id: the panel, u, v } while the real pointer works in it
 function glassesPointer() {
   uniforms.uRayOn.value = inside ? 0 : 1
   uniforms.uRay.value.copy(aim())
   const i = inside ? settings.monitors.findIndex(m => m.id === inside.id) : -1, m = settings.monitors[i]
   uniforms.uPointer.value.set(i, inside?.u ?? 0, 1 - (inside?.v ?? 0))
   if (m) uniforms.uPointerPx.value.set(...(m.crop ? m.crop.slice(2) : [screens[i].video.videoWidth || 1920, screens[i].video.videoHeight || 1080]))
-  const over = inside ? i : !settings.edit && !menu.open ? pointed.i : -1, panel = settings.monitors[over]
-  if (!panel || performance.now() - askedAt < 50) return
-  askedAt = performance.now()
-  // inside: only the corners, u -1 (never taken for going in: the extension may have come out before we know it)
-  setParams({ enter: { id: panel.id, source: panel.source ?? 0, connector: panel.connector ?? '', u: inside ? -1 : pointed.u, v: inside ? -1 : pointed.v, corners: panelCorners(over) } })
+  const over = inside ? i : !settings.edit && !menu.open ? pointed.i : -1, panel = settings.monitors[over], now = performance.now()
+  if (!panel || now - askedAt < 50) return
+  askedAt = now
+  // inside: only the corners, u -1 (never taken for going in: the extension may have come out before we know it).
+  // Sent when it changes, else every 0.3 s: the server forgets an ask after 0.4 s.
+  const round = n => Math.round(n * 1e3) / 1e3
+  const ask = { id: panel.id, source: panel.source ?? 0, connector: panel.connector ?? '', u: inside ? -1 : round(pointed.u), v: inside ? -1 : round(pointed.v), corners: panelCorners(over) }
+  const text = JSON.stringify(ask)
+  if (text === asked.text && now - asked.at < 300) return
+  asked = { text, at: now }
+  setParams({ enter: ask })
 }
 // Where the corners of panel i are on this window (top left, top right, bottom right, bottom left), as our pointer's
 // place there (0..1 from the top left): a plain camera's view of the panel's surface, flat or bent.
@@ -853,7 +871,7 @@ function panelCorners(i) {
     else corner.set(r * Math.sin(along / r), sy * height / 2, (r - away) - r * Math.cos(along / r))
     corner.applyQuaternion(cornerTurn).applyQuaternion(headBack)
     const ahead = Math.max(-corner.z, 1e-3) // behind the eyes: as far out as it goes
-    return [0.5 + corner.x / ahead / (2 * h), 0.5 - corner.y / ahead / (2 * v)].map(n => Math.round(n * 1e4) / 1e4)
+    return [0.5 + corner.x / ahead / (2 * h), 0.5 - corner.y / ahead / (2 * v)].map(n => Math.round(n * 1e3) / 1e3) // a tenth of a percent: the head's tremor does not count
   })
 }
 if (GLASSES) { // the head's turn and the real pointer inside a monitor or window, as the server has them
@@ -907,6 +925,12 @@ addEventListener('wheel', e => {
 // that mode no key is sent, so the phone could switch it on and not off again.
 const keysDown = new Map() // code -> the window it went to, so that its release goes there too
 addEventListener('keydown', e => {
+  // F12 (the iPhone gives a page no Num Lock): the PC's Num Lock, the arranging mode, on and off. Also while arranging.
+  if ((e.code === 'F12' || e.code === 'NumLock') && settings && tapped && !SPECTATOR && !GLASSES && !sensorOnly()) {
+    e.preventDefault()
+    if (!e.repeat) setParams({ numLock: Date.now() })
+    return
+  }
   const key = e.code !== 'NumLock' && KEYCODES[e.code], target = key && settings && working() && !GLASSES && (settings.monitors.find(m => m.window && m.focused) ?? windowLooked())
   if (!target) return
   e.preventDefault() // Space, Tab and the arrows would scroll the page or move its focus
@@ -979,7 +1003,22 @@ function endResize(p = settings) {
 function editWheel(clicks) {
   if (pick.fade > 0.5) return pickWheel(clicks)
   const id = settings.monitors[pointed.i]?.id
-  if (id) change(settings, { [`${id}.span`]: clamp(settings[`${id}.span`] + clicks, MONITOR_SPEC.span) })
+  // Clicks of 10 px: a PC mouse's notch is about 120 px (6 % larger), the iPhone's click 29 (9 %)
+  if (id) zoomPanel(settings, id, clicks * (GLASSES ? 0.005 : 0.03))
+}
+// A panel's size from the wheel: in proportion, so that a small window and a large monitor feel alike (a degree a
+// click made a small window jump by half), and drawn growing to it over a moment instead of jumping there.
+let zoom // { id, from, to, at }
+const ZOOM_MS = 160
+function zoomed(id, now) { // the size drawn meanwhile, or undefined
+  if (zoom?.id !== id || now - zoom.at >= ZOOM_MS) return
+  const f = (now - zoom.at) / ZOOM_MS
+  return zoom.from + (zoom.to - zoom.from) * f * f * (3 - 2 * f)
+}
+function zoomPanel(p, id, by) { // by: how much larger, as a logarithm (0.06: 6 %)
+  const now = performance.now(), to = Math.round(clamp(p[`${id}.span`] * Math.exp(by), MONITOR_SPEC.span) * 100) / 100
+  zoom = { id, from: zoomed(id, now) ?? p[`${id}.span`], to, at: now }
+  change(p, { [`${id}.span`]: to })
 }
 // Which panels glow, and how: the one being carried or resized, the one under the pointer (at a side: that side),
 // the neighbour a carried panel is drawn to, and the window that gets the keyboard (if the setting is on).
@@ -1047,7 +1086,7 @@ function menuLayout() {
   ]
   const W = Math.max(rightX - MENU.gap, ...items.map(i => i.x + i.w))
   // a very long list is drawn smaller: it must not close into a ring
-  return { pins, items, W, H, field: [fieldX, rightX - MENU.gap], mid: fieldX + MENU.field * fw / 2, scale: Math.max(w / (MENU.column * DEG), W / (300 * DEG)) }
+  return { pins, items, W, H, field: [fieldX, rightX - MENU.gap], mid: fieldX + MENU.field * fw / 2, scale: Math.max(w / (MENU.column * DEG) * sheetScale(), W / (300 * DEG)) }
 }
 // Where the pointer is on the sheet (px), the place there (item), its application (n, -1: none) and place of the field (k, -1: beside it).
 function menuSpot() {
@@ -1198,7 +1237,7 @@ function pickLayout() { // the places on the sheet: the backgrounds of this page
   return pages
 }
 function pickSpot() { // where our pointer is on the sheet (px) and what is there; null off the sheet
-  const { width: W, height: H } = pickCanvas, scale = W / (PICK.across * DEG)
+  const { width: W, height: H } = pickCanvas, scale = W / (PICK.across * DEG) * sheetScale()
   const d = rayHere.copy(aim()).applyQuaternion(yawTurn.setFromAxisAngle(Y, -gazeOf(head).yaw).multiply(head))
   const x = Math.atan2(d.x, -d.z) * scale + W / 2, y = H / 2 - (Math.asin(Math.max(-1, Math.min(1, d.y))) - PICK.height * DEG) * scale
   if (x < 0 || y < 0 || x > W || y > H) return null
@@ -1217,7 +1256,7 @@ function showPick() { // every frame while it shows
   if (pick.slider && spot) setSlider(pick.slider, spot.x)
   drawPick(pages, spot?.item)
   const { width: W, height: H } = pickCanvas
-  uniforms.uPickPlace.value.set(W / (PICK.across * DEG), PICK.height * DEG, W / 2, H / 2)
+  uniforms.uPickPlace.value.set(W / (PICK.across * DEG) * sheetScale(), PICK.height * DEG, W / 2, H / 2)
   uniforms.uPickSize.value.set(W, H)
 }
 function pickPress(down, left) { // whether the press was meant for the backgrounds
@@ -1345,7 +1384,7 @@ function showClock() {
     c.fillText(now.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' }), W / 2, 178)
     toSheets(clockCanvas, SHEETS.clock)
   }
-  uniforms.uClockPlace.value.set(W / (28 * DEG), 52 * DEG, W / 2, H / 2) // 28 degrees wide, 52 up
+  uniforms.uClockPlace.value.set(W / (28 * DEG) * sheetScale(), 52 * DEG, W / 2, H / 2) // 28 degrees wide (on the phone), 52 up
   uniforms.uClockSize.value.set(W, H)
 }
 
@@ -1438,12 +1477,76 @@ function receive(name, kind, element) {
   return () => { stopped = true; clearTimeout(retryTimer); clearInterval(pulse); pc?.close() }
 }
 
+// --- pictures from the PC as they are, for a headset on a cable: it is drawn on the PC itself, so nothing is
+// compressed on the way. raw.py sends each monitor and window from a port of its own, picture after picture (width,
+// height, time, pixels), always the latest. Each is read into the same memory and put on the graphics card at once.
+// A panel out of view is not read, and then raw.py copies nothing either.
+// Returns a function that stops the stream for good.
+function receivePlain(screen, id) {
+  const stopper = new AbortController(), gone = () => stopper.signal.aborted
+  const { port: first, key } = settings.raw ?? {} // given to pages on the PC only
+  const port = first + (id[0] === 'w' ? 10 : 0) + Number(id.slice(1))
+  ;(async () => {
+    let memory = new ArrayBuffer(1 << 16)
+    while (!gone()) {
+      try {
+        const answer = await fetch(`http://127.0.0.1:${port}/?k=${key}`, { signal: stopper.signal })
+        if (!answer.ok) throw new Error(answer.status)
+        // Read into memory we give, where the browser can (Chromium): else it makes 900 MB of new buffers a second
+        // for a monitor that changes all the time. Other browsers: their pieces are copied (`rest`: what is left of one).
+        let reader, rest = new Uint8Array(0)
+        try { reader = answer.body.getReader({ mode: 'byob' }) } catch { reader = answer.body.getReader() }
+        const own = reader instanceof ReadableStreamBYOBReader
+        const read = async length => {
+          if (memory.byteLength < length) memory = new ArrayBuffer(length)
+          for (let have = 0; have < length;) {
+            if (!own && !rest.length) rest = (await reader.read()).value ?? rest
+            const { value, done } = own ? await reader.read(new Uint8Array(memory, have, length - have), { min: length - have })
+              : { value: rest.subarray(0, length - have), done: !rest.length }
+            if (done) throw new Error('ended')
+            if (own) memory = value.buffer // the reader takes the memory away and gives it back
+            else { new Uint8Array(memory).set(value, have); rest = rest.subarray(value.length) }
+            have += value.byteLength
+          }
+          return new Uint8Array(memory, 0, length)
+        }
+        for (;;) {
+          const head = new DataView((await read(16)).buffer), width = head.getUint32(0, true), height = head.getUint32(4, true)
+          const pixels = await read(width * height * 4)
+          while (!screen.seen && !gone()) await pause(30)
+          if (gone()) return
+          if (screen.video.videoWidth !== width || screen.video.videoHeight !== height) { // a texture cannot change its size
+            screen.texture.dispose()
+            screen.texture = crisp(new THREE.DataTexture(pixels, width, height))
+          } else screen.texture.image.data = pixels
+          screen.texture.needsUpdate = true
+          renderer.initTexture(screen.texture) // onto the graphics card now: the next picture goes into the same memory
+          Object.assign(screen.video, { videoWidth: width, videoHeight: height, readyState: 4 })
+        }
+      } catch {
+        await pause(400) // not there yet (a window has just opened, the capture is starting), or it ended: asked again
+      }
+    }
+  })()
+  return () => stopper.abort()
+}
+
 // --- start: browsers give sound, and iOS motion sensors, only after a tap
 const sound = new Audio()
 let tapped = false, soundOn = false
+let keepCapture
 function startStreams() { // called after the tap and after every change of settings: starts what is not running yet
   if (!tapped || !settings) return
-  screens.forEach((screen, i) => screen.stop ??= receive(settings.monitors[i].id, 'video', screen.video))
+  screens.forEach((screen, i) => {
+    // No pictures for a phone that is only the sensor of a headset on a cable (it still plays the sound), and none of
+    // the monitor that shows that headset's picture.
+    if (sensorOnly() || settings.monitors[i].self) {
+      screen.stop?.()
+      screen.stop = null
+    } else screen.stop ??= GLASSES ? receivePlain(screen, settings.monitors[i].id) : receive(settings.monitors[i].id, 'video', screen.video)
+  })
+  // MediaMTX runs the capture only while somebody takes "vr/m0" from it. On a cable that is a small black stand-in.
+  if (GLASSES) keepCapture ??= receive('m0', 'video', hiddenVideo())
   if (!soundOn && !SPECTATOR && !GLASSES) receive('audio', 'audio', sound) // on the PC it would play the PC's sound back into itself
   soundOn = true
   if (settings.phoneMic && !SPECTATOR && !GLASSES) sendMic()

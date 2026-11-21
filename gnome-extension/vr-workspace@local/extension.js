@@ -28,7 +28,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js'
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js'
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js'
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'
-import { http, talk, power } from './link.js'
+import { http, talk, power, SERVER } from './link.js'
 
 Gio._promisify(Shell.Screenshot, 'composite_to_stream') // as GNOME Shell's own screenshots do
 const isGlasses = window => window.get_title()?.startsWith('VR Workspace — glasses') ?? false // the title index.html?glasses gives itself
@@ -92,6 +92,7 @@ export default class VrWorkspace extends Extension {
     // GNOME's notifications, to the headset as well: who wears it does not see the banners on the PC.
     Main.messageTray.connectObject('source-added', (_tray, source) => this._watchSource(source), this)
     for (const source of Main.messageTray.getSources()) this._watchSource(source)
+    this._keepPointerOn() // a picture already open: GNOME turns extensions off while the screen is locked, and on again
   }
 
   disable() {
@@ -114,7 +115,7 @@ export default class VrWorkspace extends Extension {
     this._barriers = []
     this._cursorTracker.disconnect(this._cursorChanged)
     this._cursorTracker.disconnect(this._cursorShown)
-    this._nudger = null
+    this._nudger = this._keyboard = null
     global.display.disconnect(this._emergencyPressed)
     Main.overview.toggle = this._toggleOverview
     if (this._emergency !== Meta.KeyBindingAction.NONE) global.display.ungrab_accelerator(this._emergency)
@@ -138,14 +139,14 @@ export default class VrWorkspace extends Extension {
     this._power = new PopupMenu.PopupSwitchMenuItem('VR Workspace', false)
     this._power.connect('toggled', (_item, on) => this._setPower(on))
     menu.addMenuItem(this._power)
-    this._status = new PopupMenu.PopupMenuItem('', { reactive: false })
-    menu.addMenuItem(this._status)
-    menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-    this._centre = menu.addAction(_('Centre on Gaze'), () => this._talk({ recenter: Date.now() }))
-    this._camera = new PopupMenu.PopupSwitchMenuItem(_('Phone Camera as Background'), false)
-    this._camera.connect('toggled', (_item, on) => this._talk({ passthrough: on }))
-    menu.addMenuItem(this._camera)
-    this._windowItem = menu.addAction('', () => this._tellWindows({ toggle: this._candidate?.get_id() }))
+    // A headset on a cable: its picture, a window of its own filling the screen it opens on
+    this._cable = new PopupMenu.PopupSwitchMenuItem(_('Headset on a Cable'), false)
+    this._cable.connect('toggled', (_item, on) => {
+      if (on) return this._openPicture()
+      this._pictureAsked = 0
+      this._glassesWindow()?.delete(global.get_current_time())
+    })
+    menu.addMenuItem(this._cable)
     menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
     menu.addAction(_('Settings'), () => this.openPreferences())
     // The state is asked for only while the menu is open: nothing runs in the background for an icon.
@@ -153,15 +154,6 @@ export default class VrWorkspace extends Extension {
       if (this._watch) GLib.source_remove(this._watch)
       this._watch = open ? GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => (this._refresh(), GLib.SOURCE_CONTINUE)) : 0
       if (open) this._refresh()
-      if (!open) return
-      // The window used last: the one the user means by "this window" while the menu is open. For a dialog that is
-      // the window it belongs to: dialogs go into the headset and out of it with their window.
-      this._candidate = global.display.get_tab_list(Meta.TabList.NORMAL, null)[0]
-      while (this._candidate?.get_transient_for()) this._candidate = this._candidate.get_transient_for()
-      const title = (this._candidate?.get_title() ?? '').slice(0, 30)
-      this._windowItem.label.text = !this._candidate ? _('No Window to Show in the Headset')
-        : (this._shownWindows.includes(this._candidate.get_id()) ? _('Take “%s” out of the Headset') : _('Show “%s” in the Headset')).replace('%s', title)
-      this._windowItem.setSensitive(!!this._candidate)
     })
     this._refresh()
     Main.panel.addToStatusArea(this.uuid, this._indicator)
@@ -173,11 +165,9 @@ export default class VrWorkspace extends Extension {
       const on = !!answer && !answer.settingsOnly // settingsOnly: just the settings window's helper is running
       const starting = this._startCheck && !on
       this._power.setToggleState(on || !!starting)
-      this._status.label.text = starting ? _('Starting…') : !on ? _('Off')
-        : answer.phoneOnline ? _('Phone connected') : _('Waiting for the phone: the link is in Settings')
-      this._centre.setSensitive(on && answer.phoneOnline)
-      this._camera.setSensitive(on)
-      this._camera.setToggleState(on && answer.passthrough)
+      // (the picture takes a few seconds to open and to be known by its title)
+      this._cable.setToggleState(!!this._glassesWindow() || Date.now() - (this._pictureAsked ?? 0) < 8000)
+      this._cable.setSensitive(on || !!this._glassesWindow()) // a picture left open can be closed here also with the server off
     })
   }
 
@@ -199,12 +189,15 @@ export default class VrWorkspace extends Extension {
       return { id: w.get_id(), title: w.get_title() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
         parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
     })
-    talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, ...wish }).then(answer => {
+    talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, picture: this._pictureScreen(), ...wish }).then(answer => {
       if (!this._indicator) return // switched off meanwhile
       this._serverSeen = !!answer
+      this._connectors = answer?.connectors ?? []
       const before = this._shownWindows.length
       this._shownWindows = answer?.shown ?? []
       this._phoneOnline = !!answer?.phoneOnline
+      if (answer && this._numLockSeen !== undefined && answer.numLock !== this._numLockSeen) this._pressNumLock()
+      if (answer) this._numLockSeen = answer.numLock
       if (this._menuSince && answer?.menuOpen) this._hold()
       else if (this._menuSince && Date.now() - this._menuSince > 2000) this._leave() // the page has closed it (or is gone)
       // Windows came into the headset (the pointer may have changed while none was there), or the server started anew
@@ -229,6 +222,15 @@ export default class VrWorkspace extends Extension {
       // a headset on a cable in a twentieth: its pointer going onto a monitor or window is felt.
       if ((answer?.soon || onCable) && !this._soon) this._soon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, onCable ? 50 : 100, () => (this._soon = 0, this._http && this._tellWindows(), GLib.SOURCE_REMOVE))
     })
+  }
+
+  // GNOME's name of the monitor that shows the picture of a headset on a cable, of those the server named: that
+  // monitor is no panel in the headset (a picture of itself). null: no such picture, or on a monitor that is not there.
+  _pictureScreen() {
+    const glasses = this._glassesWindow()
+    if (!glasses?.is_fullscreen()) return null
+    const manager = global.backend.get_monitor_manager()
+    return (this._connectors ?? []).find(name => manager.get_monitor_for_connector(name) === glasses.get_monitor()) ?? null
   }
 
   // The pointer's picture and its hot spot (the pixel that points), to the server: only while windows are in the
@@ -393,6 +395,20 @@ export default class VrWorkspace extends Extension {
       window.move_to_monitor(screen === 0 ? 1 : 0)
   }
 
+  // Opens the picture of a headset on a cable: Chromium's window of its own (closing it closes nothing else), on
+  // the whole screen at once. It decodes the streams on the processor, to keep this PC's picture off the GPU's
+  // video engine, which hung on 2026-11-21 (that alone did not stop the hangs: see windows.py).
+  _openPicture() {
+    this._pictureAsked = Date.now()
+    try {
+      Gio.Subprocess.new(['chromium', `--app=${SERVER}/?glasses`, '--start-fullscreen', '--disable-accelerated-video-decode'], Gio.SubprocessFlags.NONE)
+    } catch (e) { // no Chromium
+      this._pictureAsked = 0
+      this._cable.setToggleState(false)
+      Main.notify('VR Workspace', e.message)
+    }
+  }
+
   // The window of a headset on a cable (index.html?glasses), or undefined
   _glassesWindow() {
     return global.get_window_actors().map(actor => actor.meta_window).find(isGlasses)
@@ -419,13 +435,14 @@ export default class VrWorkspace extends Extension {
 
   // A headset on a cable, its picture filling a screen: the PC's pointer stays on that screen, where the picture takes
   // it as the headset's own pointer (barriers let it in, not out), except while it works inside a monitor or window
-  // (_follow). A pointer elsewhere is brought to the middle of it.
-  _keepPointerOn() {
+  // (_follow). A pointer elsewhere is brought to the middle of it. at: where it is, if just put there (GNOME moves it
+  // a moment later, and asked at once tells where it was: it was brought to the middle after coming out of a window).
+  _keepPointerOn(at = global.get_pointer()) {
     for (const barrier of this._barriers ?? []) barrier.destroy()
     this._barriers = []
     const glasses = this._glassesWindow()
     if (!glasses?.is_fullscreen() || this._inside || this._catcher) return
-    const { x, y, width, height } = global.display.get_monitor_geometry(glasses.get_monitor()), [px, py] = global.get_pointer()
+    const { x, y, width, height } = global.display.get_monitor_geometry(glasses.get_monitor()), [px, py] = at
     if (px < x || px >= x + width || py < y || py >= y + height) this._warp(x + width / 2, y + height / 2)
     this._barriers = this._box(x, y, x + width, y + height, true)
   }
@@ -519,14 +536,25 @@ export default class VrWorkspace extends Extension {
     Clutter.get_default_backend().get_default_seat().uninhibit_unfocus()
     if (this._http) talk(this._http, '/pointer', { out: true })
     const glasses = this._glassesWindow(), g = glasses?.get_frame_rect()
+    let at
     if (g && r) {
       const clamp = n => Math.min(1, Math.max(0, n)), u = clamp((px - r.x) / r.width), v = clamp((py - r.y) / r.height)
       const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
       const [topLeft, topRight, bottomRight, bottomLeft] = inside.corners, [mx, my] = lerp(lerp(topLeft, topRight, u), lerp(bottomLeft, bottomRight, u), v)
       const [ox, oy] = [[-1, 0], [1, 0], [0, -1], [0, 1]][side] ?? [0, 0]
-      this._warp(g.x + clamp(mx + 0.02 * ox) * (g.width - 1), g.y + clamp(my + 0.02 * oy) * (g.height - 1))
+      at = [g.x + clamp(mx + 0.02 * ox) * (g.width - 1), g.y + clamp(my + 0.02 * oy) * (g.height - 1)]
+      this._warp(...at)
     }
-    this._keepPointerOn()
+    this._keepPointerOn(at)
+  }
+
+  // The PC's Num Lock pressed for the phone's keyboard (its F12: an iPhone gives a page no Num Lock), so that the
+  // arranging mode stays one thing, whichever keyboard switches it
+  _pressNumLock() {
+    this._keyboard ??= Clutter.get_default_backend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE)
+    const now = GLib.get_monotonic_time()
+    this._keyboard.notify_key(now, 69, Clutter.KeyState.PRESSED) // Linux's KEY_NUMLOCK
+    this._keyboard.notify_key(now, 69, Clutter.KeyState.RELEASED)
   }
 
   _onKeymap() {
@@ -555,10 +583,8 @@ export default class VrWorkspace extends Extension {
     this._editing = true
     // With a headset on a cable its picture takes the mouse itself, as the phone's screen takes the phone's mouse
     if (!this._glassesWindow()) this._takeMouse()
-    else {
-      this._out() // the arranging works on the panels, not inside them
-      this._keepPointerOn()
-    }
+    else if (this._inside) this._out() // the arranging works on the panels, not inside them (_out keeps it on the picture)
+    else this._keepPointerOn()
     // The keys 1-5, top row and number pad: asked from the window manager one by one. Every other key stays with
     // the desktop.
     this._keys = new Map() // what the window manager calls the key -> the digit

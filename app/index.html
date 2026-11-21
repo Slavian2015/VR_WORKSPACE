@@ -19,8 +19,12 @@
   /* a way to the input test from the start screen: a page started from the home screen has no address bar */
   #inputTest { position: fixed; z-index: 2; left: 0; right: 0; bottom: 16px; text-align: center; color: #9cf; font: 16px system-ui; }
   #start[hidden] ~ #inputTest { display: none; }
+  /* over the picture, which is not drawn meanwhile */
+  #sensor { position: fixed; inset: 0; z-index: 1; display: grid; place-items: center; background: #000; color: #555; font: 16px system-ui; }
+  #sensor[hidden] { display: none; }
 </style>
 <button id="start">Нажмите, чтобы начать</button>
 <a id="inputTest" href="input-test.html">Проверка мыши и клавиатуры</a>
+<div id="sensor" hidden>Телефон работает как датчик шлема на кабеле</div>
 <script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
 <script type="module" src="main.js"></script>

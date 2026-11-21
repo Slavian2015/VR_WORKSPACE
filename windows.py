@@ -3,8 +3,12 @@
 the pointer, the mouse buttons, the wheel and keys go into the window they are meant for.
 
 Started by server.js, which tells it what to do on standard input, one JSON object per line:
-  {"streams": {"w0": {"id": 123, "left": 61, "top": 55}}}   the windows to stream now, by GNOME's window id;
-                                                             left/top: where the window starts inside its picture
+  {"streams": {"w0": {"id": 123, "left": 61, "top": 55, "need": [482, 767]}}}
+                                                             the windows to stream now, by GNOME's window id;
+                                                             left/top: where the window starts inside its picture;
+                                                             need: how much of the picture's top left corner is used
+                                                             with "raw": true they are handed to a headset on a cable
+                                                             as they are (raw.py), not compressed for the phone
   {"to": "w0", "x": 350, "y": 20}                           the pointer goes to this point of the window
   {"to": "w0", "button": 272, "down": true}                 a mouse button (Linux codes: 272 left, 273 right)
   {"to": "w0", "wheel": 1}                                  the wheel, in clicks, positive scrolls down
@@ -18,9 +22,10 @@ headset draws its own pointer anyway. A popup menu is a window of its own to GNO
 """
 import json, os, signal, subprocess, sys, time
 from gi.repository import GLib
-from capture import ENV, LOW_MEMORY_MB, bus, mutter
+from capture import ENV, LOW_MEMORY_MB, RAW_PORT, ROOT, bus, mutter
 
-streams = {}  # slot -> {id, left, top, control (session), stream (path), watch, encoder}
+streams = {}  # slot -> {id, left, top, need, control (session), stream (path), watch, node, encoder, raw, told}
+raw = False   # the latest order's: a headset on a cable shows the picture on this PC, nothing is compressed for it
 
 
 def say(**what):
@@ -33,23 +38,37 @@ def start(slot, window, tries=0):
                          GLib.Variant('(ss)', ('org.gnome.Mutter.RemoteDesktop.Session', 'SessionId')), None, 0, -1, None).unpack()[0]
     record = mutter('ScreenCast', '/org/gnome/Mutter/ScreenCast', 'CreateSession', GLib.Variant('(a{sv})', ({'remote-desktop-session-id': GLib.Variant('s', name)},)))[0]
     stream = mutter('ScreenCast', record, 'RecordWindow', GLib.Variant('(a{sv})', ({'window-id': GLib.Variant('t', window['id']), 'cursor-mode': GLib.Variant('u', 0)},)))[0]
-    entry = streams[slot] = {**window, 'control': control, 'stream': stream, 'encoder': None, 'since': time.monotonic(), 'tries': tries}
+    entry = streams[slot] = {**window, 'control': control, 'stream': stream, 'node': None, 'encoder': None, 'since': time.monotonic(), 'tries': tries}
 
     def on_stream(_bus, _sender, _path, _interface, _signal, parameters):
-        # The same encoder as for the monitors (see capture.py for the why of every setting), but a full picture
-        # twice as often: a window comes into the headset while its stream runs (a dialog opens), and the headset
-        # can start showing only from a full picture. A still window sends 30 frames a second: one second at most.
-        # Variable bitrate: a still page of text needed 0.4 Mbit/s for the same picture as 5.3 at a constant
-        # rate (measured on the stand, 2026-11-19); the Wi-Fi is left to the windows that change.
-        entry['encoder'] = subprocess.Popen((
-            f'gst-launch-1.0 -q pipewiresrc path={parameters.unpack()[0]} keepalive-time=34'
-            ' ! video/x-raw(memory:DMABuf),format=BGRx,max-framerate=60/1 ! vaapipostproc'
-            ' ! vaapih264enc rate-control=vbr bitrate=12000 keyframe-period=30 max-bframes=0'
-            ' ! video/x-h264,profile=constrained-baseline'
-            f' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/{slot}').split(), env=ENV)
+        entry['node'] = parameters.unpack()[0]
+        take(slot, entry)
         say(slot=slot, live=True)
     entry['watch'] = bus.signal_subscribe('org.gnome.Mutter.ScreenCast', 'org.gnome.Mutter.ScreenCast.Stream', 'PipeWireStreamAdded', stream, None, 0, on_stream)
     mutter('RemoteDesktop', control, 'Start')  # starts the recording with it
+
+
+def take(slot, entry):
+    """Starts the program that takes the pictures of this window's recording, in place of the one that did: raw.py for
+    a headset on a cable, else the encoder for the phone. The recording itself goes on."""
+    if entry['encoder']:
+        entry['encoder'].terminate()
+    entry['raw'], entry['told'] = raw, None
+    if raw:
+        entry['encoder'] = subprocess.Popen([os.path.join(ROOT, 'raw.py'), str(entry['node']), str(RAW_PORT + 10 + int(slot[1:]))],
+                                            stdin=subprocess.PIPE, text=True, env=ENV)
+        return
+    # The same encoder as for the monitors (see capture.py for the why of every setting), but a full picture
+    # twice as often: a window comes into the headset while its stream runs (a dialog opens), and the headset
+    # can start showing only from a full picture. A still window sends 30 frames a second: one second at most.
+    # Variable bitrate: a still page of text needed 0.4 Mbit/s for the same picture as 5.3 at a constant
+    # rate (measured on the stand, 2026-11-19); the Wi-Fi is left to the windows that change.
+    entry['encoder'] = subprocess.Popen((
+        f"gst-launch-1.0 -q pipewiresrc path={entry['node']} keepalive-time=34"
+        ' ! video/x-raw(memory:DMABuf),format=BGRx,max-framerate=60/1 ! vaapipostproc'
+        ' ! vaapih264enc rate-control=vbr bitrate=12000 keyframe-period=30 max-bframes=0'
+        ' ! video/x-h264,profile=constrained-baseline'
+        f' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/{slot}').split(), env=ENV)
 
 
 def stop(slot, quiet=False):
@@ -66,16 +85,29 @@ def stop(slot, quiet=False):
 
 
 def act(order):
+    global raw
     if 'streams' in order:
-        wanted = order['streams']
+        wanted, raw = order['streams'], bool(order.get('raw'))
         for slot in [s for s in streams if s not in wanted or wanted[s]['id'] != streams[s]['id']]:
             stop(slot)
         for slot, window in wanted.items():
-            window = {'id': int(window['id']), 'left': float(window['left']), 'top': float(window['top'])}
+            window = {'id': int(window['id']), 'left': float(window['left']), 'top': float(window['top']), 'need': [int(n) for n in window.get('need', (0, 0))]}
             if slot in streams:
                 streams[slot].update(window)  # the window was resized: its shadow may have changed
             else:
                 start(slot, window)
+        for slot, entry in streams.items():
+            if entry['node'] is None:
+                continue  # GNOME has not offered its recording yet
+            if entry['raw'] != raw:  # the headset on a cable has come or gone
+                take(slot, entry)
+            if raw and entry['told'] != entry['need']:
+                entry['told'] = entry['need']
+                try:
+                    entry['encoder'].stdin.write('{} {}\n'.format(*entry['need']))
+                    entry['encoder'].stdin.flush()
+                except OSError:
+                    pass  # it has ended: watch() deals with that
         return
     entry = streams.get(order.get('to'))
     if not entry:
@@ -117,7 +149,7 @@ def main():
             stop(slot, quiet=again)
             if again:
                 try:
-                    start(slot, {k: entry[k] for k in ('id', 'left', 'top')}, entry['tries'] + 1)
+                    start(slot, {k: entry[k] for k in ('id', 'left', 'top', 'need')}, entry['tries'] + 1)
                 except GLib.Error:  # the window is gone after all
                     say(slot=slot, live=False)
         available = int(next(line for line in open('/proc/meminfo') if line.startswith('MemAvailable')).split()[1]) // 1024

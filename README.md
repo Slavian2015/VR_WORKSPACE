@@ -73,8 +73,9 @@ does not take its own address on the internet from inside): use the one from Loc
 still screen costs little, a changing one (a film, scrolling) up to 20 Mbit/s for each monitor and 12 for each
 window: mind the mobile data.
 
-The menu also has **Centre on Gaze** (look where the middle of the monitors should be, then choose it) and
-**Phone Camera as Background**.
+The top bar menu has three items: **VR Workspace** (the server on or off), **Headset on a Cable** (see below) and
+**Settings**. **Centre on gaze** is in Settings → Monitors (and key 5 in the arranging mode); the camera as the
+background in Settings → Headset → Phone Camera.
 
 ## Settings
 
@@ -162,12 +163,13 @@ until you log out (measured on GNOME 46). It adds up only after many reconnects 
 Besides whole monitors, one application window can be shown as a panel of its own and worked from the headset with
 a mouse connected to the phone.
 
-1. Click the window on the PC, then the headset icon → **Show “…” in the Headset**. The same item takes it back.
-   Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of Wi-Fi.
+1. Start the application from the list in the headset (step 4): its window comes into the headset by itself, and
+   leaves it when closed. Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of
+   Wi-Fi.
 2. The window appears as a panel where you are looking (under the monitors, if the headset is not on yet), curved
-   like a monitor, and as large as makes one pixel of the window one pixel of the phone screen: its text as sharp
-   as it gets (the picture arrives as sharp as on the PC). Smaller is blurrier, larger is not sharper. Its curve is
-   in its tab in Settings → Monitors.
+   like a monitor, at Settings → Monitors → **Distance of new windows** (2 m at first). At 1.5 m one pixel of the
+   window is one pixel of the screen: its text as sharp as it gets (the picture arrives as sharp as on the PC);
+   farther it is smaller and softer, larger is not sharper. Its curve is in its tab in Settings → Monitors.
 3. Look at the panel and move the mouse that is connected to the **phone**: the pointer has the shape it has on the
    PC (an arrow, a text cursor, a hand), an arrow until the PC has told it. The whole
    phone screen stands for the window (from side to side; from top to bottom without the phone's own edges, which
@@ -185,13 +187,14 @@ a mouse connected to the phone.
 5. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
    stays there (if the place is taken, the icons move one place toward the nearest free place); let go beside the
    field and it leaves it. The field is kept on the PC.
-6. **To move and resize windows**, switch on the arranging mode with Num Lock on the PC's keyboard. Our pointer is
+6. **To move and resize windows**, switch on the arranging mode with Num Lock on the PC's keyboard (F12 on a
+   keyboard connected to the phone). Our pointer is
    then an arrow in the view, as large as on the PC, and the panel under it lights up:
    - hold the left button anywhere on a panel and move the mouse or turn your head: it goes along, and near another
      panel it is drawn to sit beside it, over or under it, or in line with it;
    - at a side or a corner of a window that side lights up: drag it to make the window itself wider or taller on
      the PC; its panel grows with it and the text keeps its size;
-   - the wheel over a panel changes its size;
+   - the wheel over a panel changes its size, smoothly, about 6 % a notch;
    - look down: the backgrounds as round pictures (the wheel turns the pages; a click chooses one) and two sliders,
      darkening and blur of the background. The phone camera is off in this mode.
    Num Lock again leaves the mode.
@@ -210,12 +213,13 @@ What to know:
 - The iPhone shows its own round pointer too; Safari gives pages no way to hide or hold it.
 - The PC has one pointer: while you work in a window from the headset, the PC's pointer is there, and the window is
   brought to the front.
-- Whoever has the link with the key can now click in these windows, not only watch.
+- Whoever has the link with the key can now click and type in these windows, not only watch.
 - **A keyboard connected to the phone** (Bluetooth, or a receiver in its port) types into the window that gets the
   PC's keyboard (the lit one), else into the one looked at, which comes to the front first. Keys are passed as keys,
   not letters, so the PC's layout makes the letters (Russian or English, switched as on the PC). Holding a key
   repeats it as on the PC. Keys held when the page leaves the screen, or when the phone goes silent for 3 seconds,
-  are let go on the PC. Not passed on: Num Lock (on the PC it is the arranging mode) and what the iPhone keeps for
+  are let go on the PC. **F12** switches the arranging mode, as the PC's Num Lock does (the iPhone gives the page no
+  Num Lock). Not passed on: Alt+F2 (GNOME's "run a command", see Security) and what the iPhone keeps for
   itself (Cmd+Tab, Cmd+Space; Alt+Tab did not arrive either). The number pad works as the PC's does with Num Lock
   off: Home, End, Page Up and Down, the arrows. To monitors the phone's keyboard goes nowhere yet.
 - Settings → Headset → Picture → **Text sharpness** (40 % at first) makes letters crisper through the lenses; too much draws
@@ -245,13 +249,26 @@ Glasses that are a monitor of this PC (USB-C with DisplayPort, a motion sensor a
 the PC draws their picture itself, with no Wi-Fi and no video compression on the way. For now, before such glasses
 are here, the parts are tried with what there is:
 
-- **Their picture:** Settings → Headset → Glasses → The glasses' picture → Open. A window shows what the glasses would, its
-  left half for the left eye and the right half for the right. Each eye sees a
-  flat screen as wide as "Field of view across the diagonal" (as the maker gives it). The same is
-  `http://localhost:8080/?glasses` in any browser. Always stereo: the left half for the left eye.
+- **Their picture:** top bar menu → **Headset on a Cable** (switching it off closes the picture). A window on the
+  whole screen it opens on shows what the glasses would, its left half for the left eye and the right half for the
+  right. Each eye sees a flat screen as wide as Settings → Headset → Picture → **Field of view on a cable** (across
+  the diagonal, as the maker gives it). The same is `http://localhost:8080/?glasses` in any browser.
+- **On a monitor, before the glasses are here:** Settings → Monitors → Virtual Monitors → Number: 1 (the windows
+  live there while your screen shows the picture), the phone running in your hand as the sensor, then the switch.
 - **The head's turn:** from the phone, which must be running in the headset as usual (later from the glasses' own
   sensor, read as [XRLinuxDriver](https://github.com/wheaney/XRLinuxDriver) does).
-- **Their camera:** this PC's webcam, wherever the phone's camera would show (Phone Camera as Background, or below).
+- **Their camera:** this PC's webcam, wherever the phone's camera would show (Settings → Headset → Phone Camera).
+- **No video on the way:** while the picture is on, nothing is compressed for it. Every monitor and window goes
+  from GNOME to the picture as it is (`raw.py`), and only while its panel is in view and something changes on it.
+  Text is as sharp as on the monitor. Measured on the stand: a 2560×1440 monitor changing 60 times a second arrives
+  60 times a second, 15 ms after GNOME made the picture, for three quarters of one processor core; a still window
+  costs nothing. The graphics card's video engine is not used at all (it hung on the first frame of a small window
+  three times of three on 2026-11-21 and froze the whole desktop). Switching the picture on or off changes the way
+  at once, without making the virtual monitors anew.
+- **The monitor that shows the picture** is no panel in it: it would show itself.
+- **The phone meanwhile** is the sensor and nothing else: a dark screen with one line of text, no pictures taken
+  over Wi-Fi, the sound still played. A spectator page and the preview get no picture while the cable picture is
+  on. Switched off, the picture comes back to the phone by itself within some ten to twenty seconds.
 
 **The mouse** works there as the phone's mouse works on the phone's screen. While the glasses' picture fills a
 screen, the pointer stays on that screen and the picture draws it itself, at once. Moved onto a monitor or a single
@@ -261,8 +278,8 @@ would come with the picture a tenth of a second late, is hidden meanwhile. Pushe
 pointer comes back out onto the picture. Num Lock (arranging) and Super (the list of applications) bring it out too:
 panels are carried and resized with it, and the list and the backgrounds (looking down) are chosen with it. The right
 button beside the panels opens the list. A window lying on the headset's own screen, under its picture, is moved to
-another monitor first, and so is a new window that opens there. New windows come as large as makes one of their
-pixels one pixel of the glasses' screen. The picture needs no tap to start.
+another monitor first, and so is a new window that opens there. New windows come at the distance of new windows,
+sized for the glasses' own screen. The picture needs no tap to start.
 
 The picture's own "Black while a window is fullscreen" does not count it as a film.
 
@@ -280,7 +297,7 @@ per-application settings in GNOME Settings → Notifications apply here as well.
 
 On the Headset page:
 
-- **Camera as the background** (also in the top bar menu) shows the room instead of the scene; the monitors stay.
+- **Camera as the background** shows the room instead of the scene; the monitors stay.
 - **Camera when looking down** shows the camera only where you look further below the horizon than the angle you
   set, to see the keyboard and your hands. The scene and the monitors stay above. 0 switches it off.
 
@@ -364,8 +381,9 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 ## Security
 
-Anyone on the network who has the link with the key can watch your desktop and change the settings, and click in
-the windows shown in the headset. The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
+Anyone on the network who has the link with the key can watch your desktop and change the settings, and click and
+type in the windows shown in the headset (a keyboard connected to the phone): a terminal shown there runs what is
+typed. Keys go only into the window that has the PC's keyboard, and never Alt+F2 (GNOME's "run a command"). The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
 (then open the codes on the phone again). The server does not start with a key that is missing or shorter than 12
 characters (an empty one would let anyone in); `./setup.sh` makes a new one then. Never commit `certs/`.
 
@@ -398,6 +416,8 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `mic.py` — the phone's microphone as the PC's microphone "VR-Headset"; MediaMTX runs it while the phone sends it.
 - `windows.py` — the same for single windows, and puts the pointer, buttons and wheel from the headset into them
   (`orders.js` checks what the headset may ask for).
+- `raw.py` — hands one monitor or window to the picture of a headset on a cable as plain pictures, in place of an
+  encoder (ports 8700 and up, on this PC only, for who gives the key of this run).
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,

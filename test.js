@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Euler, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
-import { blocked, cleanOrder, wrongKey } from './orders.js'
+import { blocked, cleanOrder, passKey, wrongKey } from './orders.js'
 import { KEYCODES, placeIcon, resizeWindow, snapPanel } from './app/params.js'
 
 const RAD = Math.PI / 180
@@ -146,4 +146,16 @@ test('the phone keyboard\'s keys get the Linux key codes', () => {
   assert.deepEqual([KEYCODES.Escape, KEYCODES.Digit0, KEYCODES.KeyA, KEYCODES.KeyM, KEYCODES.Space, KEYCODES.F10, KEYCODES.NumLock, KEYCODES.NumpadDecimal],
     [1, 11, 30, 50, 57, 68, 69, 83])
   assert.deepEqual([KEYCODES.ArrowUp, KEYCODES.Delete, KEYCODES.MetaLeft], [103, 111, 125])
+})
+
+test('a key from the phone: only into the window with the keyboard, no Alt+F2, a release only after its press', () => {
+  const held = new Map(), key = (code, down) => ({ to: 'w0', key: code, down })
+  assert.equal(passKey(key(30, true), 7, 8, held), false) // another window has the keyboard
+  assert.equal(passKey(key(30, false), 7, 8, held), false) // so its release is not sent either
+  assert.equal(passKey(key(30, true), 7, 7, held), true)
+  assert.equal(passKey(key(30, false), 7, 7, held), true)
+  assert.equal(held.size, 0)
+  assert.equal(passKey(key(56, true), 7, 7, held), true) // Alt
+  assert.equal(passKey(key(60, true), 7, 7, held), false) // + F2: GNOME's "run a command"
+  assert.equal(passKey(key(62, true), 7, 7, held), true) // + F4 closes the window, as on the PC
 })

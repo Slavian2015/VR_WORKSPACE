@@ -18,6 +18,19 @@ export function cleanOrder(order, areas) {
   return Object.keys(clean).length > 1 ? clean : null
 }
 
+// A key of the phone's keyboard, already through cleanOrder: whether it may go on to the PC. A press only into the
+// window that has the PC's keyboard (until the extension brings the looked-at one to the front, the keyboard is with
+// another, maybe one not in the headset at all), and never F2 while Alt is held: GNOME's "run a command" box has no
+// window of its own, so the keys typed into it would pass. A release only of a key whose press went through.
+// source: GNOME's id of the order's window; focused: of the one with the keyboard; held: "slot key" -> the press,
+// kept by the caller (updated here).
+export function passKey(order, source, focused, held) {
+  const id = `${order.to} ${order.key}`, alt = [...held.values()].some(press => press.key === 56 || press.key === 100)
+  if (order.down ? source !== focused || (order.key === 60 && alt) : !held.has(id)) return false
+  order.down ? held.set(id, order) : held.delete(id)
+  return true
+}
+
 // Guessing the key from the internet. An address that is not of the home network and gave 10 wrong keys within an
 // hour is refused for the rest of that hour, key or no key. refused: Map address -> { count, since }, kept by the caller.
 // HOME: addresses of the home network and of this PC (IPv4 private and link-local; IPv6 loopback, unique local, link-local).

@@ -3,7 +3,7 @@ import Gio from 'gi://Gio'
 import GLib from 'gi://GLib'
 import Soup from 'gi://Soup?version=3.0'
 
-const SERVER = 'http://127.0.0.1:8080'
+export const SERVER = 'http://127.0.0.1:8080'
 
 export const http = () => new Soup.Session({ timeout: 2 })
 

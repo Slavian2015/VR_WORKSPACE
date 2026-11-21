@@ -6,6 +6,10 @@ on the GPU and publishes it to MediaMTX, and separately publishes the sound of a
 The virtual monitors and the audio output exist only while this runs, like devices that are plugged in.
 Picture and sound are separate streams on purpose: played in sync, the picture would wait about 70 ms for the sound.
 
+While a headset on a cable shows its picture on this very PC (server.js says so in .cable.json), nothing is
+compressed: raw.py hands every monitor's pictures to that picture as they are, and "vr/m0" carries a small black
+stand-in, only so that MediaMTX keeps this capture running.
+
 `capture.py --list` prints the monitors and the limit as JSON; server.js shows them to the pages.
 System python on purpose (see the first line): the project venv has no GNOME bindings.
 """
@@ -19,6 +23,7 @@ SINK = 'vr_headset'
 SLOT_YAW = [0, 95, -95, 190]  # where monitors stand in the sphere until the user moves them; the same list is in app/params.js
 DISPLAY_CONFIG = '/org/gnome/Mutter/DisplayConfig'
 LOW_MEMORY_MB = 2000  # below this the capture stops itself: a frozen computer is worse than a frozen picture
+RAW_PORT = int(os.environ.get('VR_RAW_PORT', 8700))  # raw.py's ports: the monitors from here on, the windows ten higher
 # Shells started from the VS Code snap point GIO at the snap's modules; GStreamer crashes when it loads them.
 ENV = {k: v for k, v in os.environ.items() if k != 'GIO_MODULE_DIR'}
 
@@ -35,6 +40,16 @@ def settings():
         return json.load(open(os.path.join(ROOT, 'params.json')))
     except (OSError, ValueError):
         return {}
+
+
+def cable():
+    """None, or what server.js says while a headset on a cable shows its picture on this PC:
+    {'screen': the GNOME connector of the monitor that shows it, or None while that is not known}."""
+    try:
+        with open(os.path.join(ROOT, '.cable.json')) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def monitors():
@@ -190,11 +205,39 @@ def main():
     saved = settings()
     children = []  # processes that must stay alive: if one dies, everything stops and MediaMTX starts us again
 
-    def spawn(command):
-        children.append(subprocess.Popen(command.split(), env=ENV))
+    def spawn(command, **more):
+        children.append(subprocess.Popen(command.split() if isinstance(command, str) else command, env=ENV, **more))
         return children[-1]
 
+    mode = [cable()]  # for a headset on a cable, or (None) for the phone
+    takers = {}       # index of the monitor -> (the process that takes its pictures, which kind it is)
+    stand_in = [None]
+
+    def kind(i):
+        if mode[0] is None:
+            return 'encoder'
+        # The monitor that shows the headset's picture: a picture of itself, a tunnel of mirrors. Nothing takes it.
+        return 'none' if connectors.get(i) and connectors[i] == mode[0].get('screen') else 'raw'
+
     def encode(i):
+        """Starts the program that takes the pictures of monitor i, in place of the one that did. The recording
+        itself, and a virtual monitor with it, goes on (tried on the stand, 2026-11-21)."""
+        old = takers.pop(i, (None,))[0]
+        if old:
+            children.remove(old)
+            old.terminate()
+        if kind(i) == 'none':
+            new = spawn('sleep infinity')  # stands for it in the lists of what must stay alive
+        elif kind(i) == 'raw':
+            new = spawn([os.path.join(ROOT, 'raw.py'), str(nodes[i]), str(RAW_PORT + i)], stdin=subprocess.PIPE)
+        else:
+            new = encoder(i)
+        takers[i] = (new, kind(i))
+        if old in real['encoders']:
+            real['encoders'][real['encoders'].index(old)] = new
+        return new
+
+    def encoder(i):
         size = ',width={},height={}'.format(*virtual_size(saved, i)) if sources[i] == 'virtual' else ''  # a virtual monitor takes the size we ask for
         # keepalive-time: GNOME sends frames only when the screen changes. The last one is repeated after 34 ms of
         # silence, so a still screen gives ~30 fps and a new viewer gets a key frame within 2 s (keyframe-period=60).
@@ -253,6 +296,7 @@ def main():
         for child in children:
             child.terminate()
         children.clear()
+        takers.clear()
         real['encoders'] = []
         for session in virtual_session, real['session']:
             if session:
@@ -281,9 +325,11 @@ def main():
     real = {'session': None, 'encoders': []}
 
     def stop_real():
-        for encoder in real['encoders']:
-            children.remove(encoder)
-            encoder.terminate()
+        for process in real['encoders']:
+            children.remove(process)
+            process.terminate()
+        for i in [i for i, (process, _) in takers.items() if process in real['encoders']]:
+            del takers[i]
         real['encoders'] = []
         if real['session']:
             ours.add(real['session'])
@@ -396,6 +442,25 @@ def main():
         elif action == 'leave':
             print(f'capture.py: {available} MB of memory again, capture restarts', file=sys.stderr)
             loop.quit()
+        # A headset on a cable has come or gone, or the monitor that shows its picture is known now: the monitors
+        # are taken the other way from here on.
+        if children and cable() != mode[0]:
+            mode[0] = cable()
+            if mode[0] is None and stand_in[0]:  # the encoder of the first monitor publishes "vr/m0" again
+                stand_in[0].terminate()
+                stand_in[0].wait()
+            for i in [i for i, (_, was) in takers.items() if was != kind(i)]:
+                encode(i)
+        # On a cable nothing is published for the phone, but MediaMTX runs us only while "vr/m0" is published.
+        # Not one of `children`: should it fail (the encoder it replaces still held "vr/m0"), it is started again.
+        if children and mode[0] is not None and (stand_in[0] is None or stand_in[0].poll() is not None):
+            stand_in[0] = subprocess.Popen((
+                'gst-launch-1.0 -q videotestsrc is-live=true pattern=black ! video/x-raw,width=64,height=36,framerate=2/1'
+                ' ! x264enc tune=zerolatency key-int-max=2 ! video/x-h264,profile=constrained-baseline'
+                ' ! h264parse ! flvmux streamable=true ! rtmp2sink location=rtmp://127.0.0.1:1935/vr/m0').split(), env=ENV)
+        elif stand_in[0] and (mode[0] is None or not children):
+            stand_in[0].terminate()
+            stand_in[0] = None
         try:
             changed = os.stat(os.path.join(ROOT, 'params.json')).st_mtime
         except OSError:
@@ -408,7 +473,7 @@ def main():
     try:
         loop.run()
     finally:  # leaving also closes the sessions with GNOME, which removes the virtual monitors
-        for child in children:
+        for child in children + [stand_in[0]] * bool(stand_in[0]):
             child.terminate()
         if usual and usual != SINK:
             subprocess.run(['pactl', 'set-default-sink', usual])
