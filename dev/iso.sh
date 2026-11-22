@@ -8,6 +8,7 @@
 # that lets drive.py run JavaScript in the shell and take screenshots.
 # Options, as environment variables:
 #   MONITORS=3            number of monitors of 1300x1000 (default 1)
+#   SIZES="1920x1080 2560x1440"   the monitors by their sizes, in place of MONITORS
 #   EXTRA="uuid uuid"     copies of other installed extensions to load as well
 #   ANIM=true             system animations on (default off)
 #   PIPEWIRE=1            let that shell use the real PipeWire, so that screen recording works there
@@ -38,7 +39,7 @@ done
 # a stand-in for systemctl: the test must not start or stop the real services
 printf '#!/bin/sh\necho "systemctl $*" >> "%s/systemctl.log"\n' "$T" > "$T/bin/systemctl"; chmod +x "$T/bin/systemctl"
 [ -n "${PIPEWIRE:-}" ] && ln -s "/run/user/$(id -u)/pipewire-0" "$R/pipewire-0"
-VM=""; for _ in $(seq "${MONITORS:-1}"); do VM="$VM --virtual-monitor 1300x1000"; done
+VM=""; for size in ${SIZES:-$(for _ in $(seq "${MONITORS:-1}"); do echo 1300x1000; done)}; do VM="$VM --virtual-monitor $size"; done
 cd "$T"
 used() { awk '/MemTotal/ {t = $2} /MemAvailable/ {a = $2} END {printf "%d", (t - a) / 1024}' /proc/meminfo; }
 BASE=$(used)

@@ -1,14 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Euler, Quaternion, Vector3 } from 'three'
+import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 import { blocked, cleanOrder, passKey, wrongKey } from './orders.js'
 import { KEYCODES, placeIcon, resizeWindow, snapPanel } from './app/params.js'
+import { space } from './app/track.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
 const forward = q => new Vector3(0, 0, -1).applyQuaternion(q)
+const sub3 = (a, b) => a.map((n, k) => n - b[k])
 const up = q => new Vector3(0, 1, 0).applyQuaternion(q)
 // Head turned `right` degrees to the right and `upward` degrees up.
 const looking = (right, upward) => new Quaternion().setFromEuler(new Euler(upward * RAD, -right * RAD, 0, 'YXZ'))
@@ -158,4 +160,97 @@ test('a key from the phone: only into the window with the keyboard, no Alt+F2, a
   assert.equal(passKey(key(56, true), 7, 7, held), true) // Alt
   assert.equal(passKey(key(60, true), 7, 7, held), false) // + F2: GNOME's "run a command"
   assert.equal(passKey(key(62, true), 7, 7, held), true) // + F4 closes the window, as on the PC
+})
+
+// --- where the head is, from the camera (app/track.js): made-up pictures of a room, from a camera on an arm before
+// the neck. The head turns about the neck; the neck moves when the body leans. The room, in metres from the neck: a
+// wall 1 m ahead, a wall 45 cm to the right, a far one to the left, a desk 30 cm below, a floor, a ceiling. (The
+// tests before these had one flat wall for a room: the way of tracking that failed on a real phone passed them.)
+const SEEN = { w: 160, h: 90, focal: 80 / Math.tan(36 * RAD) }
+const speck = (x, y, seed) => { let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(seed, 2246822519)) >>> 0; h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0; return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32 * 2 - 1 }
+function blotches(x, y, seed) { // a pattern of soft blotches, -1 to 1: values on a grid, smoothly between them
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy)
+  return (speck(x0, y0, seed) * (1 - u) + speck(x0 + 1, y0, seed) * u) * (1 - v) + (speck(x0, y0 + 1, seed) * (1 - u) + speck(x0 + 1, y0 + 1, seed) * u) * v
+}
+const paint = (a, b, seed) => 128 + 50 * blotches(a / 0.07, b / 0.07, seed) + 30 * blotches(a / 0.028, b / 0.028, seed + 50)
+function seen(at, turn) { // the camera's picture from the place `at`, turned by `turn`
+  const { w, h, focal } = SEEN, gray = new Float32Array(w * h), ray = new Vector3(), axes = new Matrix3().setFromMatrix4(new Matrix4().makeRotationFromQuaternion(turn))
+  const [ax, ay, az] = at
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    ray.set((i - (w - 1) / 2) / focal, ((h - 1) / 2 - j) / focal, -1).applyMatrix3(axes)
+    let near = Infinity, value = 128
+    const hit = (far, seed, a, b) => { if (far > 0 && far < near) { near = far; value = paint(a(far), b(far), seed) } }
+    const x = far => ax + far * ray.x, y = far => ay + far * ray.y, z = far => az + far * ray.z
+    hit((-1 - az) / ray.z, 1, x, y) // the wall ahead
+    hit((2 - az) / ray.z, 2, x, y) // the wall behind
+    hit((0.45 - ax) / ray.x, 3, z, y) // to the right
+    hit((-1.5 - ax) / ray.x, 4, z, y) // to the left
+    hit((1.2 - ay) / ray.y, 5, x, z) // the ceiling
+    hit((-1 - ay) / ray.y, 6, x, z) // the floor
+    const desk = (-0.3 - ay) / ray.y
+    if (z(desk) < -0.15) hit(desk, 7, x, z) // the desk, from 15 cm before the neck to the wall
+    gray[j * w + i] = value
+  }
+  return gray
+}
+const ARM = new Vector3(0.03, 0.06, -0.15) // the camera from the neck: 3 cm right, 6 up, 15 ahead
+const look = (yaw, pitch) => new Quaternion().setFromEuler(new Euler(pitch * RAD, yaw * RAD, 0, 'YXZ')) // degrees: to the left, up
+// The room looked around for five seconds from a chair, and a map made of it. show(neck, yaw, pitch, wander): the
+// next picture, the neck at `neck`, the sensors telling the yaw `wander` degrees wrong; gives whether the head was found.
+function scanned() {
+  const room = space(SEEN.w, SEEN.h, 72)
+  const show = (neck, yaw, pitch, wander = 0) => {
+    const turn = look(yaw, pitch)
+    return room.step(seen(ARM.clone().applyQuaternion(turn).add(new Vector3(...neck)).toArray(), turn), look(yaw + wander, pitch).toArray())
+  }
+  room.scan()
+  for (let i = 0; i < 150; i++) show([0, 0, 0], 25 * Math.sin(i / 150 * 6.283), 12 * Math.sin(i / 150 * 12.566))
+  assert.ok(room.finish(), 'no map came of the scan')
+  assert.ok(room.count > 40, `only ${room.count} landmarks`)
+  return { room, show }
+}
+const size = v => Math.hypot(...v)
+
+test('looking around moves nothing: toward the near wall on the right, down at the desk, up (what failed on the real phone)', () => {
+  const { room, show } = scanned()
+  let worst = 0, held = 0
+  for (let i = 0; i < 90; i++) { // other looks than the scan's
+    held += show([0, 0, 0], 22 * Math.sin(i / 90 * 6.283 * 1.5), 11 * Math.cos(i / 90 * 6.283))
+    worst = Math.max(worst, size(room.head))
+  }
+  assert.ok(held > 85, `found in ${held} of 90 pictures`)
+  assert.ok(worst < 0.03, `the head told ${worst} of the usual distance away`) // the old way told 0.25 and more
+})
+test('leaning forward and aside is found, each by itself, while the head also looks about', () => {
+  const { room, show } = scanned()
+  for (let i = 1; i <= 30; i++) show([0, 0, -0.1 * i / 30], 8 * Math.sin(i / 5), 0)
+  const metres = 0.1 / -room.head[2] // the map's "usual distance" in metres, from the lean that is known
+  assert.ok(metres > 0.4 && metres < 1.3, `a usual distance of ${metres} m in a room of 0.3 to 1.5 m`)
+  assert.ok(Math.hypot(room.head[0], room.head[1]) * metres < 0.015, `leaning forward told as ${room.head.map(n => n * metres)}`)
+  for (let i = 1; i <= 20; i++) show([0.06 * i / 20, 0, -0.1], -10 * i / 20, 5 * i / 20)
+  const told = room.head.map(n => n * metres)
+  assert.ok(Math.abs(told[0] - 0.06) < 0.015 && Math.abs(told[1]) < 0.015 && Math.abs(told[2] + 0.1) < 0.02, `6 cm right and 10 cm forward told as ${told}`)
+  room.centre()
+  show([0.06, 0, -0.1], -10, 5)
+  assert.ok(size(room.head) * metres < 0.01, 'centred: zero is where the head is now')
+})
+test('sensors that wander by three degrees do not carry the head away', () => {
+  const { room, show } = scanned()
+  let held = 0
+  for (let i = 0; i < 180; i++) held += show([0, 0, 0], 10 * Math.sin(i / 20), 4 * Math.sin(i / 13), 3 * i / 180)
+  assert.ok(held > 170, `found in ${held} of 180 pictures`)
+  assert.ok(size(room.head) < 0.04, `the head told ${room.head} away`) // 3 degrees taken for a step aside would be 0.05
+})
+test('where the scan never looked the head stays as last found, and is found again on the way back', () => {
+  const { room, show } = scanned()
+  for (let i = 1; i <= 15; i++) show([0, 0, -0.05 * i / 15], 0, 0)
+  const leaned = room.head.slice()
+  let kept
+  for (let i = 1; i <= 40; i++) if (!show([0, 0, -0.05], 2.5 * i, 0)) kept ??= room.head.slice() // 100 degrees to the left
+  assert.equal(room.held, false)
+  assert.deepEqual(room.head, kept)
+  assert.ok(size(sub3(kept, leaned)) < 0.02, `lost with the head told ${kept}, before the turn ${leaned}`)
+  let held = false
+  for (let i = 40; i >= 0; i--) held = show([0, 0, -0.05], 2.5 * i, 0)
+  assert.ok(held && size(sub3(room.head, leaned)) < 0.02, `back, the head told ${room.head}, before ${leaned}`)
 })

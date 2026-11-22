@@ -11,6 +11,8 @@
 //   move:x,y            path:x1,y1,x2,y2 (a run of small movements, as a real mouse)
 //   press / release     (the left button, where the pointer is)      click:x,y      rclick:x,y      wheel:<pixels>
 //   orient:alpha,beta,gamma   (the phone's orientation sensor; 0,90,0 looks at the horizon, a larger alpha turns left)
+//                       alpha from 0 to 360 only: Chromium drops a negative one without a word (353 looks 7 degrees right);
+//                       a larger beta looks up
 //   key:<code>          a key pressed and let go, as KeyboardEvent.code names it (KeyA, Digit7, ControlLeft); keydown:<code> / keyup:<code>
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'

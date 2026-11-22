@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Проверка движения головы</title>
+<!-- A bench for the head movement (track.js), on the phone alone: no headset, no sphere, nothing to log out of.
+     The same code with the same camera pictures as in the headset: the room is looked around for 15 seconds (the
+     map), then the head's place is shown as numbers, and the landmarks found as dots on the camera's picture.
+     It can also keep the scan and the 15 seconds after it (small grey pictures with the head's turns) and send
+     them to the PC (track-clips/), where dev/replay.mjs plays them through the same code again: how a real camera
+     behaves cannot be made up on the PC. -->
+<style>
+  body { margin: 0; padding: 12px; background: #111; color: #eee; font: 15px/1.35 system-ui; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  ol { margin: 0 0 10px; padding-left: 22px; color: #bbb; }
+  button { padding: 10px 16px; margin: 0 6px 6px 0; border: 0; border-radius: 8px; background: #2a6; color: #fff; font: 600 16px system-ui; }
+  button:disabled { background: #444; color: #888; }
+  #lean { margin: 10px 0 0; font: 700 44px system-ui; font-variant-numeric: tabular-nums; }
+  #side { margin: 0 0 6px; font: 600 20px system-ui; font-variant-numeric: tabular-nums; color: #bbb; }
+  #bar { position: relative; height: 14px; border-radius: 7px; background: #333; }
+  #bar i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: #4fb2ff; border-radius: 7px; }
+  #bar::after { content: ''; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; background: #888; }
+  canvas { display: block; width: 100%; max-width: 480px; margin: 10px 0; background: #000; }
+  video { position: fixed; width: 1px; height: 1px; opacity: 0; }
+  a { color: #9cf; }
+</style>
+<h1>Проверка движения головы</h1>
+<ol>
+  <li>Держите телефон у лица, камерой от себя, как он стоит в шлеме. Камера должна видеть предметы (стол, полки), не пустую стену и не экран, где показана сфера.</li>
+  <li>Нажмите «Начать», затем «Осмотреться»: 15 секунд медленно поворачивайтесь вместе с телефоном влево, вправо, вверх и вниз. Точки на картинке: ориентиры, которые он запомнил.</li>
+  <li>После осмотра поворачивайте голову как угодно: числа должны стоять около нуля.</li>
+  <li>Наклонитесь вперёд на ладонь: «вперёд» растёт примерно на 10 см, рамка увеличивается. Назад: уменьшается.</li>
+</ol>
+<button id="start">Начать</button><button id="scan" disabled>Осмотреться</button>
+<p id="lean">—</p>
+<p id="side">&nbsp;</p>
+<div id="bar"><i></i></div>
+<p id="state" role="status">Камера ещё не открыта.</p>
+<canvas id="look" width="480" height="270"></canvas>
+<button id="clip" disabled>Записать осмотр и проверку (30 с)</button>
+<p id="clipState" role="status"></p>
+<p><a href="/">Назад</a></p>
+<video id="cam" playsinline muted></video>
+<script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
+<script type="module">
+import { Quaternion, Vector3 } from 'three'
+import { LAYOUT_SPEC } from './params.js'
+import { deviceQuaternion } from './orient.js'
+import { clip, shrink, space, turnAt } from './track.js'
+
+const $ = id => document.getElementById(id), NEAR = 0.7, W = 160, SCAN = 15000
+const head = new Quaternion(), from = new Quaternion(), at = new Vector3(), turns = [] // the head's turns of the last half second: [when, x, y, z, w]
+addEventListener('deviceorientation', e => {
+  if (e.alpha == null) return
+  deviceQuaternion(e.alpha, e.beta, e.gamma, screen.orientation?.angle ?? window.orientation ?? 0, head)
+  const now = performance.now()
+  turns.push([e.timeStamp > now - 500 && e.timeStamp <= now ? e.timeStamp : now, ...head.toArray()]) // when it was measured, not when it got here
+  if (turns.length > 40) turns.shift()
+})
+const small = document.createElement('canvas').getContext('2d', { willReadFrequently: true }), look = $('look').getContext('2d')
+let room, since = 0, failed = false, kept = null, count = { n: 0, held: 0, since: performance.now(), rate: 0, part: 0 }
+const scan = () => { // a new map from here: what the phone looks at now is "forward"
+  room.scan()
+  since = performance.now()
+  failed = false
+  from.copy(head).invert()
+}
+
+$('start').onclick = async () => {
+  $('start').disabled = true
+  await window.DeviceOrientationEvent?.requestPermission?.().catch(() => {})
+  const saved = await fetch('/params').then(answer => answer.json()).catch(() => ({}))
+  const angle = saved.trackFov ?? LAYOUT_SPEC.trackFov[0], roomDepth = saved.roomDepth ?? LAYOUT_SPEC.roomDepth[0]
+  const video = $('cam')
+  try {
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
+    await video.play()
+  } catch (e) {
+    $('state').textContent = `Камера не открылась: ${e.message}`
+    return
+  }
+  const next = (now, frame) => { // every new picture of the camera, as in the headset (main.js: follow)
+    const h = Math.round(W * video.videoHeight / video.videoWidth), taken = frame?.captureTime ?? (frame?.presentationTime ?? now) - 60
+    if (h && turns.length) {
+      if (!room) {
+        room = space(W, h, angle)
+        made = { h, angle, roomDepth }
+        Object.assign(small.canvas, { width: 3 * W, height: 3 * h })
+        $('scan').disabled = $('clip').disabled = false
+      }
+      const turn = turnAt(turns, taken), gray = shrink(small, video, W, h), scanning = room.state === 'scan'
+      if (scanning && performance.now() - since > SCAN) failed = !room.finish()
+      const found = room.step(gray, turn)
+      show(gray, h, found, { video, angle, roomDepth, age: performance.now() - taken })
+      if (kept) { // the scan and the 15 seconds after it, for the PC
+        kept.add(taken, turn, room.head, scanning ? 2 : found ? 1 : 0, gray)
+        $('clipState').textContent = `Запись: ${((performance.now() - since) / 1000).toFixed(0)} из 30 с${scanning ? ' (осмотр)' : ' (проверка: поворачивайте голову, наклоняйтесь)'}`
+        if (performance.now() - since > 2 * SCAN) send()
+      }
+    } else if (!turns.length) $('state').textContent = 'Датчики поворота молчат: без них движение не найти.'
+    video.requestVideoFrameCallback(next)
+  }
+  video.requestVideoFrameCallback(next)
+}
+$('scan').onclick = scan
+
+function show(gray, h, found, { video, angle, roomDepth, age }) {
+  // The head's place in the axes of where the phone looked when the scan began: right, up, back; metres
+  at.fromArray(room.head).applyQuaternion(from).multiplyScalar(roomDepth)
+  const cm = value => `${value >= 0 ? '+' : '−'}${Math.abs(value * 100).toFixed(0)} см`, ready = room.state === 'ready'
+  $('lean').textContent = ready ? `вперёд ${cm(-at.z)}` : '—'
+  $('lean').style.color = found || !ready ? '#eee' : '#e66'
+  $('side').textContent = ready ? `вправо ${cm(at.x)} · вверх ${cm(at.y)}` : ' '
+  const part = ready ? Math.max(-1, Math.min(1, -at.z / 0.3)) * 50 : 0
+  Object.assign($('bar').firstElementChild.style, { left: `${Math.min(50, 50 + part)}%`, width: `${Math.abs(part)}%` })
+  count.n++
+  count.held += found
+  const now = performance.now()
+  if (now - count.since > 1000) count = { n: 0, held: 0, since: now, rate: Math.round(count.n / (now - count.since) * 1000), part: Math.round(count.held / count.n * 100) }
+  const camera = `камера ${video.videoWidth}×${video.videoHeight}, ${count.rate} кадров в секунду, кадру ${age.toFixed(0)} мс · угол камеры ${angle}°, расстояние ${roomDepth} м`
+  $('state').textContent = room.state === 'scan'
+    ? `Осмотр: ещё ${Math.ceil((SCAN - (now - since)) / 1000)} с. ${room.count ? `Ориентиров: ${room.count}` : 'Первых ориентиров ещё нет: поворачивайтесь'} · ${camera}`
+    : ready ? `${found ? 'Найдено' : 'Не найдено (числа держатся)'}: ${room.seen} ориентиров в кадре из ${room.count} в карте, в ${count.part}% кадров · ${camera}`
+      : `${failed ? 'Осмотр не удался: мало ориентиров. Камере нужны предметы, не пустая стена и не темнота; поворачивайтесь медленно. ' : ''}Карты нет: нажмите «Осмотреться» · ${camera}`
+  // What the tracker is given, the landmarks it found in it, and a frame as large as a monitor an arm's length away would look from there
+  const image = look.createImageData(W, h)
+  for (let i = 0; i < gray.length; i++) image.data.set([gray[i], gray[i], gray[i], 255], i * 4)
+  small.putImageData(image, 0, 0)
+  look.drawImage(small.canvas, 0, 0, W, h, 0, 0, 480, 270)
+  look.fillStyle = '#5f5'
+  for (const [x, y] of room.dots) look.fillRect(x * 3 - 3, y * 3 - 3, 6, 6)
+  if (!ready) return
+  const size = Math.min(3, NEAR / Math.max(0.1, NEAR + at.z))
+  look.strokeStyle = found ? '#4fb2ff' : '#e66'
+  look.lineWidth = 4
+  look.strokeRect(240 - 100 * size, 135 - 56 * size, 200 * size, 112 * size)
+}
+
+function send() {
+  const file = kept.file()
+  kept = null
+  $('clipState').textContent = 'Отправляю на компьютер…'
+  fetch('/trackclip', { method: 'POST', body: file }).then(answer => {
+    $('clipState').textContent = answer.ok ? 'Записано и отправлено на компьютер (папка track-clips).' : `Компьютер не принял: ${answer.status}`
+  }).catch(e => { $('clipState').textContent = `Не отправилось: ${e.message}` }).finally(() => { $('clip').disabled = false })
+}
+let made = {} // the pictures' size and the settings a clip is to carry
+$('clip').onclick = () => {
+  $('clip').disabled = true
+  scan()
+  kept = clip(W, made.h, made.angle, made.roomDepth)
+}
+</script>

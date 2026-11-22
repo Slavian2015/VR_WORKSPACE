@@ -106,8 +106,7 @@ Press **Num Lock** while a phone is connected: the mouse stops reaching the desk
 Look at a monitor (a soft light comes around it, and a note with its numbers appears under the centre of the view),
 hold the left button and carry it with your gaze; near another monitor it is drawn to sit beside it or in line with
 it. The gaze points as the phone's mouse would: look at a side or corner of a single window, hold the left button and
-turn your head to change the window's size; look down at the backgrounds and click one, or hold on a slider (darkening,
-blur) and look along it; the wheel turns their pages there. The mouse connected to the phone works in this mode too:
+turn your head to change the window's size. The mouse connected to the phone works in this mode too:
 see "Single windows", step 6.
 
 | Input | Does |
@@ -184,6 +183,22 @@ a mouse connected to the phone.
    list. **The Super (Windows) key** opens the same list while the headset is in use, instead of GNOME's overview:
    look at an application and click with the PC's mouse (it works for the list until it closes); hold the button
    and look elsewhere to carry an icon; the right button or Super again closes it.
+
+   **Over the list are four round buttons** (look up a little): **Record** (a red dot starts the recording, a white
+   square on red stops it), **6D** (the head movement from the camera: it begins with a look around the room, see
+   "Moving the head" below; blue while on), **Settings** and **Off**. Off wants a second press within three
+   seconds; then it does what the emergency key does: the picture of a headset on a cable closes and VR Workspace
+   is switched off.
+
+   **Settings** shows, in place of the icons, four blocks side by side, all in view at once and always at the same
+   size: **Картинка** (text sharpness, the light around the window that gets the keyboard, hiding the monitors),
+   **Движение головы** (on or off, the strength of the lean, "look around again"), **Камера телефона** (the camera
+   as the background, below which angle it shows, keeping it open, the angle and the shift of its picture) and
+   **Фон**: the backgrounds as round pictures, nine a page (a click shows one at once; the arrows under them or the
+   wheel turn the pages), with its darkening and blur. Only what shows at once in the headset is there; the rest stays in the
+   settings window on the PC. A switch flips with a click. A slider: hold the button on it and look left or right;
+   while it is held everything else disappears and the view is not darkened, so what it does is seen at once. The
+   same button brings the icons back, and the list always opens with the icons.
 5. **To arrange your field**, hold an icon with the left button and move it: let go on a place of the field and it
    stays there (if the place is taken, the icons move one place toward the nearest free place); let go beside the
    field and it leaves it. The field is kept on the PC.
@@ -194,10 +209,9 @@ a mouse connected to the phone.
      panel it is drawn to sit beside it, over or under it, or in line with it;
    - at a side or a corner of a window that side lights up: drag it to make the window itself wider or taller on
      the PC; its panel grows with it and the text keeps its size;
-   - the wheel over a panel changes its size, smoothly, about 6 % a notch;
-   - look down: the backgrounds as round pictures (the wheel turns the pages; a click chooses one) and two sliders,
-     darkening and blur of the background. The phone camera is off in this mode.
-   Num Lock again leaves the mode.
+   - the wheel over a panel changes its size, smoothly, about 6 % a notch.
+   Looking down shows the phone camera as everywhere else (the keyboard and your hands); the backgrounds are among
+   the settings over the list of applications. Num Lock again leaves the mode.
 7. **Look up** for the time and date.
 
 What to know:
@@ -279,7 +293,7 @@ window's panel, the real pointer goes into that monitor or window, at that place
 there directly, and the window comes to the front. The pointer is drawn over the panel at once; GNOME's own, which
 would come with the picture a tenth of a second late, is hidden meanwhile. Pushed hard past a side of the panel, the
 pointer comes back out onto the picture. Num Lock (arranging) and Super (the list of applications) bring it out too:
-panels are carried and resized with it, and the list and the backgrounds (looking down) are chosen with it. The right
+panels are carried and resized with it, and the list and its settings are worked with it. The right
 button beside the panels opens the list. A window lying on the headset's own screen, under its picture, is moved to
 another monitor first, and so is a new window that opens there. New windows come at the distance of new windows,
 sized for the glasses' own screen. The picture needs no tap to start.
@@ -322,11 +336,80 @@ command:
 curl -s -X POST http://localhost:8080/toggle/passthrough
 ```
 
+## Moving the head (its place in the room, from the camera)
+
+The phone's sensors tell only how the head is turned. With Settings → Headset → Phone Camera → **Head movement from
+the camera** (on unless switched off) the phone also finds where the head is in the room, from what its back camera
+sees: lean toward a window and it comes nearer (text gets larger), lean back and it goes away, lean aside and the
+windows shift as real things would. The sphere stays where it is and the panels in it are seen from the head's new
+place. So is the list of applications. Looking around moves nothing.
+
+**First the room is looked around**, for 15 seconds, once you sit: open the list of applications (Super) and press
+the **6D** button over it (or switch the setting on). A note in the headset says "Осмотритесь": turn the head slowly
+to the left, to the right, up and down, as far as you will look later: also down at the keyboard, if you look
+there (where the look around never went, a look is told a little as a move of the head). The phone makes a map of the room from that:
+landmarks (corners of things) with their places. Then the map is fixed and the head is found in it, in every
+picture of the camera. **A screen that shows the sphere and that the camera can see** (the headset's picture on a
+monitor, the spectator window) goes dark for the look around, with only the note on it: what it shows follows the
+head, and taken for a part of the room it made a window come nearer by itself (the camera saw the window grow on
+that screen and took it for the head coming nearer). The button shows which it is: "Осмотреться" (on, no map yet: press it), "Идёт осмотр…",
+"6DoF включён"; a press while it is on switches it off. After the page was started anew the room has to be looked
+around again (the map is not kept).
+
+The head's way counts as many times as new windows hang farther than a real monitor stands (0.7 m): leaning toward
+a window is then as leaning toward a monitor an arm's length away. One to one, a lean of 20 cm toward a window 2 m
+away would hardly show. On top of that comes **the strength of the lean** (1.5 by default; among the settings in
+the headset, and Settings → Headset → Phone Camera): 1 is as at a real monitor, more makes a smaller lean do as
+much. It counts the same for everything, so the sphere stays whole. With a headset on a cable the
+phone sends the head's place along with its turn (the phone must be worn on the head then, its camera looking
+forward).
+
+- **Not while arranging** (Num Lock): panels are carried around the middle of the sphere there.
+- **Distance to what the camera sees, m** (0.8 by default): pictures alone cannot tell a small room from a large
+  one. It is how far the things around usually are; if a lean of a hand's width moves the windows less than that,
+  make the number larger.
+- **What the camera really sees across, °** (72 by default, the main camera of an iPhone): for another camera, its
+  true angle. "Camera view angle" above it is only for how the camera's picture is shown.
+- **Centre on gaze** also puts the head at zero where it is now (the map stays).
+- It is made for sitting, leaning and looking around, up to 30 cm from where the room was looked around. Where the
+  look around never went there are no landmarks: looking there, the head stays as last found.
+- The camera must see things that stand still and have something to tell them by (a desk, shelves, a wall with
+  pictures): not a blank wall, not the dark. Things that move, a screen that changes, hands: they are left out
+  when they do not fit the rest.
+- The camera should not see the screen that shows the sphere itself (a monitor standing in for a headset on a
+  cable): its picture changes with every answer. Inside a real headset this cannot happen.
+- The camera stays open while it is on (the phone gets warmer).
+- Every look around in the headset is kept with the 15 seconds after it as a clip on the PC
+  (`track-clips/auto-….bin`, small grey pictures with the head's turns; the last eight): what goes wrong in the
+  headset and not on the test page can then be played through the same code again (`node dev/replay.mjs`).
+- Every five seconds the phone tells the server how it goes, and the server's journal keeps it
+  (`journalctl --user -u vr-workspace | grep 'head from the camera'`): the camera's picture and rate, whether there
+  is a map and of how many landmarks, how many were found in the last picture, the part of the pictures in which
+  the head was found, and where it was taken to be.
+
+**To try it without the headset**: the phone's start screen has the link "Проверка движения головы" (the page
+`track-test.html`). Hold the phone at your face as it sits in the headset, press "Начать", then "Осмотреться" and
+turn with it for 15 seconds; after that it shows where the head is, in centimetres (forward, right, up), and the
+landmarks it found as dots on the camera's picture. Turning must leave the numbers near zero; leaning forward by a
+hand's width must show about 10 cm. It needs neither a login nor a restart to try again. "Записать осмотр и
+проверку" keeps the look around and the 15 seconds after it (small grey pictures with the phone's turns) in
+`track-clips/` on the PC, and `node dev/replay.mjs track-clips/clip-….bin` plays such a clip through the same code
+again, so a change to it is tried on what the real camera saw (`node dev/replay.mjs <a clip> <another>`: the map
+from the first, the second followed in it).
+
+How it works is told at the top of `app/track.js`. Before it (2026-11-21 and 22) five tries took one flat wall for
+the room and told how much larger it showed as a lean: a camera that swings toward a near wall or a desk when the
+head turns sees them grow, and turning right by 17° was told as leaning 21 cm in. Two clips of the real camera
+showed that, and showed this way holding the head within 1 to 2 cm through the same turns, with the leans in them
+still found. The tests (`node --test`) now have a room with a near wall and a desk, not one wall.
+
 ## Recording what you see
 
-Top bar menu → **Record Video**, or the **Scroll Lock** key from anywhere (a notification in the headset says which
-way it went): on starts it, off stops it and saves the video, with the PC's sound, into `~/Videos` (switching VR
-Workspace off saves it too). The same from a terminal, in the project folder, while VR Workspace runs:
+Three ways, all the same switch: top bar menu → **Record Video**; the **Scroll Lock** key from anywhere; and in the
+headset the first round button over the list of applications (the Super key opens the list), which shows a red
+dot to start and a white square on red while it records. On starts it, off stops it and saves the video, with the PC's
+sound, into `~/Videos` (switching VR Workspace off saves it too). A notification in the headset says which way it
+went. The same from a terminal, in the project folder, while VR Workspace runs:
 
 ```bash
 node record.mjs          # Ctrl+C stops; the video, with the PC's sound, goes to ~/Videos
@@ -346,7 +429,7 @@ browser (click it once). As a window on the PC it gets covered by the windows th
 Settings → Background → "Open Folder" opens `app/bg/`. Put equirectangular files there (twice as wide as tall):
 photos, or 360 videos as `.mp4`, `.webm` or `.mov` in a codec the phone plays (H.264 is safe). They appear in the
 gallery the next time its page is opened. The same page has darkening and blur of the background, so that the
-panels stand out; in the headset they are under the backgrounds when you look down in the arranging mode. `setup.sh` fills the folder only when it does not exist yet (with the
+panels stand out; in the headset both, and the backgrounds themselves, are in the block **Фон** of the settings over the list of applications. `setup.sh` fills the folder only when it does not exist yet (with the
 photos, a test grid and `video_test.mp4`), so what you delete stays deleted.
 
 ## Without the top bar icon
@@ -425,6 +508,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
   encoder (ports 8700 and up, on this PC only, for who gives the key of this run).
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
+- `app/track.js` — where the head is, from the phone camera's pictures (leaning toward a window).
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,
   so stereo and lens correction are done in a single pass and text is sampled once.
 - `gnome-extension/` — the top bar menu (`extension.js`), the settings window (`prefs.js`) and `install.sh`.

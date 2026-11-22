@@ -5,6 +5,9 @@ export const LAYOUT_SPEC = {
   camBelow: [0, 0, 80, 1, 'Камера при взгляде вниз: показывать ниже, ° под горизонтом (0 — выключено)'],
   camShiftX: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вправо / влево, °'],
   camShiftY: [0, -20, 20, 0.5, 'Сдвиг картинки камеры вверх / вниз, °'],
+  roomDepth: [0.8, 0.3, 5, 0.1, 'Движение головы по камере: расстояние до того, что перед камерой, м'],
+  leanGain: [1.5, 0.5, 4, 0.1, 'Движение головы: сила приближения, × (1: как у настоящего монитора на расстоянии руки)'],
+  trackFov: [72, 40, 130, 1, 'Движение головы по камере: сколько градусов камера видит поперёк на самом деле'], // 72: measured from clips of an iPhone 15 Pro's main camera
   bgDim: [0, 0, 90, 5, 'Затемнение фона, %'],
   bgBlur: [0, 0, 100, 5, 'Размытие фона, %'],
   sharpen: [40, 0, 100, 5, 'Резкость текста, %'],
@@ -36,7 +39,7 @@ const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (
 
 // Server answer -> full settings: every key has a value, monitors included.
 export function complete(answer) {
-  const all = { bg: 'bg/old_field.jpg', recenter: 0, menuCall: 0, autoBlack: true, hideMonitors: false, camKeep: false, virtualSize: answer.virtualSizes[0],
+  const all = { bg: 'bg/old_field.jpg', recenter: 0, menuCall: 0, scanCall: 0, autoBlack: true, hideMonitors: false, camKeep: false, sixDof: true, virtualSize: answer.virtualSizes[0],
     glowColor: '#4fb2ff', focusGlow: true, // the light around panels; around the one that gets the keyboard
     publicHost: '', // this PC's address on the internet, for the phone's link from outside the home (server.js)
     phoneMic: false } // the phone's microphone as this PC's (mic.py)

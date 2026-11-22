@@ -64,12 +64,8 @@ export default class VrWorkspace extends Extension {
       console.log(`VR Workspace: "stop sharing" pressed by ${event.get_source_device()?.get_device_name()} at ${event.get_coords().map(Math.round)}`)
       return Clutter.EVENT_PROPAGATE
     })
-    this._fullscreenChanged = global.display.connect('in-fullscreen-changed', () => {
-      this._reportFullscreen()
-      this._keepPointerOn()
-    })
+    this._fullscreenChanged = global.display.connect('in-fullscreen-changed', () => this._keepPointerOn())
     Main.layoutManager.connectObject('monitors-changed', () => this._keepPointerOn(), this)
-    this._reportFullscreen()
     this._keymap = Clutter.get_default_backend().get_default_seat().get_keymap()
     this._numLock = this._keymap.get_num_lock_state() // only a change counts: Num Lock may be on already at login
     this._keymapChanged = this._keymap.connect('state-changed', () => this._onKeymap())
@@ -213,7 +209,11 @@ export default class VrWorkspace extends Extension {
       return { id: w.get_id(), title: w.get_title() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
         parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
     })
-    talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, picture: this._pictureScreen(), ...wish }).then(answer => {
+    // fullscreen: a film, say, so the headset can go dark around it; not the glasses' own picture. With every report:
+    // told only when it changed, it stuck on "yes" when the picture opened fullscreen before it had its title, and
+    // the background stayed black (2026-11-21).
+    const fullscreen = windows.some(w => w.is_fullscreen() && !isGlasses(w))
+    talk(this._http, '/windows', { open, focus: global.display.focus_window?.get_id() ?? 0, picture: this._pictureScreen(), fullscreen, recording: !!this._recordingNow, ...wish }).then(answer => {
       if (!this._indicator) return // switched off meanwhile
       this._serverSeen = !!answer
       this._connectors = answer?.connectors ?? []
@@ -222,6 +222,18 @@ export default class VrWorkspace extends Extension {
       this._phoneOnline = !!answer?.phoneOnline
       if (answer && this._numLockSeen !== undefined && answer.numLock !== this._numLockSeen) this._pressNumLock()
       if (answer) this._numLockSeen = answer.numLock
+      // The record button over the list of applications in the sphere; whether the recording runs is looked up
+      // while that list is open, for the button's picture
+      if (answer && this._recordSeen !== undefined && answer.record !== this._recordSeen) this._switchRecord()
+      if (answer) this._recordSeen = answer.record
+      // The off button beside it: as the emergency key. Forgotten while the server is away, so that its first
+      // answer after a start never switches it off again.
+      if (answer && this._offSeen !== undefined && answer.off !== this._offSeen) this._emergencyStop()
+      this._offSeen = answer?.off
+      if (answer?.menuOpen && Date.now() - (this._recordAsked ?? 0) > 1000) {
+        this._recordAsked = Date.now()
+        recording().then(now => { this._recordingNow = now })
+      }
       if (this._menuSince && answer?.menuOpen) this._hold()
       else if (this._menuSince && Date.now() - this._menuSince > 2000) this._leave() // the page has closed it (or is gone)
       // Windows came into the headset (the pointer may have changed while none was there), or the server started anew
@@ -295,12 +307,13 @@ export default class VrWorkspace extends Extension {
     if (open || this._serverSeen) this._setPicture(!open)
   }
 
-  // The Scroll Lock key: the recording on or off. Said in a notification, which the headset shows: there is no
+  // The Scroll Lock key, and the button over the list of applications in the sphere: the recording on or off. Said in a notification, which the headset shows: there is no
   // switch to look at in the sphere.
   _switchRecord() {
     recording().then(now => {
       if (!this._indicator || (!now && !this._serverSeen)) return
       record(!now)
+      this._recordingNow = !now
       Main.notify('VR Workspace', now ? _('Recording stopped: the video is in Videos') : _('Recording started'))
     })
   }
@@ -426,13 +439,6 @@ export default class VrWorkspace extends Extension {
       this._talk(null, answer => (answer && !answer.settingsOnly) || Main.notify('VR Workspace', _('Did not start. Why: journalctl --user -u vr-workspace -e')))
       return GLib.SOURCE_REMOVE
     })
-  }
-
-  // shortcut: reported only when it changes, a server started during a fullscreen film learns it at the next change;
-  // report on a timer if that ever matters.
-  _reportFullscreen() { // a film, say; not the glasses' own picture (it would turn the scene in it black)
-    const fullscreen = global.get_window_actors().some(({ meta_window: window }) => window.is_fullscreen() && !isGlasses(window))
-    this._talk({ fullscreen })
   }
 
   // A window off the headset's own screen, where it would lie over the headset's picture: onto another monitor

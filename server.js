@@ -53,7 +53,7 @@ let pose = 'null', spectatorSeen = 0
 let picturePose = { text: 'null', at: 0 } // the same from the picture of a headset on a cable, while there is one and somebody watches
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
-const live = { fullscreen: false, passthrough: false, grab: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 }
+const live = { fullscreen: false, recording: false, passthrough: false, grab: false, scanning: false, roomReady: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 } // recording: record.mjs runs, as the extension tells
 // Arranging monitors with the mouse: whoever holds the mouse (the GNOME extension on Num Lock, or the control page)
 // says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
 // added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
@@ -218,6 +218,7 @@ async function handle(req, res) {
     const told = JSON.parse(await readBody(req))
     let opened = [] // windows that were not there at the last report
     if (Number.isFinite(told?.focus)) focusedWindow = told.focus
+    for (const key of ['fullscreen', 'recording']) if (typeof told?.[key] === 'boolean') live[key] = told[key]
     if (told?.picture !== undefined) { // the monitor that shows the picture of a headset on a cable, of those capture.py named
       pictureScreen = Object.values(connectors).includes(told.picture) ? told.picture : null
       tellCable()
@@ -262,6 +263,8 @@ async function handle(req, res) {
       resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0,
       phoneOnline: Date.now() - phoneSeen < 2000, menuOpen: Date.now() - menuOpenAt < 3000, // for the Super key: our list instead of GNOME's overview
       numLock: params.numLock ?? 0, // F12 on the phone's keyboard: the extension presses the PC's Num Lock
+      record: params.recordCall ?? 0, // the record button in the headset's list: the extension starts or stops the recording
+      off: params.offCall ?? 0, // the off button there: the extension switches VR Workspace off
       connectors: Object.values(connectors), // GNOME's names of the monitors in the headset: the extension says which shows the picture
       enter: glassesOn() && Date.now() - enter.at < 400 ? enter : null } // the monitor or window the PC's mouse is to go into
     launch = resizeWish = null
@@ -333,6 +336,25 @@ async function handle(req, res) {
     res.writeHead(204).end()
     return process.kill(process.pid, 'SIGTERM')
   }
+  // From the test page of the head movement (track-test.html): half a minute of what the phone's camera saw, small
+  // and grey, with the head's turns, to be played through the tracker again on the PC (dev/replay.mjs).
+  if (url === '/trackclip' && req.method === 'POST') {
+    const parts = []
+    let size = 0
+    for await (const chunk of req) {
+      if ((size += chunk.length) > 16e6) throw new Error('body too large')
+      parts.push(chunk)
+    }
+    const clip = Buffer.concat(parts)
+    if (!['VRTC', 'VRT2'].includes(clip.subarray(0, 4).toString('latin1'))) throw new SyntaxError('a clip expected')
+    // `?auto`: from the headset itself, with every look around the room; of those only the last eight are kept
+    const auto = searchParams.has('auto'), name = `${auto ? 'auto' : 'clip'}-${new Date().toLocaleString('sv').replace(/[ :]/g, '-')}.bin`, folder = path.join(ROOT, 'track-clips')
+    fs.mkdirSync(folder, { recursive: true })
+    fs.writeFileSync(path.join(folder, name), clip)
+    if (auto) for (const old of fs.readdirSync(folder).filter(f => /^auto-.*\.bin$/.test(f)).sort().slice(0, -8)) fs.rmSync(path.join(folder, old))
+    console.log(`a clip of the phone's camera for the head movement: track-clips/${name}, ${(size / 1e6).toFixed(1)} MB`)
+    return res.writeHead(204).end()
+  }
   // From the headset: the pointer, the buttons, the wheel and keys for a window it shows.
   if (url === '/input' && req.method === 'POST') {
     const panels = windowPanels(), areas = Object.fromEntries(panels.map(p => [p.id, [[0, 0, ...p.crop.slice(2)], ...p.popups]]))
@@ -371,8 +393,8 @@ async function handle(req, res) {
     if (local && !picture) return res.writeHead(204).end()
     const sent = JSON.parse(await readBody(req))
     // head (4), anchor (2), the list of applications (open, yaw, the icon carried), the mouse (2), our pointer (3),
-    // the panel in hand or being resized (index or -1, yaw, pitch, width or 0, shape)
-    if (!Array.isArray(sent) || sent.length !== 19 || !sent.every(Number.isFinite)) throw new SyntaxError('nineteen numbers expected')
+    // the panel in hand or being resized (index or -1, yaw, pitch, width or 0, shape), where the head is (3, metres)
+    if (!Array.isArray(sent) || sent.length !== 22 || !sent.every(Number.isFinite)) throw new SyntaxError('twenty-two numbers expected')
     if (picture) picturePose = { text: JSON.stringify(sent), at: Date.now() }
     else push('pose', pose = JSON.stringify(sent))
     return res.writeHead(204).end()
@@ -388,6 +410,10 @@ async function handle(req, res) {
     const patch = JSON.parse(await readBody(req))
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new SyntaxError('object expected')
     if ('edit' in patch) editSeen = patch.edit === true ? Date.now() : 0
+    if ('trackSeen' in patch) { // how the phone's camera serves for finding the head: into the journal, not a setting
+      console.log('head from the camera:', JSON.stringify(patch.trackSeen).slice(0, 300))
+      delete patch.trackSeen
+    }
     if ('menuOpen' in patch) menuOpenAt = patch.menuOpen === true ? Date.now() : 0
     const e = patch.enter
     if (e && Date.now() > enterQuiet && /^[mw]\d+$/.test(e.id) && Number.isInteger(e.source) && typeof e.connector === 'string' && [e.u, e.v].every(Number.isFinite)

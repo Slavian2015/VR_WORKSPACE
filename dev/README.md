@@ -27,6 +27,10 @@ Rules learnt the hard way:
   without sound;
 - the picture of a headset on a cable with real pictures in it: the staged server inside `iso.sh`, and outside it
   `CHROMIUM_FLAGS="--enable-gpu --ignore-gpu-blocklist --use-angle=vulkan --enable-features=Vulkan" node dev/page.mjs 'http://127.0.0.1:18080/?glasses' 1920 1080 wait:15 shot:...`;
+- to play the phone together with a spectator, open the phone page as the phone does, over https at the PC's
+  network address with the key (`https://<address>:18443/?k=<certs/token of the copy>`): a page at 127.0.0.1 is a
+  preview to the server, its head and list are not passed on. Two invisible browsers at once take about 1 GB:
+  `GROWTH=1800`, and a second copy of `page.mjs` with another debugging port and profile folder;
 - that shell has no X11: GNOME starts Xwayland only through systemd, which the test session lacks. X11 programs
   (Flatpak VLC among them) cannot be tried there;
 - the guard counts the memory of the whole PC: programs the user works with meanwhile (a browser, FreeCAD) can

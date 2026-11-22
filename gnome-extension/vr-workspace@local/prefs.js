@@ -492,6 +492,10 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       number('camBelow', host.layout.camBelow, _('Camera when looking down, °'), _('To see the keyboard and your hands: the camera shows below this angle under the horizon. 0 switches it off')),
       toggle('camKeep', _('Keep the camera open'), _('The phone then asks for permission once, at the start, and not at every look down; its camera sign stays on. For a page started from the iPhone home screen, which does not remember the permission')),
       number('camFov', host.layout.camFov, _('Camera view angle, °'), _('Set it so that things look their real size')),
+      toggle('sixDof', _('Head movement from the camera'), _('Lean toward a window to read it, lean back, a little aside: the phone finds where the head is in the room from what its camera sees. The room is looked around first, for 15 seconds: when this is switched on, or with the 6D button over the list of applications in the headset. The camera stays open. Not while arranging')),
+      number('leanGain', host.layout.leanGain, _('Strength of the lean, ×'), _('1: a window comes nearer as a real monitor an arm away would. More: a smaller lean does as much. Also among the settings in the headset')),
+      number('roomDepth', host.layout.roomDepth, _('Distance to what the camera sees, m'), _('For the head movement: how far the things around usually are. Larger makes the same lean move the windows more')),
+      number('trackFov', host.layout.trackFov, _('What the camera really sees across, °'), _('For the head movement. 72 for the main camera of an iPhone; the angle above is only for how its picture is shown')),
       number('camShiftX', host.layout.camShiftX, _('Shift the picture right / left, °')),
       number('camShiftY', host.layout.camShiftY, _('Shift the picture up / down, °')),
       camera))

@@ -183,3 +183,10 @@ app/bg/
 .connectors.json
 
 .cable.json*
+track-clips/
+
+# Videos (recordings of the sphere, clips): never in git. GitHub refuses a file over 100 MB.
+*.webm
+*.mp4
+*.mov
+*.mkv

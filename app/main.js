@@ -3,6 +3,7 @@
 import * as THREE from 'three'
 import { KEYCODES, LAYOUT_SPEC, MONITOR_SPEC, placeIcon, resizeWindow, setParams, snapPanel, watchParams } from './params.js'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './orient.js'
+import { clip, shrink, space, turnAt } from './track.js'
 
 const DEG = Math.PI / 180
 // index.html?spectator on the PC: one flat picture of what the headset wearer looks at, to watch or to record.
@@ -48,12 +49,11 @@ function hiddenVideo(props) {
 const scene = new THREE.Scene(), camera = new THREE.Camera()
 const menuCanvas = Object.assign(document.createElement('canvas'), { width: 1536, height: 864 }) // the list of applications, see below
 const menuTexture = new THREE.CanvasTexture(menuCanvas)
-const pickCanvas = Object.assign(document.createElement('canvas'), { width: 1200, height: 640 }) // the backgrounds, below in the arranging mode
 const clockCanvas = Object.assign(document.createElement('canvas'), { width: 640, height: 230 }) // the clock, above
 const noteCanvas = Object.assign(document.createElement('canvas'), { width: 1000, height: 220 }) // a notification of the PC
-// Those three go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
+// Those two and our arrow go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
 // shader 16 pictures, and each panel takes one.
-const SHEETS = { pick: [0, 0], clock: [0, 640], note: [0, 870], arrow: [1000, 870] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 1090 })
+const SHEETS = { clock: [0, 0], note: [0, 230], arrow: [1000, 230] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 450 })
 const sheetsTexture = new THREE.CanvasTexture(sheets)
 for (const sheet of [menuTexture, sheetsTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
 function toSheets(canvas, [x, y]) { // a sheet drawn anew: into its place
@@ -108,18 +108,18 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
     uGlowColor: { value: new THREE.Color() }, uGlowColor2: { value: new THREE.Color() }, uTime: { value: 0 }, uSharp: { value: new THREE.Vector2(1, 0) },
     uPointer: { value: new THREE.Vector3(-1, 0, 0) }, uPointerPx: { value: new THREE.Vector2(1, 1) },
     uRay: { value: new THREE.Vector3(0, 0, -1) }, uRayOn: { value: 0 }, uArrowPx: { value: 1 },
-    uMenu: { value: menuTexture }, uMenuOn: { value: 0 }, uToMenu: { value: new THREE.Matrix3() }, uMenuPlace: { value: new THREE.Vector4() },
+    uMenu: { value: menuTexture }, uMenuOn: { value: 0 }, uMenuDim: { value: 0.8 }, uToMenu: { value: new THREE.Matrix3() }, uMenuPlace: { value: new THREE.Vector4() },
     uMenuSize: { value: new THREE.Vector2(1, 1) }, uMenuLit: { value: new THREE.Vector4(0, 0, -1, -1) }, uMenuDrag: { value: new THREE.Vector4(-1, 0, 0, 0) },
     uMenuAt: { value: new THREE.Vector2() },
     uToYaw: { value: new THREE.Matrix3() },
-    uSheets: { value: sheetsTexture }, uPickOn: { value: 0 }, uPickPlace: { value: new THREE.Vector4() }, uPickSize: { value: new THREE.Vector2(1, 1) },
+    uSheets: { value: sheetsTexture }, uDark: { value: 0 },
     uClockOn: { value: 0 }, uClockPlace: { value: new THREE.Vector4() }, uClockSize: { value: new THREE.Vector2(1, 1) },
     uNoteOn: { value: 0 }, uNotePlace: { value: new THREE.Vector4() },
     uBg: { value: background }, uToBg: { value: new THREE.Matrix3() }, uBgLook: { value: new THREE.Vector2() },
     uCam: { value: null }, uCamTan: { value: new THREE.Vector2() }, uCamShift: { value: new THREE.Vector2() }, uCamBelow: { value: -2 },
     uHud: { value: hudTexture }, uHudOn: { value: 0 }, uCursorBox: { value: cursorBox },
     uRes: { value: new THREE.Vector2() }, uCenter: { value: new THREE.Vector2() },
-    uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 }, uSheetsAt: { value: 1.5 },
+    uPxPerMm: { value: 1 }, uIpd: { value: SPECTATOR ? 0 : 63 }, uLensDist: { value: 40 }, uK1: { value: 0 }, uK2: { value: 0 }, uChroma: { value: 0 }, uDist: { value: 1.5 }, uAt: { value: new THREE.Vector3() }, uSheetsAt: { value: 1.5 },
   }
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -141,15 +141,16 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       uniform vec3 uRay;                         // our pointer as a direction in head space (the list, arranging)
       uniform float uRayOn;
       uniform float uArrowPx;                    // our arrow's picture: its pixels per radian of view
-      // Sheets hung around the viewer: the list of applications (fixed in the room), the backgrounds and the clock
+      // Sheets hung around the viewer: the list of applications (fixed in the room) and the clock
       // (below and above wherever one looks). Place: pixels per radian, the height of its middle (rad), that middle
       // on the sheet (px). Lit: a rectangle of the sheet that is lit (px; none when its corners are the wrong way).
-      uniform sampler2D uMenu, uSheets;          // uSheets: the backgrounds, the clock and a notification, in their places (SHEETS)
-      uniform float uMenuOn, uPickOn, uClockOn, uNoteOn; // how much they show
+      uniform sampler2D uMenu, uSheets;          // uSheets: the clock, a notification and our arrow, in their places (SHEETS)
+      uniform float uMenuOn, uMenuDim, uClockOn, uNoteOn; // how much they show; how dark the view goes behind the list
+      uniform float uDark;                       // 1: nothing but a notification shows (a screen a camera may see, while the room is looked around)
       uniform vec4 uNotePlace;                   // a notification: fixed to the head, above the middle of the view
       uniform mat3 uToMenu, uToYaw;              // head space -> where the list hangs; -> a frame that turns with the head, but only around the vertical
-      uniform vec4 uMenuPlace, uPickPlace, uClockPlace, uMenuLit;
-      uniform vec2 uMenuSize, uPickSize, uClockSize; // px
+      uniform vec4 uMenuPlace, uClockPlace, uMenuLit;
+      uniform vec2 uMenuSize, uClockSize; // px
       uniform vec4 uMenuDrag;                    // the icon in hand: its rectangle on the sheet (x < 0: none)
       uniform vec2 uMenuAt;                      // where the pointer is on the sheet, px
       uniform sampler2D uBg, uCam;
@@ -165,7 +166,8 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       uniform float uPxPerMm, uIpd, uLensDist, uK1, uK2;  // lengths in mm
       uniform float uChroma;                     // how much more the lens magnifies blue than green, and green than red
       uniform float uDist;                       // m: how far away the arranging note is drawn
-      uniform float uSheetsAt;                   // m: how far away the list, the backgrounds, the clock, a notification and our pointer are (as new windows)
+      uniform vec3 uAt;                          // m, in the head's axes: where the head is off the middle of the sphere (headAt, as it counts)
+      uniform float uSheetsAt;                   // m: how far away the list, the clock, a notification and our pointer are (as new windows)
 
       // View ray in head space through a point of the screen; q: its offset from the lens axis over the lens distance.
       vec3 ray(vec2 q) {
@@ -180,8 +182,12 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
 
       // A sheet's picture where the ray meets it; at: that place on the sheet, px. Its columns follow the azimuth,
       // its rows the height, both as angles. region: where the sheet is in the texture (corner, size; 0..1 from the top left).
-      vec4 sheet(sampler2D tex, vec4 region, mat3 turn, vec4 place, vec2 size, vec3 toward, out vec2 at) {
-        vec3 d = turn * toward;
+      // stands: 1 for a sheet that stands in the sphere, which the leaning head comes nearer to as to a panel; 0 for
+      // one the head carries with it.
+      vec4 sheet(sampler2D tex, vec4 region, mat3 turn, vec4 place, vec2 size, vec3 toward, float stands, out vec2 at) {
+        vec3 d = turn * toward, lean = stands * (turn * uAt);
+        lean *= min(1.0, 0.8 * uSheetsAt / max(length(lean), 1e-6)); // never through it
+        d = normalize(lean + (uSheetsAt - dot(lean, d)) * d); // from the middle of the sphere to where this ray meets the sheets' distance
         at = vec2(atan(d.x, -d.z) * place.x + place.z, place.w - (asin(clamp(d.y, -1.0, 1.0)) - place.y) * place.x);
         vec2 uv = at / size;
         return uv == clamp(uv, 0.0, 1.0) ? textureLod(tex, vec2(region.x + uv.x * region.z, 1.0 - region.y - uv.y * region.w), 0.0) : vec4(0.0);
@@ -249,7 +255,12 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
           // uSize.x radians at ${WIDTH_AT} m. So, like a real one, it looks bigger when it is brought closer.
           // It is bent into a cylinder that touches that centre: of that radius at full curve
           // (every point equally far from the eyes), of a larger radius for less curve, a plane for none.
-          vec3 d = uToMonitor[${i}] * dir, o = uToMonitor[${i}] * eye, hit;
+          // The head off the middle of the sphere (uAt). Never through the panel, nor out of the round it is bent
+          // on: from outside it, only a strip of the panel would be seen and nothing beside it (it happened with a
+          // head found metres away, 2026-11-21)
+          vec3 lean = uToMonitor[${i}] * uAt;
+          lean *= min(1.0, 0.8 * uSize[${i}].w / max(length(lean), 1e-6));
+          vec3 d = uToMonitor[${i}] * dir, o = uToMonitor[${i}] * eye + lean, hit;
           float width = ${WIDTH_AT.toFixed(1)} * uSize[${i}].x, curve = uSize[${i}].z, away = uSize[${i}].w, along; // along: metres from the centre line, on the surface
           if (curve < 0.01) {
             hit = o + d * ((-away - o.z) / min(d.z, -1e-6));
@@ -258,7 +269,7 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
             float r = away / curve;
             vec2 axis = vec2(0.0, r - away), oa = o.xz - axis;
             float a = max(dot(d.xz, d.xz), 1e-6), b = dot(oa, d.xz), c = dot(oa, oa) - r * r;
-            hit = o + d * ((-b + sqrt(b * b - a * c)) / a);
+            hit = o + d * ((-b + sqrt(max(b * b - a * c, 0.0))) / a);
             along = r * atan(hit.x, axis.y - hit.z);
           }
           vec2 uv = vec2(along / width, hit.y / (width * uSize[${i}].y)) + 0.5;
@@ -329,20 +340,17 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
         }
         vec2 at;
         if (uClockOn > 0.0) {
-          vec4 s = sheet(uSheets, vec4(${region(clockCanvas, SHEETS.clock)}), uToYaw, uClockPlace, uClockSize, toward, at);
+          vec4 s = sheet(uSheets, vec4(${region(clockCanvas, SHEETS.clock)}), uToYaw, uClockPlace, uClockSize, toward, 1.0, at);
           color = mix(color, s.rgb, s.a * uClockOn);
         }
-        if (uPickOn > 0.0) {
-          vec4 s = sheet(uSheets, vec4(${region(pickCanvas, SHEETS.pick)}), uToYaw, uPickPlace, uPickSize, toward, at);
-          color = mix(color, s.rgb, s.a * uPickOn);
-        }
+        color *= 1.0 - uDark;
         if (uNoteOn > 0.0) { // over the panels, under the list of applications
-          vec4 s = sheet(uSheets, vec4(${region(noteCanvas, SHEETS.note)}), mat3(1.0), uNotePlace, vec2(${noteCanvas.width}.0, ${noteCanvas.height}.0), toward, at);
+          vec4 s = sheet(uSheets, vec4(${region(noteCanvas, SHEETS.note)}), mat3(1.0), uNotePlace, vec2(${noteCanvas.width}.0, ${noteCanvas.height}.0), toward, 0.0, at);
           color = mix(color, s.rgb, s.a * uNoteOn);
         }
         if (uMenuOn > 0.0) { // the list of applications: a ribbon of icons around the viewer, fixed in the room, over everything
-          color *= 1.0 - 0.8 * uMenuOn; // the whole view goes dark behind it
-          vec4 s = sheet(uMenu, vec4(0.0, 0.0, 1.0, 1.0), uToMenu, uMenuPlace, uMenuSize, toward, at);
+          color *= 1.0 - uMenuDim * uMenuOn; // the whole view goes dark behind it
+          vec4 s = sheet(uMenu, vec4(0.0, 0.0, 1.0, 1.0), uToMenu, uMenuPlace, uMenuSize, toward, 1.0, at);
           if (within(at, uMenuLit)) color = mix(color, vec3(1.0), 0.18 * uMenuOn); // under the pointer
           color = mix(color, s.rgb, s.a * uMenuOn);
           vec2 halfSize = 0.5 * (uMenuDrag.zw - uMenuDrag.xy), q = at - uMenuAt + halfSize; // the icon in hand: its picture, centred on the pointer
@@ -399,6 +407,13 @@ async function openCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
     const video = hiddenVideo({ srcObject: stream })
     phoneCam = { video, texture: new THREE.VideoTexture(video), track: stream.getVideoTracks()[0] }
+    const next = (now, frame) => { // every new picture of the camera, while it is open
+      if (phoneCam?.video !== video) return
+      // Taken a while before it comes here: when exactly, if the browser tells; else shown 60 ms after it was taken
+      if (settings?.sixDof && sensorSeen && !GLASSES) follow(video, frame?.captureTime ?? (frame?.presentationTime ?? now) - 60, frame?.captureTime ? 'taken' : frame?.presentationTime ? 'shown' : 'now')
+      video.requestVideoFrameCallback(next)
+    }
+    video.requestVideoFrameCallback?.(next)
     // Which camera the browser gave us, and which ones it has, for the control page: the page only asks for "the
     // back camera", the choice is the browser's.
     const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput').map(d => d.label)
@@ -415,12 +430,111 @@ function closeCamera() {
   phoneCam = null
 }
 
+// --- where the head is, not only how it is turned: leaning toward a window to read it, and back, a little aside. From
+// the camera on the head (the phone's), while the setting sixDof is on: track.js makes a map of the room while it is
+// looked around for SCAN ms, and then finds the head in it. The look around begins when the head movement is
+// switched on, or with the 6D button over the list of applications (`scanCall`); not by itself when the page
+// starts: the phone is then still in the hand. Found by the phone; a headset on a cable and the spectator are told
+// the head's place with its turn, and through the settings `scanning` and `roomReady` whether the room is being
+// looked around and whether there is a map. Not while arranging: panels are carried around the middle there.
+// The head's way counts as many times as new windows hang farther than a real monitor stands, NEAR metres: so
+// leaning toward a window is as leaning toward a monitor an arm's length away (one to one, 20 cm toward a window 2 m
+// away hardly shows), and then `leanGain` times more: as at a real monitor felt too weak (the user, 2026-11-22). All of
+// the way and for everything alike, so the sphere stays whole: counted for each panel by itself, the panels moved
+// against each other like a chessboard (the user, 2026-11-21).
+// A screen that the camera may see and that shows the sphere (the headset's picture on a PC's monitor, the spectator)
+// shows nothing but the note while the room is looked around, from DARK ms before the first picture counts: what it
+// shows follows the head, so its corners made landmarks that were nowhere in the room, and afterwards a window
+// drawn nearer on it was taken for the head having come nearer, which drew it nearer still (two clips from the
+// user's desk, 2026-11-22: maps of 101 and 152 landmarks, the head told 7 to 9 cm forward while it sat still).
+const NEAR = 0.7, SCAN = 15000, DARK = 700
+const headAt = new THREE.Vector3(), headGoal = new THREE.Vector3(), MIDDLE = new THREE.Vector3() // metres from where it was during the look around or at the last centring, in the axes of the head's turn: as drawn (it glides), and as last found or told
+const turns = [] // the head's turns of the last half second, [when, x, y, z, w]: a picture of the camera is that old
+const small = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+const step = new THREE.Vector3()
+let room, kept, scanWanted = false, scanFrom = 0, scanSince = 0, told = { n: 0, held: 0, age: 0, since: 0 } // told: what the tracker did since the server was last told (for finding out how a real phone's camera behaves)
+const tellRoom = () => change(settings, { scanning: !!scanFrom || room.state === 'scan', roomReady: room.state === 'ready' })
+// A picture of the camera for the tracker, 160 wide, with the head's turn of the moment it was taken.
+function follow(video, taken, time) {
+  const w = 160, h = Math.round(w * video.videoHeight / video.videoWidth), now = performance.now()
+  if (!h || !turns.length) return
+  const made = [h, settings.trackFov].join()
+  if (room?.made !== made) {
+    // How wide the camera really sees is a setting of its own: the one of its picture in the headset ("so that
+    // things look their real size") was 40 for a camera that sees 72, and the tracker went by it (2026-11-22)
+    room = Object.assign(space(w, h, settings.trackFov), { made })
+    Object.assign(small.canvas, { width: 3 * w, height: 3 * h })
+    tellRoom()
+  }
+  // Every look around in the headset is kept with the 15 s after it and sent to the PC (track-clips/auto-…): what
+  // goes wrong in the headset and not on the test page can then be played through the tracker again there.
+  const send = () => { fetch('/trackclip?auto', { method: 'POST', body: kept.file() }).catch(() => {}); kept = null }
+  if (scanWanted) { // told first: the screens go dark
+    scanWanted = false
+    scanFrom = now + DARK
+    tellRoom()
+  } else if (scanFrom && now >= scanFrom) {
+    scanFrom = 0
+    room.scan()
+    scanSince = now
+    kept = clip(w, h, settings.trackFov, settings.roomDepth)
+    tellRoom()
+  } else if (room.state === 'scan' && now - scanSince > SCAN) {
+    if (!room.finish() && kept) send()
+    tellRoom()
+  }
+  if (room.state === 'none') return
+  const turn = turnAt(turns, taken), gray = shrink(small, video, w, h), scanning = room.state === 'scan', held = room.step(gray, turn)
+  kept?.add(taken, turn, room.head, scanning ? 2 : held ? 1 : 0, gray)
+  if (kept && now - scanSince > 2 * SCAN) send()
+  if (held && room.state === 'ready') { // leaning in a chair is no farther than 30 cm; and with 1.5 cm of slack: the camera's noise must move nothing
+    const far = step.fromArray(room.head).multiplyScalar(settings.roomDepth).clampLength(0, 0.3).sub(headGoal).length()
+    if (far > 0.015) headGoal.addScaledVector(step, 1 - 0.015 / far)
+  }
+  // Into the server's journal every five seconds: the camera's picture and rate, how old a picture is when it comes
+  // and by which clock, the map (landmarks, found in the last picture, the camera before the neck in cm), the part
+  // of the pictures in which the head was found, and where (cm)
+  told = { ...told, n: told.n + 1, held: told.held + held, age: told.age + now - taken }
+  if (now - told.since > 5000) {
+    const cm = v => v.map(n => Math.round(n * settings.roomDepth * 100))
+    setParams({ trackSeen: { size: `${video.videoWidth}x${video.videoHeight}`, rate: Math.round(told.n / (now - told.since) * 1000), age: Math.round(told.age / told.n), time,
+      map: room.state, landmarks: room.count, seen: room.seen, arm: cm(room.arm), held: Math.round(told.held / told.n * 100), at: headGoal.toArray().map(n => Math.round(n * 100)), turnAge: Math.round(now - turns.at(-1)[0]) } })
+    told = { n: 0, held: 0, age: 0, since: now }
+  }
+}
+function forgetPlace(again) { // centred: zero is where the head is now. again: the room is looked around anew
+  if (again) scanWanted = true
+  else room?.centre()
+  headGoal.set(0, 0, 0)
+}
+// A direction from the head, in a panel's axes (`turn`: those from the head's), as the direction from the middle of
+// the sphere to where it meets the panel's distance. The places on panels are worked out from the middle, and the
+// head may be off it.
+const off = new THREE.Vector3()
+function fromMiddle(ray, turn, away) {
+  if (!headAt.lengthSq()) return ray
+  off.copy(uniforms.uAt.value).applyQuaternion(turn).clampLength(0, 0.8 * away) // never through the panel (as the shader)
+  const along = -ray.dot(off)
+  return ray.multiplyScalar(along + Math.sqrt(Math.max(0, along * along - off.lengthSq() + away * away))).add(off).normalize()
+}
+// The same for a sheet that stands in the sphere (the list of applications), in its axes
+function onSheet(ray, turn) {
+  if (!headAt.lengthSq()) return ray
+  off.copy(uniforms.uAt.value).applyQuaternion(turn).clampLength(0, 0.8 * settings.windowDist)
+  return ray.multiplyScalar(settings.windowDist - off.dot(ray)).add(off).normalize()
+}
+
 // --- head tracking
 const head = new THREE.Quaternion()
 let sensorSeen = false
 addEventListener('deviceorientation', e => {
   if (e.alpha == null || SPECTATOR) return
   deviceQuaternion(e.alpha, e.beta, e.gamma, screen.orientation?.angle ?? window.orientation ?? 0, head)
+  // When it was measured, not when it got here: a busy page hands it over late (up to 100 ms, 2026-11-22), and a
+  // camera picture paired with a turn that old is 4 degrees off while the head turns
+  const now = performance.now()
+  turns.push([e.timeStamp > now - 500 && e.timeStamp <= now ? e.timeStamp : now, ...head.toArray()])
+  if (turns.length > 40) turns.shift()
   if (!sensorSeen) centring = 'heading'
   sensorSeen = true
 })
@@ -464,7 +578,6 @@ function arrange(p) {
   const id = p.monitors[held ? held.i : looked]?.id
   const wheel = [p.wheelSize, p.wheelCurve, p.wheelDist], was = wheelSeen ?? wheel
   wheelSeen = wheel
-  if (pick.fade > 0.5) return void (wheel[0] !== was[0] && pickWheel(wheel[0] - was[0])) // looking down: the wheel turns the backgrounds' pages
   if (id && wheel[0] !== was[0]) zoomPanel(p, id, 0.06 * (wheel[0] - was[0])) // the PC's wheel through the extension: notches
   if (id && wheel[1] !== was[1]) change(p, { [`${id}.curve`]: clamp(p[`${id}.curve`] + 5 * (wheel[1] - was[1]), MONITOR_SPEC.curve) })
   if (id && wheel[2] !== was[2]) change(p, { [`${id}.dist`]: clamp(Math.round((p[`${id}.dist`] + 0.1 * (wheel[2] - was[2])) * 10) / 10, MONITOR_SPEC.dist) })
@@ -508,7 +621,7 @@ function cursorFrom(told) { // from the settings: [its picture's number, hot spo
 }
 function showArranging() {
   const i = held?.i ?? resizing?.i ?? (pointed.i >= 0 ? pointed.i : looked), m = settings.monitors[i], id = m?.id
-  uniforms.uHudOn.value = settings.edit && !pick.fade ? 1 : 0 // not while the backgrounds are looked at, just under it
+  uniforms.uHudOn.value = settings.edit ? 1 : 0
   uniforms.uDist.value = id ? settings[`${id}.dist`] : 1.5
   if (!settings.edit) return showCursor()
   cursorDrawn = undefined // the note takes the canvas; the pointer comes back after
@@ -543,7 +656,7 @@ function showArranging() {
 // --- settings and layout
 // The layout hangs on `anchor`, the gaze it was last centred on. On the first sensor reading only the heading is
 // taken (the phone is still in the hand then); the "centre" button takes the tilt too.
-let settings, centring, recenterSeen
+let settings, centring, recenterSeen, scanSeen
 const anchor = { yaw: 0, pitch: 0 }
 watchParams(p => {
   const key = m => `${m.id}:${m.source ?? ''}` // another window in the same place of the list is another stream
@@ -581,7 +694,10 @@ watchParams(p => {
   }
   monitorIds = ids
   if (recenterSeen !== undefined && p.recenter !== recenterSeen) centring = 'gaze'
+  if (recenterSeen !== undefined && p.recenter !== recenterSeen) forgetPlace(false)
+  if ((p.sixDof && settings && !settings.sixDof) || (scanSeen !== undefined && p.scanCall !== scanSeen)) forgetPlace(true)
   recenterSeen = p.recenter
+  scanSeen = p.scanCall
   byKeys(p)
   arrange(p)
   settings = p
@@ -619,6 +735,11 @@ renderer.setAnimationLoop(now => {
   // second behind: the phone's readings come over Wi-Fi in bursts, and a head-worn view shakes on a flat screen.
   if (SPECTATOR || GLASSES) head.slerp(poseTarget, 1 - Math.exp(-Math.min(now - frameAt, 100) / (GLASSES ? 40 : 250))) // glasses: worn, any lag is felt
   if (!SPECTATOR && centring) Object.assign(anchor, gazeOf(head))
+  // Where the head is drawn: gliding to where it was found or told; in the middle while arranging or with it off
+  // Slowly enough to calm the camera's noise, and never faster than a body leans (0.4 m a second): what the camera
+  // gets wrong then glides and does not jump.
+  headAt.add(step.copy(settings.sixDof && !settings.edit ? headGoal : MIDDLE).sub(headAt).multiplyScalar(1 - Math.exp(-dt / 0.15)).clampLength(0, 0.4 * dt))
+  uniforms.uAt.value.copy(headAt).multiplyScalar(Math.max(1, settings.windowDist / NEAR) * settings.leanGain).applyQuaternion(headBack.copy(head).invert())
   frameAt = now
   if (centring === 'heading') anchor.pitch = 0
   centring = null
@@ -672,7 +793,7 @@ renderer.setAnimationLoop(now => {
       uniforms.uPopups.value[i * 3 + j].set(...(r ? [r[0] / crop[2], 1 - r[3] / crop[3], r[2] / crop[2], 1 - r[1] / crop[3]] : [0, 0, 0, 0]))
     }
     // Where the centre of the view is on this panel, 0..1 from its top left; its half-size as seen from here, in radians.
-    const ahead = forward.set(0, 0, -1).applyQuaternion(rotation), halfWidth = WIDTH_AT * span / settings[`${id}.dist`] / 2
+    const ahead = fromMiddle(forward.set(0, 0, -1).applyQuaternion(rotation), rotation, settings[`${id}.dist`]), halfWidth = WIDTH_AT * span / settings[`${id}.dist`] / 2
     // Out of view: farther from the centre of the view than an eye sees (about 60 degrees to its corners), plus half the
     // panel's diagonal and room for its glow and menus. Phones get hot in a headset, and a hot iPhone slows down.
     // (Not on the PC: a recording may be asked for a wider view than an eye's.)
@@ -686,7 +807,7 @@ renderer.setAnimationLoop(now => {
     if (span && u >= x0 && u <= x1 && v >= y0 && v <= y1) looked = i
     if ((!settings.edit && !GLASSES) || !span) return
     // While arranging (and on a cable always): the panel under our pointer, and whether that is at a side or corner of a window (1.5 degrees deep).
-    const ray = rayHere.copy(rayDir).applyQuaternion(rotation)
+    const ray = fromMiddle(rayHere.copy(rayDir).applyQuaternion(rotation), rotation, settings[`${id}.dist`])
     const pu = 0.5 + Math.atan2(ray.x, -ray.z) / (2 * halfWidth), pv = 0.5 - Math.asin(ray.y) / (2 * halfWidth * aspect)
     if (pu < 0 || pu > 1 || pv < 0 || pv > 1) return
     const bu = Math.min(0.2, 1.5 / spans[i]), bv = Math.min(0.2, 1.5 / (spans[i] * aspect))
@@ -696,29 +817,28 @@ renderer.setAnimationLoop(now => {
   glow()
   showArranging()
   point(dt)
-  // Below while arranging, the backgrounds; above, always, the clock. They come as the head turns to them.
+  // Above, the clock: it comes as the head turns to it.
   const look = gaze.pitch / DEG, ease = f => f * f * (3 - 2 * f)
-  pick.fade = Math.max(0, Math.min(1, pick.fade + ((settings.edit && tapped && look < PICK.below) ? dt : -dt) / 0.25))
   clock.fade = Math.max(0, Math.min(1, clock.fade + (tapped && look > 35 ? dt : -dt) / 0.25))
-  if (pick.fade > 0) showPick()
   if (clock.fade > 0) showClock()
+  roomNote(settings) // every frame: its count goes on where no setting changes meanwhile (the spectator)
   note.fade = Math.max(0, Math.min(1, note.fade + (now < note.until ? dt / 0.25 : -dt / 0.5)))
   uniforms.uNoteOn.value = ease(note.fade)
+  uniforms.uDark.value += ((settings.scanning && (GLASSES || SPECTATOR) ? 1 : 0) - uniforms.uDark.value) * Math.min(1, dt / 0.08) // see DARK
   uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG) * sheetScale(), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
-  uniforms.uPickOn.value = ease(pick.fade)
   uniforms.uClockOn.value = ease(clock.fade)
   if (!SPECTATOR) { // the spectator must not open the PC's own webcam (a headset on a cable takes it for its own)
     // `lowest` is how low the camera picture would reach at this tilt of the head. The camera is opened 5 degrees
     // before that reaches the look-down window, to be ready in time, and closed 2 s after it is 8 degrees clear.
     const aspect = phoneCam?.video?.videoWidth ? phoneCam.video.videoHeight / phoneCam.video.videoWidth : 0.5625
     const lowest = (gazeOf(head).pitch - Math.atan(Math.tan(settings.camFov * DEG / 2) * aspect)) / DEG
-    const wanted = settings.passthrough || (settings.camBelow > 0 && !settings.edit && lowest < -settings.camBelow + (phoneCam?.track ? 8 : 5)) // arranging: the backgrounds are there instead
+    const wanted = (settings.sixDof && sensorSeen && !GLASSES) || settings.passthrough || (settings.camBelow > 0 && lowest < -settings.camBelow + (phoneCam?.track ? 8 : 5))
     if (wanted) {
       unseenSince = undefined
       openCamera()
     } else if (phoneCam?.track && !settings.camKeep && Date.now() - (unseenSince ??= Date.now()) > 2000) closeCamera() // camKeep: no closing, so no new permission question
   }
-  const shown = (settings.passthrough || (settings.camBelow > 0 && !settings.edit)) && phoneCam?.video?.videoWidth ? phoneCam : null
+  const shown = (settings.passthrough || settings.camBelow > 0) && phoneCam?.video?.videoWidth ? phoneCam : null
   const tan = shown ? Math.tan(settings.camFov * DEG / 2) : 0
   uniforms.uCamBelow.value = settings.passthrough ? 2 : Math.sin(-settings.camBelow * DEG)
   uniforms.uCamShift.value.set(Math.tan(settings.camShiftX * DEG), Math.tan(settings.camShiftY * DEG))
@@ -796,7 +916,7 @@ function aim() {
 function pxPerDegree(p) {
   return GLASSES ? renderer.domElement.width / 4 / glassesTan(p)[0] * DEG : renderer.domElement.width / p.screenW * p.lensDist * DEG
 }
-// The list, the backgrounds, the clock and a notification are laid out in degrees for a phone in a Gear VR, about 96
+// The list, the clock and a notification are laid out in degrees for a phone in a Gear VR, about 96
 // degrees across one eye's view. A headset on a cable shows them taking the same share of its own view (in degrees
 // they were wider than the whole view of a monitor standing for one, 39 degrees: "very close to the face").
 const PHONE_VIEW = 96
@@ -839,7 +959,7 @@ function point(dt) { // every frame: the list of applications, or our pointer on
 addEventListener('pointermove', e => Object.assign(mouse, { x: e.clientX / innerWidth, y: e.clientY / innerHeight, moved: true }))
 
 // --- a headset on a cable: the PC's mouse. Over this window it is our pointer, drawn in the sphere at once, for the
-// list, the arranging, the backgrounds and empty space. When it goes onto a monitor or a window (not while arranging
+// list, the arranging and empty space. When it goes onto a monitor or a window (not while arranging
 // or in the list), the extension is asked to put the real pointer there, at that place, and keeps it inside: the
 // mouse and the keyboard then work there directly, and the extension tells where the pointer is, which is drawn
 // here, at once (not in the picture, a tenth of a second late). Pushed past a side, it comes back here at that side
@@ -883,7 +1003,9 @@ function panelCorners(i) {
 if (GLASSES) { // the head's turn and the real pointer inside a monitor or window, as the server has them
   const live = new EventSource('/live?glasses')
   live.addEventListener('pose', e => {
-    poseTarget.fromArray(JSON.parse(e.data)) // the first four: the head
+    const sent = JSON.parse(e.data)
+    poseTarget.fromArray(sent) // the first four: the head
+    headGoal.fromArray(sent, 19) // the last three: where it is
     if (poseSeen) return
     poseSeen = true
     head.copy(poseTarget)
@@ -910,7 +1032,7 @@ function press(e, down) {
 for (const type of ['pointerdown', 'pointerup', 'pointercancel']) addEventListener(type, e => press(e, type === 'pointerdown'))
 addEventListener('contextmenu', e => tapped && e.preventDefault()) // the right button belongs to the window, or opens our list
 addEventListener('wheel', e => {
-  if (!tapped || !settings || SPECTATOR || sensorOnly() || menu.open) return // the list of applications is looked through by turning the head
+  if (!tapped || !settings || SPECTATOR || sensorOnly() || (menu.open && !menu.set)) return // the list of applications is looked through by turning the head
   // The phone gives the wheel in pixels, 29 to a click on the iPhone, late and in bursts. For a window: clicks of
   // 25 px. For a panel's size while arranging: a degree for every 10 px, so that a burst is a glide and not a jump.
   const step = settings.edit ? 10 : 25
@@ -919,6 +1041,7 @@ addEventListener('wheel', e => {
   if (!clicks) return
   wheelRest -= clicks * step
   if (GLASSES) clicks = -clicks // a PC's mouse: away from you is up, bigger, the page before
+  if (menu.open) return turnBgs(-clicks) // the settings: the backgrounds' pages
   // Signs: the iPhone reports the wheel as a finger pushing the page ("natural scrolling"), the other way than a PC.
   if (settings.edit) return editWheel(clicks)
   const target = windowLooked()
@@ -964,16 +1087,14 @@ document.addEventListener('visibilitychange', () => document.hidden && releaseKe
 // --- arranging with the phone's mouse, while the arranging mode is on (Num Lock; the PC's mouse, which the extension
 // catches then, works too: see arrange). A panel is taken anywhere with the left button and goes with the pointer
 // and the head; it is drawn to its neighbours. A side or corner of a window changes the size of the window itself,
-// on the PC; its panel grows with it, the text keeping its size. Below, looking down: the backgrounds.
+// on the PC; its panel grows with it, the text keeping its size.
 let pointed = { i: -1 } // the panel under our pointer: { i, u, v (0..1 from its top left), edge: [left, right, top, bottom] or null }
 let resizing            // { i, id, source, edge, from: { w, h, span, yaw, pitch, dist }, start: the pointer then, w, h, span, yaw, pitch, sent }
 let fitting             // { id, source, edge, from, w, h, at }: a window let go after resizing (w, h: the size asked for; at: when)
 const rayDir = new THREE.Vector3(), rayHere = new THREE.Vector3()
 function editPress(e, down, left) {
-  if (pick.fade > 0.5 && pickPress(down, left)) return
   if (!down) {
     if (e.type === 'pointercancel') return // the iPhone goes on with the same drag as a finger: its end puts the panel down
-    pick.slider = null // also when the backgrounds went out of view while it was held
     if (held?.mouse) putDown()
     if (resizing) endResize()
     return
@@ -1007,7 +1128,6 @@ function endResize(p = settings) {
   resizing = undefined
 }
 function editWheel(clicks) {
-  if (pick.fade > 0.5) return pickWheel(clicks)
   const id = settings.monitors[pointed.i]?.id
   // Clicks of 10 px: a PC mouse's notch is about 120 px (6 % larger), the iPhone's click 29 (9 %)
   if (id) zoomPanel(settings, id, clicks * (GLASSES ? 0.005 : 0.03))
@@ -1033,7 +1153,7 @@ function glow() {
   settings.monitors.forEach((m, i) => {
     let [sides, strength] = settings.focusGlow && m.focused ? [ALL, 0.7] : [null, 0]
     const busy = held || resizing
-    if (!settings.edit || pick.fade > 0.5) {
+    if (!settings.edit) {
       // only the keyboard's window
     } else if (resizing?.i === i) [sides, strength] = [resizing.edge, 1]
     else if (held?.i === i) [sides, strength] = [ALL, 1]
@@ -1056,14 +1176,50 @@ function glow() {
 // closes the list.
 // The sheet is laid out in pixels. cell: an icon's place; big: how much larger the field's are; gap: around the
 // field; column: the degrees one cell takes in the view, at most.
-const MENU = { rows: 4, field: 4, cell: [180, 200], big: 1.5, gap: 110, column: 9 }
+const MENU = { rows: 4, field: 4, cell: [180, 200], big: 1.5, gap: 110, column: 9, top: 250 } // top: the room over the list, for the buttons
+// The buttons over the list: the recording, the head movement from the camera, the settings in place of the list, VR Workspace off
+const BUTTONS = ['record', 'lean', 'set', 'off']
+// The settings shown in place of the list: blocks side by side, all in view at once, at one size whatever the
+// length of the list (`finer`: that much smaller than the list is drawn, so that four of them are in view). Only
+// what shows at once in the headset while it is changed. The last block also has the backgrounds over its rows
+// (`bgs`). A row [key, words, kind] is a slider when its key has a range in LAYOUT_SPEC, a button when its kind is
+// 'call' (the key then gets the time), else a switch. While a slider is held, nothing but its row is drawn and the
+// view is not darkened: what it does is to be seen, not the settings.
+const BLOCKS = [
+  { title: 'Картинка', rows: [['sharpen', 'Резкость текста, %'], ['focusGlow', 'Подсветка окна с клавиатурой'], ['hideMonitors', 'Только окна, без мониторов']] },
+  { title: 'Движение головы', rows: [['sixDof', 'Движение по камере'], ['leanGain', 'Сила приближения, ×'], ['scanCall', 'Осмотреться заново', 'call']] },
+  { title: 'Камера телефона', foot: () => settings.camLabel ? `Камера: ${settings.camLabel}` : '', rows: [['passthrough', 'Камера как фон'], ['camBelow', 'Камера при взгляде вниз, °'],
+    ['camKeep', 'Не закрывать камеру'], ['camFov', 'Угол обзора её картинки, °'], ['camShiftX', 'Сдвиг картинки вправо / влево, °'], ['camShiftY', 'Сдвиг картинки вверх / вниз, °']] },
+  { title: 'Фон', bgs: true, rows: [['bgDim', 'Затемнение, %'], ['bgBlur', 'Размытие, %']] },
+]
+const BLOCK = { w: 400, gap: 24, row: 140, head: 96, foot: 56, finer: 1.1 } // a block's width, the room between two, a row's height, the room for the title and under the rows
+// The backgrounds in their block: round pictures, a page of 3 x 3 (cell: a picture's room across, line: down, size:
+// its own), under them the arrows to the other pages (at `arrows`; the wheel turns the pages too); h: all of it.
+// A click on a picture shows that background at once.
+const BGS = { cols: 3, rows: 3, cell: 117, line: 112, size: 100, arrows: 344, h: 410 }
+const bgs = { list: [], page: 0, pages: 1, thumbs: new Map(), asked: 0, turned: 0 } // list: as the PC has them; thumbs: their small pictures; asked, turned: when
+function bgItems(x, y) { // the places of this page's backgrounds ({ bg }) and of the arrows ({ turn: -1 or 1 }), from (x, y) on
+  const per = BGS.cols * BGS.rows
+  bgs.pages = Math.max(1, Math.ceil(bgs.list.length / per))
+  bgs.page = Math.max(0, Math.min(bgs.page, bgs.pages - 1))
+  return [
+    ...bgs.list.slice(bgs.page * per, (bgs.page + 1) * per).map((bg, i) =>
+      ({ n: -1, k: -1, bg, x: x + (i % BGS.cols) * BGS.cell + (BGS.cell - BGS.size) / 2, y: y + Math.floor(i / BGS.cols) * BGS.line, w: BGS.size, h: BGS.size })),
+    ...(bgs.pages > 1 ? [-1, 1] : []).map(turn => ({ n: -1, k: -1, turn, x: turn < 0 ? x : x + BLOCK.w - 48 - 110, y: y + BGS.arrows, w: 110, h: 56 })),
+  ]
+}
+function turnBgs(by) { // to the page before (-1) or after; the wheel comes in bursts: one page for each
+  const now = performance.now()
+  if (now - bgs.turned > 250) Object.assign(bgs, { turned: now, page: bgs.page + Math.sign(by) }) // menuLayout keeps it among the pages
+}
 const FIELD = MENU.field * MENU.rows // its places, numbered by rows: 0 1 2 3 / 4 5 6 7 / ...
-const menu = { open: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, spot: null, press: null, drag: -1, layout: null }
+// set: the settings show in place of the list; slider: the row whose slider is being moved; offAt: when the off button was pressed first
+const menu = { open: false, set: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, spot: null, press: null, drag: -1, slider: null, offAt: -1e9, layout: null }
 let launchSpot // { yaw, pitch, at }: where the user looked before calling the list, for the window of what was started from it
 const menuTurn = new THREE.Quaternion() // head space -> the frame the ribbon hangs in: level, -Z at the middle of the field
 function openMenu() {
   setParams({ menuOpen: true }) // the extension holds the PC's mouse for it while it is open (Super key)
-  Object.assign(menu, { open: true, yaw: anchor.yaw, spot: gazeInLayout(anchor, head), press: null, drag: -1 })
+  Object.assign(menu, { open: true, set: false, yaw: anchor.yaw, spot: gazeInLayout(anchor, head), press: null, drag: -1 })
   loadApps()
 }
 function loadApps() {
@@ -1075,7 +1231,10 @@ function loadApps() {
 // cells: the application in each place of the ribbon, column after column (-1: none); left: the columns before the
 // field; pins: GNOME's id of the application in each place of the field (the setting "menuPins", kept on the PC).
 // items: every place on the sheet: { n: the application (-1: none), k: its place in the field (-1: not there), x, y, w,
-// h in px }; W, H: the sheet; field: where the field starts and ends across; mid: its middle; scale: px per radian;
+// h in px }, over the field the buttons ({ button }); with the settings shown, in place of the applications, the
+// rows of each block ({ key, label, kind }) and the backgrounds (bgItems) over its ground ({ block }); W, H: the sheet; top: where the list starts
+// on it; level: the height on it that hangs level with the eyes (the middle of the list); field: where the field
+// starts and ends across; mid: its middle; scale: px per radian;
 // pins: GNOME's id of the application in each place of the field (the setting "menuPins", kept on the PC).
 function menuLayout() {
   const pins = Array.from({ length: FIELD }, (_, k) => settings.menuPins?.[k] ?? null)
@@ -1083,34 +1242,51 @@ function menuLayout() {
   const rest = menu.names.map((_, n) => n).filter(n => !field.includes(n))
   const [w, h] = MENU.cell, fw = w * MENU.big, fh = h * MENU.big, H = MENU.rows * fh, top = (H - MENU.rows * h) / 2 // the ribbon in the middle of the field's height
   const left = Math.ceil(Math.ceil(rest.length / MENU.rows) / 2), fieldX = left * w + MENU.gap, rightX = fieldX + MENU.field * fw + MENU.gap
-  const items = [
+  const mid = fieldX + MENU.field * fw / 2
+  const buttons = mid => BUTTONS.map((button, i) => ({ n: -1, k: -1, button, x: mid + (i - BUTTONS.length / 2) * 280 + 10, y: 10, w: 260, h: MENU.top - 30 }))
+  if (menu.set) { // a sheet of its own: the blocks from its left side on, the buttons over their middle
+    const W = BLOCKS.length * BLOCK.w + (BLOCKS.length - 1) * BLOCK.gap, items = BLOCKS.flatMap((block, b) => {
+      const x = b * (BLOCK.w + BLOCK.gap), over = block.bgs ? bgItems(x + 24, MENU.top + BLOCK.head) : [], y = MENU.top + BLOCK.head + (block.bgs ? BGS.h : 0)
+      return [{ n: -1, k: -1, block, x, y: MENU.top, w: BLOCK.w, h: y - MENU.top + block.rows.length * BLOCK.row + BLOCK.foot }, ...over,
+        ...block.rows.map(([key, label, kind], r) => ({ n: -1, k: -1, key, label, kind, x: x + 24, y: y + r * BLOCK.row, w: BLOCK.w - 48, h: BLOCK.row }))]
+    })
+    return { pins, items: [...items, ...buttons(W / 2)], W, H: MENU.top + H, top: MENU.top, level: MENU.top + H / 2, field: [0, W], mid: W / 2, scale: w / (MENU.column * DEG) * sheetScale() * BLOCK.finer }
+  }
+  const apps = [
     ...rest.map((n, i) => {
       const right = i >= left * MENU.rows, j = right ? i - left * MENU.rows : i
-      return { n, k: -1, x: (right ? rightX : 0) + Math.floor(j / MENU.rows) * w, y: top + (j % MENU.rows) * h, w, h }
+      return { n, k: -1, x: (right ? rightX : 0) + Math.floor(j / MENU.rows) * w, y: MENU.top + top + (j % MENU.rows) * h, w, h }
     }),
-    ...field.map((n, k) => ({ n, k, x: fieldX + (k % MENU.field) * fw, y: Math.floor(k / MENU.field) * fh, w: fw, h: fh })),
+    ...field.map((n, k) => ({ n, k, x: fieldX + (k % MENU.field) * fw, y: MENU.top + Math.floor(k / MENU.field) * fh, w: fw, h: fh })),
   ]
+  const items = [...apps, ...buttons(mid)]
   const W = Math.max(rightX - MENU.gap, ...items.map(i => i.x + i.w))
   // a very long list is drawn smaller: it must not close into a ring
-  return { pins, items, W, H, field: [fieldX, rightX - MENU.gap], mid: fieldX + MENU.field * fw / 2, scale: Math.max(w / (MENU.column * DEG) * sheetScale(), W / (300 * DEG)) }
+  return { pins, items, W, H: MENU.top + H, top: MENU.top, level: MENU.top + H / 2, field: [fieldX, rightX - MENU.gap], mid, scale: Math.max(w / (MENU.column * DEG) * sheetScale(), W / (300 * DEG)) }
 }
 // Where the pointer is on the sheet (px), the place there (item), its application (n, -1: none) and place of the field (k, -1: beside it).
 function menuSpot() {
-  const { items, H, mid, scale } = menu.layout, d = aim().applyQuaternion(menuTurn)
-  const x = Math.atan2(d.x, -d.z) * scale + mid, y = H / 2 - Math.asin(Math.max(-1, Math.min(1, d.y))) * scale
-  const item = items.find(i => x >= i.x && x < i.x + i.w && y >= i.y && y < i.y + i.h)
+  const { items, level, mid, scale } = menu.layout, d = onSheet(aim().applyQuaternion(menuTurn), menuTurn)
+  const x = Math.atan2(d.x, -d.z) * scale + mid, y = level - Math.asin(Math.max(-1, Math.min(1, d.y))) * scale
+  const item = items.findLast(i => x >= i.x && x < i.x + i.w && y >= i.y && y < i.y + i.h) // the last: a row lies over the ground of its block
   return { x, y, item, n: item?.n ?? -1, k: item?.k ?? -1 }
 }
 function showMenu() { // every frame while the list shows: where it hangs, what the pointer is on, the icon in hand
+  if (menu.set && !bgs.list.length && performance.now() - bgs.asked > 5000) {
+    bgs.asked = performance.now()
+    fetch('/bgs').then(answer => answer.json()).then(list => { bgs.list = list }).catch(() => {})
+  }
   menu.layout = menuLayout()
   drawMenu()
   toMatrix3(uniforms.uToMenu.value, menuTurn.setFromAxisAngle(Y, -menu.yaw).multiply(head))
-  const { W, H, mid, scale, items } = menu.layout, spot = menuSpot()
-  if (menu.press && menu.drag < 0 && Math.hypot(spot.x - menu.press.x, spot.y - menu.press.y) > 30) menu.drag = menu.press.n
-  uniforms.uMenuPlace.value.set(scale, 0, mid, H / 2)
+  const { W, H, level, mid, scale, items } = menu.layout, spot = menuSpot()
+  if (menu.press && menu.press.n >= 0 && menu.drag < 0 && Math.hypot(spot.x - menu.press.x, spot.y - menu.press.y) > 30) menu.drag = menu.press.n
+  if (menu.slider) setSlider(menu.slider, spot.x)
+  uniforms.uMenuDim.value += ((menu.slider ? 0 : menu.set ? 0.45 : 0.8) - uniforms.uMenuDim.value) * 0.2 // the settings: less dark, they are tried on what is behind them
+  uniforms.uMenuPlace.value.set(scale, 0, mid, level)
   uniforms.uMenuSize.value.set(W, H)
-  // lit: the application under the pointer; while one is carried, the place of the field it would go to
-  const lit = menu.open && (menu.drag < 0 ? spot.n >= 0 : spot.k >= 0) ? spot.item : null
+  // lit: the application, button, setting or background under the pointer; while an icon is carried, the place of the field it would go to
+  const lit = menu.open && (menu.drag < 0 ? spot.n >= 0 || spot.item?.button || spot.item?.key || spot.item?.bg || spot.item?.turn : spot.k >= 0) ? spot.item : null
   uniforms.uMenuLit.value.set(...(lit ? [lit.x + 8, lit.y + 8, lit.x + lit.w - 8, lit.y + lit.h - 8] : [0, 0, -1, -1]))
   const from = menu.drag >= 0 && items.find(i => i.n === menu.drag)
   uniforms.uMenuDrag.value.set(...(from ? [from.x, from.y, from.x + from.w, from.y + from.h] : [-1, 0, 0, 0]))
@@ -1118,11 +1294,11 @@ function showMenu() { // every frame while the list shows: where it hangs, what 
 }
 function closeMenu() {
   setParams({ menuOpen: false })
-  Object.assign(menu, { open: false, press: null, drag: -1 })
+  Object.assign(menu, { open: false, press: null, drag: -1, slider: null })
 }
 // The Super key in the headset (the extension, instead of GNOME's overview) opens and closes the list: the PC's
 // mouse is held for it meanwhile, its left button arriving as `grab` (as in the arranging mode).
-let menuCallSeen, grabSeen
+let menuCallSeen, grabSeen, wheelMenu
 function byKeys(p) {
   if (SPECTATOR || sensorOnly()) return // the spectator shows the phone's list; a phone that only senses has none
   if (menuCallSeen !== undefined && p.menuCall !== menuCallSeen) {
@@ -1133,9 +1309,12 @@ function byKeys(p) {
     }
   }
   menuCallSeen = p.menuCall
+  // The PC's wheel (the extension holds its mouse for the list): in the settings, toward oneself is the backgrounds' next page
+  if (menu.open && menu.set && wheelMenu !== undefined && p.wheelSize !== wheelMenu) turnBgs(wheelMenu - p.wheelSize)
+  wheelMenu = p.wheelSize
   // The PC's left button does what the phone mouse's does, with our pointer in the middle of the view, so the gaze
-  // points. Arranging: a panel is carried, a side or corner of a window resizes the window, the backgrounds below are
-  // chosen and their sliders moved. The list: what is looked at is started, or carried into the field.
+  // points. Arranging: a panel is carried, a side or corner of a window resizes the window. The list: what is looked
+  // at is started, or carried into the field; its settings are switched, their sliders moved.
   if (grabSeen !== undefined && p.grab !== grabSeen && (p.edit || menu.open)) {
     Object.assign(mouse, { x: 0.5, y: 0.5 })
     if (p.edit) editPress({ type: 'grab' }, p.grab, true)
@@ -1147,16 +1326,49 @@ function byKeys(p) {
 function dropIcon(n, k) {
   change(settings, { menuPins: placeIcon(menu.layout.pins.map(id => menu.ids.includes(id) ? id : null), menu.ids[n], k) })
 }
+function flip(key) { // a switch; the head movement begins with a look around the room
+  change(settings, { [key]: !settings[key] })
+  if (key === 'sixDof' && settings.sixDof) setParams({ scanCall: Date.now() })
+}
+// A button over the list was pressed and let go on it. The recording and the switching off are the extension's to
+// do (the list stays; the record button shows which it is now). Off wants a second press within 3 s: it takes the
+// whole workspace away. 6D: off, the head movement is switched on and the room looked around; on with no map of the
+// room yet, it is looked around; else it is switched off. The list closes for the look around.
+function menuButton(button) {
+  if (button === 'record') setParams({ recordCall: Date.now() })
+  else if (button === 'lean') {
+    if (settings.sixDof && !settings.roomReady && !settings.scanning) setParams({ scanCall: Date.now() })
+    else flip('sixDof')
+    if (settings.sixDof) closeMenu()
+  }
+  else if (button === 'set') menu.set = !menu.set
+  else if (performance.now() - menu.offAt < 3000) setParams({ offCall: Date.now() })
+  else menu.offAt = performance.now()
+}
 function menuPress(e, down, left) {
-  const spot = menuSpot()
+  const spot = menuSpot(), item = spot.item
   if (down) {
     if (menu.drag >= 0) return // the release went unseen: the release of this press puts the icon down
+    if (left && item?.button) return void (menu.press = { button: item.button })
+    if (left && item?.kind === 'call') return void (menu.press = { call: item.key })
+    if (left && item?.key) return LAYOUT_SPEC[item.key] ? setSlider(menu.slider = item, spot.x) : flip(item.key) // a slider moves while the press lasts
+    if (left && item?.bg) return void change(settings, { bg: item.bg })
+    if (left && item?.turn) return turnBgs(item.turn)
+    if (left && item?.block) return // beside the rows of a block: the settings stay
     if (left && spot.n >= 0) return void (menu.press = { n: spot.n, x: spot.x, y: spot.y })
     return closeMenu()
   }
   // A cancelled press is not the end: the iPhone goes on with the same drag as a finger.
-  if (e.type === 'pointercancel' || !menu.press) return
-  if (menu.drag >= 0) dropIcon(menu.drag, spot.k)
+  if (e.type === 'pointercancel') return
+  menu.slider = null
+  if (!menu.press) return
+  if (menu.press.button) item?.button === menu.press.button && menuButton(item.button)
+  else if (menu.press.call) { // a button among the settings; the room is looked around with the list closed
+    if (item?.key !== menu.press.call) return void (menu.press = null)
+    setParams({ [item.key]: Date.now() })
+    if (item.key === 'scanCall') return closeMenu()
+  }
+  else if (menu.drag >= 0) dropIcon(menu.drag, spot.k)
   else if (spot.n === menu.press.n) {
     fetch('/launch', { method: 'POST', body: JSON.stringify({ app: spot.n }) }).catch(() => {})
     launchSpot = { ...menu.spot, at: Date.now() }
@@ -1178,9 +1390,12 @@ function fitLine(c, line, width) { // cut short with an ellipsis where it does n
   return line
 }
 function drawMenu() { // the whole sheet, drawn again only when the list, the field or an icon has changed
-  const { items, W, H, field } = menu.layout
-  const state = [menu.names.length, items.map(i => i.n).join(), [...menu.icons.values()].filter(icon => icon.ready).length].join()
-  if (state === menu.drawn || performance.now() - menu.at < 150) return // icons arrive in a burst: not a new sheet for each
+  const { items, W, H, top, level, field } = menu.layout
+  const armed = performance.now() - menu.offAt < 3000
+  const state = [menu.names.length, items.map(i => i.key ? settings[i.key] : i.n).join(), [...menu.icons.values()].filter(icon => icon.ready).length,
+    settings.recording, settings.sixDof, settings.scanning, settings.roomReady, menu.set, armed, settings.camLabel, menu.slider?.key,
+    settings.bg, bgs.page, bgs.list.length, [...bgs.thumbs.values()].filter(thumb => thumb.ready).length].join()
+  if (state === menu.drawn || performance.now() - menu.at < (menu.set ? 50 : 150)) return // icons arrive in a burst: not a new sheet for each (the settings' sheet is small: a slider follows at once)
   Object.assign(menu, { drawn: state, at: performance.now() })
   const fit = Math.min(1, 4096 / W) // a texture wider than 4096 px is not safe everywhere: a very long list is drawn coarser
   if (menuCanvas.width !== Math.round(W * fit) || menuCanvas.height !== Math.round(H * fit)) {
@@ -1190,14 +1405,158 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
   const c = menuCanvas.getContext('2d')
   c.setTransform(fit, 0, 0, fit, 0, 0)
   c.clearRect(0, 0, W, H) // no sheet of its own: the shader darkens the whole view
-  c.fillStyle = 'rgba(255, 255, 255, 0.07)' // the field: a lighter ground
-  c.beginPath()
-  c.roundRect(field[0] - 30, 0, field[1] - field[0] + 60, H, 44)
-  c.fill()
+  const ground = (x, y, w, h, colour) => { // the field: a lighter ground; a block of settings: a darker one, the view behind is less dark there
+    c.fillStyle = colour
+    c.beginPath()
+    c.roundRect(x, y, w, h, 44)
+    c.fill()
+  }
+  if (!menu.set) ground(field[0] - 30, top, field[1] - field[0] + 60, H - top, 'rgba(255, 255, 255, 0.07)')
   const empty = items.every(i => i.k < 0 || i.n < 0)
   Object.assign(c, { textAlign: 'center', textBaseline: 'top', lineWidth: 3 })
   for (const item of items) {
     const k = item.w / MENU.cell[0], size = 104 * k, x = item.x + (item.w - size) / 2, y = item.y + 14 * k
+    if (menu.slider && item.key !== menu.slider.key) continue // a slider is held: its row alone
+    if (item.button) { // a disc with a sign, its word below; coloured while what it stands for is on
+      const cx = item.x + item.w / 2, cy = item.y + 82
+      const [on, colour, word] = {
+        record: [settings.recording, '#e5484d', settings.recording ? 'Остановить запись' : 'Записать видео'],
+        lean: [settings.sixDof && (settings.roomReady || settings.scanning), '#3584e4',
+          !settings.sixDof ? '6DoF выключен' : settings.scanning ? 'Идёт осмотр…' : settings.roomReady ? '6DoF включён' : 'Осмотреться'],
+        set: [menu.set, '#3584e4', menu.set ? 'К программам' : 'Настройки'],
+        off: [armed, '#e5484d', armed ? 'Нажмите ещё раз' : 'Выключить'],
+      }[item.button]
+      c.beginPath()
+      c.arc(cx, cy, 72, 0, 7)
+      Object.assign(c, { fillStyle: on ? colour : 'rgba(255, 255, 255, 0.14)', strokeStyle: '#fff', lineWidth: 5, lineCap: 'round' })
+      c.fill()
+      c.stroke()
+      c.fillStyle = '#fff'
+      c.beginPath()
+      if (item.button === 'record') { // a red dot to start it; a white square while it runs, to stop it
+        c.fillStyle = on ? '#fff' : colour
+        if (on) c.roundRect(cx - 27, cy - 27, 54, 54, 9)
+        else c.arc(cx, cy, 32, 0, 7)
+        c.fill()
+      } else if (item.button === 'lean') {
+        c.font = '700 50px system-ui, sans-serif'
+        c.fillText('6D', cx, cy - 26)
+      } else if (item.button === 'set') { // three sliders
+        c.lineWidth = 6
+        for (const [j, knob] of [[-1, 14], [0, -16], [1, 4]]) {
+          c.moveTo(cx - 34, cy + j * 24)
+          c.lineTo(cx + 34, cy + j * 24)
+          c.moveTo(cx + knob + 9, cy + j * 24)
+          c.arc(cx + knob, cy + j * 24, 9, 0, 7)
+        }
+        c.stroke()
+        c.fill()
+      } else { // the power sign
+        c.lineWidth = 8
+        c.arc(cx, cy + 4, 30, -Math.PI / 2 + 0.6, 1.5 * Math.PI - 0.6)
+        c.moveTo(cx, cy - 36)
+        c.lineTo(cx, cy)
+        c.stroke()
+      }
+      Object.assign(c, { fillStyle: '#fff', font: '600 24px system-ui, sans-serif', lineWidth: 3 })
+      c.fillText(fitLine(c, word, item.w + 10), cx, item.y + 170)
+      continue
+    }
+    if (item.block) {
+      ground(item.x, item.y, item.w, item.h, 'rgba(12, 16, 24, 0.82)')
+      Object.assign(c, { fillStyle: '#fff', font: '600 36px system-ui, sans-serif' })
+      c.fillText(item.block.title, item.x + item.w / 2, item.y + 30)
+      Object.assign(c, { fillStyle: '#9fb0c2', font: '500 24px system-ui, sans-serif' })
+      c.fillText(fitLine(c, item.block.foot?.() ?? '', item.w - 48), item.x + item.w / 2, item.y + item.h - 42)
+      if (item.block.bgs) c.fillText(bgs.list.length ? `${bgs.page + 1} / ${bgs.pages}` : 'Загружается…', item.x + item.w / 2, item.y + BLOCK.head + BGS.arrows + 14)
+      continue
+    }
+    if (item.bg) { // a background: the middle of its picture, round; a ring around the one that shows
+      const r = item.w / 2, cx = item.x + r, cy = item.y + r, name = item.bg.replace(/^bg\//, '')
+      let thumb = bgs.thumbs.get(name)
+      if (!thumb) { // asked for once; the sheet is drawn again when it has arrived
+        thumb = new Image()
+        thumb.onload = () => { thumb.ready = true }
+        thumb.src = `/thumb/${encodeURIComponent(name)}`
+        bgs.thumbs.set(name, thumb)
+      }
+      c.save()
+      c.beginPath()
+      c.arc(cx, cy, r, 0, 7)
+      c.clip()
+      c.fillStyle = '#223'
+      c.fillRect(item.x, item.y, item.w, item.h)
+      if (thumb.ready) {
+        const fill = Math.max(item.w / thumb.width, item.h / thumb.height)
+        c.drawImage(thumb, cx - thumb.width * fill / 2, cy - thumb.height * fill / 2, thumb.width * fill, thumb.height * fill)
+      }
+      c.restore()
+      if (item.bg === settings.bg) {
+        Object.assign(c, { strokeStyle: '#3584e4', lineWidth: 6 })
+        c.beginPath()
+        c.arc(cx, cy, r + 5, 0, 7)
+        c.stroke()
+      }
+      continue
+    }
+    if (item.turn) { // an arrow to the page before or after
+      const mx = item.x + item.w / 2, my = item.y + item.h / 2
+      Object.assign(c, { fillStyle: 'rgba(255, 255, 255, 0.14)', strokeStyle: 'rgba(255, 255, 255, 0.5)', lineWidth: 2 })
+      c.beginPath()
+      c.roundRect(item.x, item.y, item.w, item.h, 28)
+      c.fill()
+      c.stroke()
+      Object.assign(c, { strokeStyle: '#fff', lineWidth: 5, lineCap: 'round', lineJoin: 'round' })
+      c.beginPath()
+      c.moveTo(mx - 7 * item.turn, my - 13)
+      c.lineTo(mx + 7 * item.turn, my)
+      c.lineTo(mx - 7 * item.turn, my + 13)
+      c.stroke()
+      continue
+    }
+    if (item.key) { // the words on one or two lines; a slider's value at their right and its track under them, else a switch or a button at the right
+      const spec = LAYOUT_SPEC[item.key], value = settings[item.key], right = item.x + item.w - 8, mid = item.y + item.h / 2
+      if (menu.slider) ground(item.x - 24, item.y - 6, item.w + 48, item.h + 12, 'rgba(12, 16, 24, 0.82)')
+      Object.assign(c, { textAlign: 'left', fillStyle: '#fff', font: '500 28px system-ui, sans-serif' })
+      const lines = twoLines(c, item.label, item.w - (spec ? 110 : item.kind ? 0 : 130)).filter(Boolean)
+      if (item.kind === 'call') { // a button as wide as the row
+        Object.assign(c, { fillStyle: 'rgba(255, 255, 255, 0.14)', strokeStyle: 'rgba(255, 255, 255, 0.5)', lineWidth: 2, textAlign: 'center' })
+        c.beginPath()
+        c.roundRect(item.x + 8, mid - 36, item.w - 16, 72, 36)
+        c.fill()
+        c.stroke()
+        c.fillStyle = '#fff'
+        c.fillText(lines[0], item.x + item.w / 2, mid - 15)
+      } else lines.forEach((words, n) => c.fillText(words, item.x + 8, (spec ? item.y + 16 : mid - 16 * lines.length) + n * 32))
+      if (spec) {
+        const y = item.y + item.h - 32, at = item.x + (value - spec[1]) / (spec[2] - spec[1]) * item.w
+        c.textAlign = 'right'
+        c.fillText(String(value), right, item.y + 16)
+        c.fillStyle = 'rgba(255, 255, 255, 0.18)'
+        c.beginPath()
+        c.roundRect(item.x, y - 6, item.w, 12, 6)
+        c.fill()
+        c.fillStyle = '#3584e4'
+        c.beginPath()
+        c.roundRect(item.x, y - 6, Math.max(12, at - item.x), 12, 6)
+        c.fill()
+        c.fillStyle = '#fff'
+        c.beginPath()
+        c.arc(at, y, 17, 0, 7)
+        c.fill()
+      } else if (!item.kind) { // a switch
+        c.fillStyle = value ? '#3584e4' : 'rgba(255, 255, 255, 0.2)'
+        c.beginPath()
+        c.roundRect(right - 100, mid - 28, 100, 56, 28)
+        c.fill()
+        c.fillStyle = '#fff'
+        c.beginPath()
+        c.arc(right - (value ? 28 : 72), mid, 22, 0, 7)
+        c.fill()
+      }
+      Object.assign(c, { textAlign: 'center', lineWidth: 3 })
+      continue
+    }
     if (item.n < 0) {
       if (item.k < 0 || empty) continue
       c.setLineDash([10, 8]) // a free place of the field
@@ -1220,125 +1579,16 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
     c.font = `600 ${24 * k}px system-ui, sans-serif`
     twoLines(c, menu.names[item.n], item.w - 16 * k).forEach((line, j) => c.fillText(line, item.x + item.w / 2, item.y + 128 * k + j * 30 * k))
   }
-  const words = !menu.names.length ? ['Список загружается…'] : empty ? ['Перетащите сюда', 'свои программы'] : []
+  const words = menu.set ? [] : !menu.names.length ? ['Список загружается…'] : empty ? ['Перетащите сюда', 'свои программы'] : []
   Object.assign(c, { fillStyle: '#c8d4e0', font: '500 40px system-ui, sans-serif' })
-  words.forEach((line, i) => c.fillText(line, (field[0] + field[1]) / 2, H / 2 - 52 + i * 56))
+  words.forEach((line, i) => c.fillText(line, (field[0] + field[1]) / 2, level - 52 + i * 56))
   menuTexture.needsUpdate = true
 }
 
-// --- the backgrounds, below while arranging: round pictures, 4 x 2 a page (the wheel turns the pages), and the
-// darkening and blur of the background. Where the phone camera shows otherwise; it is off in this mode.
-const PICK = { cols: 4, rows: 2, height: -36, across: 50, below: -20 } // the height of its middle and its width; below: it comes when one looks lower than this (degrees)
-const pick = { fade: 0, list: [], page: 0, thumbs: new Map(), drawn: '', slider: null, items: [], asked: 0 }
-const yawTurn = new THREE.Quaternion()
-function pickLayout() { // the places on the sheet: the backgrounds of this page, the two sliders
-  const pages = Math.max(1, Math.ceil(pick.list.length / (PICK.cols * PICK.rows)))
-  pick.page = Math.min(pick.page, pages - 1)
-  const per = PICK.cols * PICK.rows, cellW = 280, cellH = 220, x0 = (pickCanvas.width - PICK.cols * cellW) / 2
-  pick.items = [
-    ...pick.list.slice(pick.page * per, pick.page * per + per).map((file, i) =>
-      ({ kind: 'bg', file, x: x0 + (i % PICK.cols) * cellW + (cellW - 190) / 2, y: 84 + Math.floor(i / PICK.cols) * cellH, w: 190, h: 190 })),
-    ...['bgDim', 'bgBlur'].map((key, i) => ({ kind: 'slider', key, x: 80 + i * 560, y: 560, w: 480, h: 50 })),
-  ]
-  return pages
-}
-function pickSpot() { // where our pointer is on the sheet (px) and what is there; null off the sheet
-  const { width: W, height: H } = pickCanvas, scale = W / (PICK.across * DEG) * sheetScale()
-  const d = rayHere.copy(aim()).applyQuaternion(yawTurn.setFromAxisAngle(Y, -gazeOf(head).yaw).multiply(head))
-  const x = Math.atan2(d.x, -d.z) * scale + W / 2, y = H / 2 - (Math.asin(Math.max(-1, Math.min(1, d.y))) - PICK.height * DEG) * scale
-  if (x < 0 || y < 0 || x > W || y > H) return null
-  return { x, item: pick.items.find(i => x >= i.x && x < i.x + i.w && y >= i.y - 20 && y < i.y + i.h + 20) }
-}
 function setSlider({ key, x: x0, w }, x) {
-  const [, min, max, step] = LAYOUT_SPEC[key], value = Math.round((min + Math.max(0, Math.min(1, (x - x0) / w)) * (max - min)) / step) * step
+  const [, min, max, step] = LAYOUT_SPEC[key], value = +(Math.round((min + Math.max(0, Math.min(1, (x - x0) / w)) * (max - min)) / step) * step).toFixed(4)
   if (value !== settings[key]) change(settings, { [key]: value })
 }
-function showPick() { // every frame while it shows
-  if (!pick.list.length && performance.now() - pick.asked > 5000) {
-    pick.asked = performance.now()
-    fetch('/bgs').then(answer => answer.json()).then(list => { pick.list = list }).catch(() => {})
-  }
-  const pages = pickLayout(), spot = pickSpot()
-  if (pick.slider && spot) setSlider(pick.slider, spot.x)
-  drawPick(pages, spot?.item)
-  const { width: W, height: H } = pickCanvas
-  uniforms.uPickPlace.value.set(W / (PICK.across * DEG) * sheetScale(), PICK.height * DEG, W / 2, H / 2)
-  uniforms.uPickSize.value.set(W, H)
-}
-function pickPress(down, left) { // whether the press was meant for the backgrounds
-  if (!down) return pick.slider ? !(pick.slider = null) : false
-  const spot = pickSpot()
-  if (!spot) return false
-  if (left && spot.item?.kind === 'bg') change(settings, { bg: spot.item.file })
-  if (left && spot.item?.kind === 'slider') setSlider(pick.slider = spot.item, spot.x)
-  return true
-}
-function pickWheel(clicks) {
-  pick.page = Math.max(0, pick.page - Math.sign(clicks)) // pickLayout keeps it under the number of pages
-}
-function drawPick(pages, hovered) {
-  const thumbs = [...pick.thumbs.values()].filter(t => t.ready).length
-  const state = [pick.page, pages, pick.list.length, pick.items.indexOf(hovered), settings.bg, settings.bgDim, settings.bgBlur, settings.glowColor, thumbs].join()
-  if (state === pick.drawn) return
-  pick.drawn = state
-  const c = pickCanvas.getContext('2d'), { width: W, height: H } = pickCanvas
-  c.clearRect(0, 0, W, H)
-  c.fillStyle = 'rgba(10, 14, 20, 0.82)'
-  c.beginPath()
-  c.roundRect(0, 0, W, H, 40)
-  c.fill()
-  Object.assign(c, { textAlign: 'center', textBaseline: 'middle', fillStyle: '#fff', font: '600 34px system-ui, sans-serif' })
-  c.fillText(pages > 1 ? `Обои   ${pick.page + 1} / ${pages}   ·   колесо: листать` : 'Обои', W / 2, 44)
-  for (const item of pick.items) {
-    if (item.kind === 'bg') {
-      const r = item.w / 2, cx = item.x + r, cy = item.y + r, name = item.file.replace(/^bg\//, '')
-      let thumb = pick.thumbs.get(name)
-      if (!thumb) {
-        thumb = new Image()
-        thumb.onload = () => { thumb.ready = true }
-        thumb.src = `/thumb/${encodeURIComponent(name)}`
-        pick.thumbs.set(name, thumb)
-      }
-      c.save()
-      c.beginPath()
-      c.arc(cx, cy, r, 0, 2 * Math.PI)
-      c.clip()
-      c.fillStyle = '#223'
-      c.fillRect(item.x, item.y, item.w, item.h)
-      if (thumb.ready) { // the middle of the panorama, filling the circle
-        const s = Math.max(item.w / thumb.width, item.h / thumb.height)
-        c.drawImage(thumb, cx - thumb.width * s / 2, cy - thumb.height * s / 2, thumb.width * s, thumb.height * s)
-      }
-      c.restore()
-      const chosen = item.file === settings.bg
-      if (chosen || item === hovered) {
-        c.lineWidth = chosen ? 8 : 5
-        c.strokeStyle = chosen ? settings.glowColor : 'rgba(255, 255, 255, 0.85)'
-        c.beginPath()
-        c.arc(cx, cy, r + 7, 0, 2 * Math.PI)
-        c.stroke()
-      }
-    } else {
-      const [, min, max] = LAYOUT_SPEC[item.key], value = settings[item.key], part = (value - min) / (max - min), mid = item.y + item.h / 2
-      Object.assign(c, { textAlign: 'left', fillStyle: '#c8d4e0', font: '500 28px system-ui, sans-serif' })
-      c.fillText(`${item.key === 'bgDim' ? 'Затемнение' : 'Размытие'}  ${value}%`, item.x, item.y - 14)
-      c.fillStyle = 'rgba(255, 255, 255, 0.18)'
-      c.beginPath()
-      c.roundRect(item.x, mid - 6, item.w, 12, 6)
-      c.fill()
-      c.fillStyle = settings.glowColor
-      c.beginPath()
-      c.roundRect(item.x, mid - 6, item.w * part, 12, 6)
-      c.fill()
-      c.fillStyle = '#fff'
-      c.beginPath()
-      c.arc(item.x + item.w * part, mid, item === hovered || item === pick.slider ? 20 : 16, 0, 2 * Math.PI)
-      c.fill()
-    }
-  }
-  toSheets(pickCanvas, SHEETS.pick)
-}
-
 // --- a notification of the PC (GNOME's banner), shown for a few seconds above the middle of the view, fixed to the
 // head: who is in the headset would not see it on the PC. As the PC shows banners: not in "Do Not Disturb".
 const NOTE = { across: 40, height: 17, shown: 6000 } // its width and the height of its middle, degrees; ms on view
@@ -1353,6 +1603,24 @@ function noteFrom(told) { // from the settings: [its number, application, title,
   const image = new Image()
   image.onload = () => note.seen === n && drawNote(app, title, body, image)
   image.src = `/noteicon?${n}`
+}
+// The head movement's own notes, on every page that shows the sphere: while the room is looked around (the phone
+// tells so, `scanning`), how that ended, and once after the start that it has yet to be done.
+let scanShown = 0, scanSaid = '', reminded = false
+function roomNote(p) {
+  const now = performance.now(), say = (title, body, app = 'VR Workspace') => { note.until = now + NOTE.shown; drawNote(app, title, body) }
+  if (p.sixDof && p.scanning && now - (scanShown ||= now) < SCAN + 5000) { // (a phone that went away while scanning: not for ever)
+    const left = `ещё ${Math.max(0, Math.ceil((SCAN + DARK - (now - scanShown)) / 1000))} с`
+    if (left !== scanSaid) say('Осмотритесь', 'Медленно поверните голову влево, вправо, вверх и вниз: так запоминается комната', `Движение головы · ${scanSaid = left}`)
+  } else if (scanShown && !p.scanning) {
+    scanShown = 0
+    scanSaid = ''
+    if (p.sixDof) say(p.roomReady ? 'Комната запомнена' : 'Осмотр не удался', p.roomReady ? 'Наклон к окну теперь приближает его, поворот головы ничего не двигает'
+      : 'Мало ориентиров: камере нужны предметы, не пустая стена и не темнота. Кнопка 6D над списком программ: ещё раз')
+  } else if (!reminded && tapped && !SPECTATOR && p.sixDof && !p.roomReady && !p.scanning && now > 8000) {
+    reminded = true
+    say('Движение головы ждёт осмотра', 'Когда сядете: список программ (Super), кнопка 6D, и оглядитесь по сторонам')
+  }
 }
 function drawNote(app, title, body, icon) {
   const c = noteCanvas.getContext('2d'), { width: W, height: H } = noteCanvas, x = icon ? 170 : 40, room = W - x - 40
@@ -1413,13 +1681,14 @@ async function sharePose() {
         const sent = await (await fetch(GLASSES ? '/pose?glasses' : '/pose')).json() // the server: a headset on a cable is in use
         if (sent) {
           poseTarget.fromArray(sent)
+          headGoal.fromArray(sent, 19)
           const [, , , , anchorYaw, anchorPitch, open, yaw, drag, x, y, p0, p1, p2, mi, myaw, mpitch, mspan, maspect] = sent
           const pointer = [p0, p1, p2]
           moving = mi >= 0 ? { i: mi, yaw: myaw, pitch: mpitch, span: mspan, aspect: maspect } : null
           Object.assign(anchor, { yaw: anchorYaw, pitch: anchorPitch })
           // The list of applications and our pointer, as the phone shows them: the spectator draws them the same way.
           if (open && !menu.names.length) loadApps()
-          Object.assign(menu, { open: !!open, yaw, drag })
+          Object.assign(menu, { open: !!open, set: open === 2, yaw, drag })
           Object.assign(mouse, { x, y })
           phonePointer.fromArray(pointer)
         }
@@ -1430,7 +1699,7 @@ async function sharePose() {
         // are its. Its mouse goes as a direction: the spectator does not know that window's shape.
         const ray = GLASSES && aim(), [x, y] = ray ? [ray.x / -ray.z, ray.y / -ray.z] : [mouse.x, mouse.y]
         await fetch(GLASSES ? '/pose?glasses' : '/pose', { method: 'POST', body: JSON.stringify([...head.toArray(), anchor.yaw, anchor.pitch,
-          menu.open ? 1 : 0, menu.yaw, menu.drag, x, y, ...uniforms.uPointer.value.toArray(), ...movingNow()]) })
+          menu.open ? (menu.set ? 2 : 1) : 0, menu.yaw, menu.drag, x, y, ...uniforms.uPointer.value.toArray(), ...movingNow(), ...headGoal.toArray()]) })
       }
     } catch {} // the server is restarting: go on asking
     await pause(SPECTATOR || settings?.spectator ? Math.max(0, 33 - (performance.now() - started)) : 500) // 30 a second, however long the request took
@@ -1626,6 +1895,6 @@ button.onclick = async () => {
   startStreams()
   // Opened once now, while the phone is in the hand, so that the permission question comes here and not in the
   // headset; the drawing loop closes it again when it is not looked at.
-  if ((settings?.camBelow > 0 || settings?.passthrough) && !SPECTATOR) openCamera()
+  if ((settings?.camBelow > 0 || settings?.passthrough || (settings?.sixDof && !GLASSES)) && !SPECTATOR) openCamera()
 }
 if (GLASSES) button.click() // the glasses' picture has no sound or sensors to unlock: no tap to start

@@ -30,6 +30,7 @@
 <label class="check"><input id="hideMonitors" type="checkbox">Скрыть мониторы (чтобы рассмотреть фон, например тестовую сетку)</label>
 <button id="passthrough">Фон с камеры телефона: включить</button>
 <label class="check"><input id="camKeep" type="checkbox">Держать камеру телефона открытой (телефон не будет снова спрашивать разрешение; значок камеры горит постоянно)</label>
+<label class="check"><input id="sixDof" type="checkbox">Движение головы по камере телефона: наклониться к окну, отодвинуться, шагнуть в сторону (камера остаётся открытой; не в режиме расстановки)</label>
 <p id="cameras"></p>
 <div id="layout"></div>
 <label>Виртуальных мониторов <input id="virtual" type="number" min="0" step="1" required></label>
@@ -101,6 +102,7 @@
   // the one size for all: monitors that were given their own size in the GNOME settings window lose it
   $('virtualSize').onchange = () => setParams({ virtualSize: $('virtualSize').value, ...Object.fromEntries(JSON.parse(shown).map(({ id }) => [`${id}.size`, null])) })
   $('camKeep').onchange = () => setParams({ camKeep: $('camKeep').checked })
+  $('sixDof').onchange = () => setParams({ sixDof: $('sixDof').checked })
 
   let shown // the monitors the page has controls for
   watchParams(p => {
@@ -132,6 +134,7 @@
     if ($('virtualSize') !== document.activeElement) $('virtualSize').value = p.virtualSize
     $('autoBlack').checked = p.autoBlack
     $('camKeep').checked = p.camKeep
+    $('sixDof').checked = p.sixDof
     $('hideMonitors').checked = p.hideMonitors
     $('passthrough').textContent = `Фон с камеры телефона: ${p.passthrough ? 'выключить' : 'включить'}`
     $('cameras').textContent = p.camLabel ? `Камера, которую дал телефон: ${p.camLabel}. Все его камеры: ${p.cameras.join(', ')}.` : ''
