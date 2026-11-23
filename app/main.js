@@ -172,7 +172,8 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       uniform vec4 uMenuPlace, uClockPlace, uMenuLit, uAssistPlace;
       uniform float uAssistOn;                   // how much the helper's card shows
       // The helper's marks: uMark, a frame's two corners or an arrow's tail and tip, on its panel from the top left, 0..1;
-      // uMarkOf: the panel (-1: none), 0 a frame or 1 an arrow, the line's width and the number's disc in panel widths
+      // uMarkOf: the panel (-1: none), 0 a frame or 1 an arrow (2 and 3: the same shown by the helper itself, in its
+      // colour and with no number), the line's width and the number's disc in panel widths
       uniform vec4 uMark[${MARKS}], uMarkOf[${MARKS}];
       uniform vec2 uMenuSize, uClockSize; // px
       uniform vec4 uMenuDrag;                    // the icon in hand: its rectangle on the sheet (x < 0: none)
@@ -228,8 +229,8 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       vec3 marked(vec3 picture, vec2 p, int k, float aspect) {
         vec4 m = uMark[k], of = uMarkOf[k];
         vec2 q = vec2(p.x, p.y * aspect), a = vec2(m.x, m.y * aspect), b = vec2(m.z, m.w * aspect); // in panel widths, the same across and down
-        float d;
-        if (of.y < 0.5) { // a frame: how far from its outline
+        float d, its = step(1.5, of.y); // its: shown by the helper
+        if (of.y - 2.0 * its < 0.5) { // a frame: how far from its outline
           vec2 within = min(q - a, b - q), near = clamp(q, a, b);
           d = q == near ? min(within.x, within.y) : length(q - near);
         } else { // an arrow: its shaft and the two strokes of its head
@@ -237,9 +238,9 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
           float head = min(0.5 * length(b - a), 6.0 * of.z);
           d = min(toLine(q, a, b), min(toLine(q, b, b - head * (along + 0.55 * across)), toLine(q, b, b - head * (along - 0.55 * across))));
         }
-        picture = mix(picture, vec3(1.0, 0.33, 0.2), 1.0 - smoothstep(0.5 * of.z, 0.8 * of.z, d));
+        picture = mix(picture, mix(vec3(1.0, 0.33, 0.2), vec3(0.24, 0.92, 0.84), its), 1.0 - smoothstep(0.5 * of.z, 0.8 * of.z, d));
         vec2 r = (q - clamp(a, vec2(of.w), vec2(1.0 - of.w, aspect - of.w))) / of.w; // its number: a disc at its first corner, kept on the panel
-        if (max(abs(r.x), abs(r.y)) < 1.0) {
+        if (its < 0.5 && max(abs(r.x), abs(r.y)) < 1.0) {
           vec4 disc = textureLod(uSheets, vec2(${SHEETS.digits[0]}.0 + (float(k) + 0.5 + 0.5 * r.x) * 48.0, ${sheets.height - SHEETS.digits[1]}.0 - (0.5 + 0.5 * r.y) * 48.0) / vec2(${sheets.width}.0, ${sheets.height}.0), 0.0);
           picture = mix(picture, disc.rgb, disc.a);
         }
@@ -860,13 +861,13 @@ renderer.setAnimationLoop(now => {
     const away = Math.acos(Math.max(-1, Math.min(1, -ahead.z))) / DEG, within = 65 + Math.hypot(spans[i], spans[i] * aspect) / 2 + 12
     const seen = span > 0 && (SPECTATOR || away < within)
     uniforms.uSize.value[i].x = seen ? span : 0
-    screens[i].seen = seen
+    screens[i].seen = seen || settings.watch?.id === id // (pictures that come as they are are read only for a panel seen: the watched one counts)
     // A panel hidden, or 30 degrees farther off than that for three seconds: its video is not taken at all, so the
     // phone neither receives nor unpacks it (heat, and away from home traffic). Taken again when it is within 15
     // degrees of being drawn: a turn of the head toward it gets there in a second or so, as the stream does; until
     // then its last picture stands. Never m0: MediaMTX runs the monitors' capture only while somebody takes that
     // one. (Pictures that come as they are: receivePlain reads none for a panel out of view.)
-    const screen = screens[i], far = !SPECTATOR && !screen.asIs && id !== 'm0' && (!span || away > within + (screen.rest ? 15 : 30))
+    const screen = screens[i], far = !SPECTATOR && !screen.asIs && id !== 'm0' && settings.watch?.id !== id && (!span || away > within + (screen.rest ? 15 : 30)) // (the watched one: its picture must stay fresh)
     if (!far) screen.farSince = 0
     if ((far && now - (screen.farSince ||= now) > 3000) !== !!screen.rest) {
       screen.rest = !screen.rest
@@ -889,6 +890,7 @@ renderer.setAnimationLoop(now => {
   })
   glow()
   tellGaze(now)
+  givePictures(now)
   showMarks()
   showArranging()
   point(dt)
@@ -1783,15 +1785,49 @@ function cutOut(i, [u0, v0, u1, v1], arrow) {
   }
   return new Promise(done => out.toBlob(done, 'image/png'))
 }
+// What the server asks of the page that shows the sphere to its user, for the helper: a fresh picture of a place
+// (`want`: for a clip of before and after, for the watcher's look), and every two seconds how the watched place
+// looks (`watch`): 32 by 18 cells of brightness, by which the server tells that it changed. A place: { id, source,
+// rect: [u0, v0, u1, v1] from the panel's top left }. Not of a panel whose stream rests: its picture is old.
+let wantSeen, sigAt = 0
+const sigTarget = new THREE.WebGLRenderTarget(128, 72), sigBytes = new Uint8Array(128 * 72 * 4)
+function signature(i, [u0, v0, u1, v1]) {
+  const { videoWidth: W, videoHeight: H } = screens[i].video, [left, top, wide, high] = settings.monitors[i].crop ?? [0, 0, W, H], cells = new Uint8Array(32 * 18)
+  cutMaterial.uniforms.map.value = screens[i].texture
+  cutMaterial.uniforms.box.value.set((left + u0 * wide) / W, 1 - (top + v1 * high) / H, (u1 - u0) * wide / W, (v1 - v0) * high / H) // the picture's v runs up
+  renderer.setRenderTarget(sigTarget)
+  renderer.render(cutScene, camera)
+  renderer.setRenderTarget(null)
+  renderer.readRenderTargetPixels(sigTarget, 0, 0, 128, 72, sigBytes)
+  for (let p = 0; p < 128 * 72; p++) cells[(p / 128 >> 2) * 32 + (p % 128 >> 2)] += (sigBytes[p * 4] * 0.3 + sigBytes[p * 4 + 1] * 0.59 + sigBytes[p * 4 + 2] * 0.11) / 16 // 4 by 4 pixels a cell
+  return btoa(String.fromCharCode(...cells))
+}
+function givePictures(now) {
+  if (!tapped || SPECTATOR || sensorOnly() || document.hidden) return
+  const fresh = place => {
+    const i = settings.monitors.findIndex(m => m.id === place.id && (m.source ?? 0) === place.source)
+    return i >= 0 && screens[i].video.videoWidth && !screens[i].rest ? i : -1
+  }
+  const { want, watch } = settings
+  if (want && want.n !== wantSeen && fresh(want) >= 0) {
+    wantSeen = want.n
+    cutOut(fresh(want), want.rect).then(png => fetch(`/assist/picture?n=${want.n}`, { method: 'POST', body: png })).catch(() => {})
+  }
+  if (watch && now - sigAt > 2000 && fresh(watch) >= 0) {
+    sigAt = now
+    setParams({ sig: [watch.n, signature(fresh(watch), watch.rect)] })
+  }
+}
 function showMarks() { // every frame: the marks for the shader, the one being drawn among them
   const told = settings.marks ?? [], same = (a, b) => a.id === b.id && a.kind === b.kind && a.rect.every((n, k) => Math.abs(n - b.rect[k]) < 1e-3)
   if (!settings.assistOn) marking = undefined
   myMarks = settings.assistOn || told.length ? myMarks.filter(m => !told.some(t => same(t, m))) : [] // told back; or sent and answered, or given up
   const drawn = marking && { id: settings.monitors[marking.i]?.id, kind: marking.arrow ? 'arrow' : 'frame', rect: marking.arrow ? [...marking.from, ...marking.to] : boxed(marking.from, marking.to) }
-  const all = [...told, ...[...myMarks, ...(drawn ? [drawn] : [])].map((m, k) => ({ ...m, n: told.length + k + 1 }))]
+  const mine = [...told, ...[...myMarks, ...(drawn ? [drawn] : [])].map((m, k) => ({ ...m, n: told.length + k + 1 }))]
+  const all = [...mine, ...(settings.shown ?? []).map((m, k) => ({ ...m, n: mine.length + k + 1, its: true }))] // what the helper shows: in the places left
   for (let k = 0; k < MARKS; k++) {
     const mark = all.find(m => m.n === k + 1), i = mark ? settings.monitors.findIndex(m => m.id === mark.id) : -1, across = spans[i] > 0 ? spans[i] : 0
-    uniforms.uMarkOf.value[k].set(across ? i : -1, mark?.kind === 'arrow' ? 1 : 0, 0.22 / (across || 1), 1.1 / (across || 1))
+    uniforms.uMarkOf.value[k].set(across ? i : -1, (mark?.kind === 'arrow' ? 1 : 0) + (mark?.its ? 2 : 0), 0.22 / (across || 1), 1.1 / (across || 1))
     if (mark) uniforms.uMark.value[k].set(...mark.rect)
   }
 }

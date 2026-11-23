@@ -12,7 +12,9 @@ import { once } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { claudeProgram, fileNamed, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, userFolders } from './assist.js'
+import { execFileSync } from 'node:child_process'
+import { claudeProgram, clipOf, codeFind, codeFolders, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, shownOf, sigDiff,
+  tasksText, userFolder, userFolders } from './assist.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -317,7 +319,8 @@ test('the helper\'s tools answer Claude\'s requests and pass them on to the serv
   try {
     assert.equal((await ask(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'vr-sphere')
     tools.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n') // a notice gets no answer
-    assert.deepEqual((await ask(2, 'tools/list')).result.tools.map(t => t.name), ['sphere_settings', 'sphere_set', 'sphere_do', 'sphere_marks', 'sphere_windows', 'sphere_open', 'sphere_place', 'sphere_close', 'sphere_type', 'sphere_layout'])
+    assert.deepEqual((await ask(2, 'tools/list')).result.tools.map(t => t.name), ['sphere_settings', 'sphere_set', 'sphere_do', 'sphere_marks', 'sphere_windows', 'sphere_open', 'sphere_place', 'sphere_close', 'sphere_type',
+      'sphere_show', 'sphere_code_find', 'sphere_code_open', 'sphere_tasks', 'sphere_watch', 'sphere_clip', 'sphere_layout'])
     await ask(7, 'tools/call', { name: 'sphere_windows', arguments: {} })
     assert.deepEqual(asked.at(-1), ['GET', '/assist/windows', ''])
     await ask(8, 'tools/call', { name: 'sphere_place', arguments: { panel: 'w0', beside: { panel: 'm0', side: 'right' } } })
@@ -430,4 +433,66 @@ test('"this window" is the panel looked at longest while speaking, not the glanc
   assert.deepEqual(lookedMost(looks, 12000), { id: 'w0', yaw: 44, pitch: 12 }) // the longer of its two looks; the 7 s at nothing do not count
   assert.deepEqual(lookedMost([{ id: '', yaw: 5, pitch: -3, at: 0 }], 1000), { id: '', yaw: 5, pitch: -3 }) // no panel at all: where one looked
   assert.equal(lookedMost([], 1000), null)
+})
+
+test('the helper points into the picture of a mark: a place there is a place on the panel', () => {
+  const marks = [{ n: 1, kind: 'window', id: 'w0', rect: [0, 0, 1, 1] }, { n: 2, kind: 'frame', id: 'w1', rect: [0.2, 0.4, 0.6, 0.8] }, { n: 3, kind: 'arrow', id: 'm0', rect: [0.5, 0.5, 0.3, 0.2] }]
+  assert.deepEqual(inMark(marks[0], 25, 75), [0.25, 0.75])                       // a window's picture is the whole panel
+  assert.deepEqual(inMark(marks[1], 50, 50).map(n => +n.toFixed(3)), [0.4, 0.6])  // a frame's is its part
+  assert.deepEqual(inMark(marks[2], 0, 100).map(n => +n.toFixed(3)), [0.18, 0.62]) // an arrow's: its box and 0.12 around, as the page cuts it
+  assert.deepEqual(shownOf(marks, { mark: 2, kind: 'frame', from: [100, 100], to: [50, 0] }), { kind: 'frame', id: 'w1', rect: [0.4, 0.4, 0.6, 0.8] }) // the corners in order
+  assert.deepEqual(shownOf(marks, { mark: 1, kind: 'arrow', from: [10, 10], to: [80, 60] }), { kind: 'arrow', id: 'w0', rect: [0.1, 0.1, 0.8, 0.6] })   // tail, then tip
+  assert.throws(() => shownOf(marks, { mark: 9, kind: 'frame', from: [0, 0], to: [1, 1] }), /number of a mark: 1, 2, 3/)
+  assert.throws(() => shownOf([], { mark: 1, kind: 'frame', from: [0, 0], to: [1, 1] }), /ask the user to mark the window/)
+  assert.throws(() => shownOf(marks, { mark: 1, kind: 'circle', from: [0, 0], to: [1, 1] }), /"frame" or "arrow"/)
+  assert.throws(() => shownOf(marks, { mark: 1, kind: 'frame', from: [0, 0], to: [1, 140] }), /percent/)
+})
+
+test('the user\'s code: the folders VS Code has open, the lines that hold a text (nothing git ignores), a list of tasks as text', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-home-')), repo = path.join(home, 'shop'), plain = path.join(home, 'notes')
+  try {
+    for (const [file, text] of [['shop/src/pay.js', 'const a = 1\nthrow new Error("Модуль payments не найден")\n'], ['shop/.env', 'KEY="payments secret"\n'], ['shop/secret.txt', 'payments password\n'],
+      ['shop/.gitignore', 'secret.txt\n'], ['notes/todo.txt', 'ask about Payments\n'], ['notes/.hidden/x.txt', 'payments\n'], ['notes/node_modules/p/i.js', 'payments\n']]) {
+      fs.mkdirSync(path.dirname(path.join(home, file)), { recursive: true })
+      fs.writeFileSync(path.join(home, file), text)
+    }
+    execFileSync('git', ['init', '-q', repo])
+    fs.mkdirSync(path.join(home, '.config/Code/User/globalStorage'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.config/Code/User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { folder: `file://${repo}` }, openedWindows: [{ folder: `file://${repo}` }, { folder: 'file:///no/such/folder' }, {}] } }))
+    assert.deepEqual(codeFolders(home), [repo])                            // each once, only those that are there
+    assert.deepEqual(codeFolders(home, plain), [repo, plain])              // and those of the setting
+    const found = await codeFind([repo, plain], 'payments')
+    assert.deepEqual(found, [{ file: path.join(repo, 'src/pay.js'), line: 2, text: 'throw new Error("Модуль payments не найден")' }, { file: path.join(plain, 'todo.txt'), line: 1, text: 'ask about Payments' }])
+    assert.deepEqual(await codeFind([repo], 'не найден"'), [found[0]])     // as it is written, signs and all
+    assert.deepEqual(await codeFind([repo], 'no such text anywhere'), [])
+  } finally {
+    fs.rmSync(home, { recursive: true })
+  }
+  assert.equal(editorProgram({ VR_EDITOR: '/no/such/editor' }), null)
+  assert.equal(editorProgram({ VR_EDITOR: 'sh', PATH: '/nowhere' }), '/usr/bin/sh')
+  assert.equal(userFolder('/nowhere', 'VIDEOS', 'Videos'), '/nowhere/Videos')
+  assert.equal(tasksText('Обход', '2026-11-23 14:05', [{ text: ' Кнопка  съехала\nвправо ', window: 'Site', picture: 'Обход 1.png' }, { text: 'Опечатка' }], false),
+    '# Обход\n\n## 2026-11-23 14:05\n\n- [ ] Кнопка съехала вправо (Site)\n  ![](%D0%9E%D0%B1%D1%85%D0%BE%D0%B4%201.png)\n- [ ] Опечатка\n')
+  assert.equal(tasksText('Обход', '2026-11-23 15:00', [{ text: 'Ещё' }], true), '\n## 2026-11-23 15:00\n\n- [ ] Ещё\n') // added to a list that is there: no title again
+})
+
+test('a watched place: the shimmer of a still video and a blinking cursor are not a change, scrolling text is', () => {
+  const still = Uint8Array.from({ length: 576 }, (_, i) => 40 + i % 7), shimmer = still.map((v, i) => v + (i % 3) - 1), cursor = still.map((v, i) => i === 300 ? v + 45 : v)
+  const scrolled = still.map((v, i) => i >= 288 ? 200 - v : v)
+  assert.equal(sigDiff(still, shimmer), 0)
+  assert.ok(sigDiff(still, cursor) < 50)        // below what makes the watcher look again
+  assert.ok(sigDiff(still, scrolled) > 1000)    // far above what counts as busy (100)
+  assert.equal(sigDiff(still, still.subarray(1)), Infinity)
+})
+
+test('a clip of before and after is made of two pictures', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-clip-test-')), png = colour => execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', `color=${colour}:s=321x200`, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-'])
+  try {
+    const file = await clipOf(png('red'), png('blue'), path.join(folder, 'clip.mp4'))
+    const [width, height, seconds] = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:format=duration', '-of', 'csv=p=0', file], { encoding: 'utf8' }).split(/[,\n]/).map(Number)
+    assert.deepEqual([width, height], [320, 200]) // an even size
+    assert.ok(Math.abs(seconds - 5) < 0.2, `${seconds} s`)
+  } finally {
+    fs.rmSync(folder, { recursive: true })
+  }
 })

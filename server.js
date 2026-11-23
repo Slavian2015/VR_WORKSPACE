@@ -11,7 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
 import { cleanOrder, HOME, blocked, foreign, passKey, wrongKey } from './orders.js'
-import { ask, fileNamed, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, userFolders } from './assist.js'
+import { ask, clipOf, codeFind, codeFolders, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, shownOf, sigDiff, tasksText,
+  userFolder, userFolders, watched } from './assist.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -137,6 +138,57 @@ const exchanges = []            // the last few: { at, said, answer }, so that "
 // for what "this window" and "here" mean; spoke: what came of them (assist.js, lookedMost), for the request now with Claude.
 let gaze = { id: '', yaw: 0, pitch: 0, at: 0 }, looks = [], spoke = null
 const pause = ms => new Promise(done => setTimeout(done, ms))
+// What the helper shows by itself on the panels (a frame or an arrow, for half a minute: `shown`); a fresh picture
+// of a place it asks of the working page (`want`); the place it watches (`watch`); "as it was" for a clip (`kept`).
+// A place: { id: the panel, source: its window (0: a monitor), rect: [u0, v0, u1, v1] from the panel's top left }.
+let shown = [], shownTimer, want = null, wants = 0, watch = null, watches = 0, kept = null
+const region = mark => [...inMark(mark, 0, 0), ...inMark(mark, 100, 100)] // the part of its panel that a mark's picture shows
+// Where the helper's own files go: lists of tasks into "VR Workspace" in the user's documents, clips into the
+// videos, beside the recordings. VR_ASSIST_FILES names one folder for both (the stand: never the user's own).
+const ownFiles = (name, usual) => process.env.VR_ASSIST_FILES ?? userFolder(os.homedir(), name, usual)
+const assistModel = () => /^claude-[a-z0-9-]+$/.test(params.assistModel) ? params.assistModel : undefined // the setting `assistModel`; else the usual one (assist.js)
+const toClaude = () => ({ model: assistModel(), server: `http://127.0.0.1:${pages.address().port}`, tools: path.join(ROOT, 'assist-tools.js') })
+// A fresh picture of a place, from the page that shows the sphere to its user: a promise of the PNG, null when none
+// came (no such page, the panel gone or out of view). One at a time: a later asking takes the earlier one's turn.
+function picture({ id, source, rect }, ms = 8000) {
+  return new Promise(done => {
+    const mine = want = { n: ++wants, id, source, rect, got: png => { clearTimeout(timer); if (want === mine) want = null; done(png) } }
+    const timer = setTimeout(() => mine.got(null), ms)
+  })
+}
+// The watcher. The working page tells every two seconds how the watched place looks (cells of brightness, `sig`).
+// When that has changed since the watcher last looked and has stood still for four seconds, the page is asked for
+// the picture and Claude whether what the user waits for has happened. Half an hour and twenty looks at most.
+function watchSeen(sig) {
+  const w = watch, now = Date.now(), before = w.judged
+  if (now - w.since > 1800000) return watchEnd('Сторож: прошло полчаса, больше не слежу')
+  if (!w.last) w.judged = sig // as Claude saw it with the request
+  else if (sigDiff(sig, w.last) >= 100) w.busyAt = now
+  w.last = sig
+  if (w.look || now - w.busyAt < 4000 || now - w.judgedAt < 8000 || sigDiff(sig, w.judged) < 50) return
+  Object.assign(w, { judged: sig, judgedAt: now })
+  w.look = (async () => {
+    w.png = await picture(w)
+    if (watch !== w) return
+    if (!w.png) return void (w.judged = before) // no picture came: looked at again with the next change told
+    const run = watched({ until: w.until, ...toClaude() })
+    w.stop = run.stop
+    const said = await run.done.catch(e => (console.log('the watcher could not look:', e.message), { yes: false }))
+    if (watch !== w) return
+    console.log(`the watcher looked, time ${++w.looks}: ${said.yes ? 'it has happened' : 'not yet'}`)
+    if (said.yes) watchEnd(`Сторож: ${said.text || w.until}`)
+    else if (w.looks >= 20) watchEnd('Сторож: посмотрел двадцать раз и не дождался, больше не слежу')
+  })().finally(() => { w.look = w.stop = null })
+}
+function watchEnd(text) { // text: told to the user, as a notification and, when the card is free, on it
+  watch?.stop?.()
+  watch = null
+  if (!text) return
+  const n = ++notes
+  note = { n, app: 'Claude', title: 'Сторож', body: text.replace(/^Сторож: /, ''), icon: '' }
+  setTimeout(() => { if (note?.n === n) note = null }, 10000)
+  if (!asking && !live.assistOn && !confirming) card('done', text, 20000)
+}
 // The helper's ears (listen.py): speech into text on this PC, once ./setup-speech.sh has made .speech/. Started with
 // the first use of the mode and kept, its model loaded. heard: who waits for the words of a recording that has ended.
 const EARS = path.join(ROOT, '.speech/venv/bin/python')
@@ -194,8 +246,7 @@ function request(said) { // to Claude: the words and what is marked
   if (nothing) return card('fail', fs.existsSync(EARS) ? 'Ничего не сказано и не помечено' : 'Ничего не помечено. Речь не подключена: ./setup-speech.sh', 4000)
   card('think', said || 'Смотрю помеченное')
   const before = exchanges.filter(e => Date.now() - e.at < 600000).slice(-3)
-  const model = /^claude-[a-z0-9-]+$/.test(params.assistModel) ? params.assistModel : undefined // the setting `assistModel`; else the usual one (assist.js)
-  const mine = asking = ask({ said, marks: marks.length, before, model, server: `http://127.0.0.1:${pages.address().port}`, tools: path.join(ROOT, 'assist-tools.js') }, doing => asking === mine && card('do', doing))
+  const mine = asking = ask({ said, marks: marks.length, before, ...toClaude() }, doing => asking === mine && card('do', doing))
   mine.done.then(answer => {
     exchanges.push({ at: Date.now(), said: said || '(пометил место)', answer })
     if (exchanges.length > 6) exchanges.shift()
@@ -222,6 +273,7 @@ function assistKey() {
   if (Date.now() - editSeen < 2500) return card('fail', 'Сначала выйдите из расстановки окон (Num Lock)', 3500)
   live.assistOn = marking = true
   marks = []
+  shown = []
   looks = gaze.at && pageHere() ? [{ ...gaze, at: Date.now() }] : []
   card('listen', earsTold('start') ? 'Говорите и помечайте мышью. Caps Lock: отправить, Esc: отмена'
     : 'Пометьте место мышью: щелчок, рамка, правой кнопкой стрелка. Caps Lock: отправить. Речь не подключена: ./setup-speech.sh')
@@ -286,6 +338,7 @@ function syncWindows() {
     if (!openWindows.some(w => w.id === id)) { wantedWindows.delete(id); adopted.delete(id) }
   }
   for (const id of placed) if (!wantedWindows.has(id)) placed.delete(id) // shown again later, it comes where the user looks
+  if (watch && !panelsNow().some(p => p.id === watch.id && (p.source ?? 0) === watch.source)) watchEnd('Сторож: окно ушло из сферы, больше не слежу')
   if (SETTINGS_ONLY || (!wantedWindows.size && !windowsModule)) return
   // need: how much of its picture a window uses, from the top left: itself and its open menus (which may reach out of it)
   tellWindows({ raw: cableOn(), streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1],
@@ -574,6 +627,11 @@ async function handle(req, res) {
       }
     }
     delete patch.looked
+    if (Array.isArray(patch.sig)) { // from the working page: how the watched place looks now
+      const sig = Buffer.from(String(patch.sig[1] ?? ''), 'base64')
+      if (watch && patch.sig[0] === watch.n && sig.length === 576) watchSeen(sig)
+    }
+    delete patch.sig
     const e = patch.enter
     if (e && Date.now() > enterQuiet && /^[mw]\d+$/.test(e.id) && Number.isInteger(e.source) && typeof e.connector === 'string' && [e.u, e.v].every(Number.isFinite)
       && Array.isArray(e.corners) && e.corners.length === 4 && e.corners.every(c => Array.isArray(c) && c.length === 2 && c.every(Number.isFinite)))
@@ -616,15 +674,22 @@ async function handle(req, res) {
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
         : { ...answer, cursor: cursor.n ? [cursor.n, ...cursor.hot, cursor.png.length ? 1 : 0] : null, // the pointer: its picture's number, hot spot, whether shown
           note: note && [note.n, note.app, note.title, note.body, note.icon ? 1 : 0],
-          assist, marks: marks.map(({ n, kind, id, rect }) => ({ n, kind, id, rect })) }))
+          assist, marks: marks.map(({ n, kind, id, rect }) => ({ n, kind, id, rect })), shown,
+          want: want && { n: want.n, id: want.id, source: want.source, rect: want.rect }, watch: watch && { n: watch.n, id: watch.id, source: watch.source, rect: watch.rect } }))
   }
   // --- the helper. From the pages: a mark with its picture (PNG), and the mode given up (nothing is sent).
-  if (url === '/assist/mark' && req.method === 'POST') {
+  if ((url === '/assist/mark' || url === '/assist/picture') && req.method === 'POST') {
     const parts = []
     let size = 0
     for await (const chunk of req) {
       if ((size += chunk.length) > 8e6) throw new Error('body too large')
       parts.push(chunk)
+    }
+    if (url === '/assist/picture') { // the fresh picture of a place that was asked for (`want`)
+      const png = Buffer.concat(parts)
+      if (want?.n !== +searchParams.get('n') || png.length < 24 || png.readUInt32BE(0) !== 0x89504e47) throw new SyntaxError('a picture that was asked for expected')
+      want.got(png)
+      return res.writeHead(204).end()
     }
     const png = Buffer.concat(parts), kind = searchParams.get('kind'), id = searchParams.get('id'), rect = (searchParams.get('rect') ?? '').split(',').map(Number)
     const panel = [...CAPTURE.monitors, ...windowPanels()].find(m => m.id === id)
@@ -642,6 +707,7 @@ async function handle(req, res) {
     asking = null
     assistEnd()
     assist = null
+    shown = []
     return res.writeHead(204).end()
   }
   // From this PC only: the key as the extension presses it and words as if spoken (both for trying it out), and what
@@ -721,6 +787,82 @@ async function handle(req, res) {
     await pause(700) // the page puts a new window where the user looks: after that its place is in the settings
     return sent({ opened: panelsTold(settingsNow(), panelsNow()).find(p => p.panel === panel.id) })
   }
+  // What the helper shows by itself: a frame or an arrow at a place of a marked picture
+  if (url === '/assist/show' && req.method === 'POST' && local) {
+    try { shown = [...shown, shownOf(marks, JSON.parse(await readBody(req)) ?? {})].slice(-3) } catch (e) { return res.writeHead(400).end(e.message) }
+    clearTimeout(shownTimer)
+    shownTimer = setTimeout(() => { shown = [] }, 30000)
+    return sent({ shown: true, note: 'drawn on the panel for half a minute' })
+  }
+  // The user's code: the lines that hold a text, and a file opened at a line in the editor
+  if (url.startsWith('/assist/code/') && req.method === 'POST' && local) {
+    const { text, file, line = 1 } = JSON.parse(await readBody(req)) ?? {}, folders = codeFolders(os.homedir(), params.assistCode)
+    if (!folders.length) return res.writeHead(400).end('No folder with the user\'s code is known: VS Code has no folder open, and the setting assistCode names none')
+    if (url === '/assist/code/find') {
+      if (typeof text !== 'string' || text.trim().length < 2 || text.length > 200) return res.writeHead(400).end('`text` takes a short exact piece of what is looked for')
+      const matches = await codeFind(folders, text.trim())
+      return sent({ folders, matches, ...(matches.length === 30 && { note: 'there are more: give a longer piece' }) })
+    }
+    let real = ''
+    try { real = fs.realpathSync(String(file)) } catch {}
+    if (!real || !fs.statSync(real).isFile() || !folders.some(folder => real.startsWith(fs.realpathSync(folder) + path.sep))) return res.writeHead(400).end(`That is not a file of the user's code. Its folders: ${folders.join(', ')}`)
+    if (!Number.isInteger(line) || line < 1) return res.writeHead(400).end('`line` takes a line number')
+    const editor = editorProgram()
+    if (!editor) return res.writeHead(400).end('No editor that opens a file at a line was found: VS Code\'s `code` is not installed (VR_EDITOR in the server\'s environment names another)')
+    spawn(editor, ['--goto', `${real}:${line}`], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref()
+    // The editor's window, named after the file once it shows it, comes into the sphere
+    let window
+    for (const until = Date.now() + 6000; Date.now() < until && !window; window || await pause(200)) {
+      const named = openWindows.filter(w => !w.parent && w.title.includes(path.basename(real)))
+      window = named.find(w => w.id === focusedWindow) ?? named[0]
+    }
+    if (window && !wantedWindows.has(window.id) && freeSlot()) wantedWindows.set(window.id, freeSlot())
+    syncWindows()
+    return sent({ opened: real, line, ...(window ? { panel: wantedWindows.get(window.id) } : { note: 'the editor was asked; its window was not seen yet' }) })
+  }
+  // Tasks into a list kept as a file in the user's documents, the pictures of the marked places beside it
+  if (url === '/assist/tasks' && req.method === 'POST' && local) {
+    const { list, tasks } = JSON.parse(await readBody(req)) ?? {}, name = String(list ?? '').replace(/[^\p{L}\p{N} _-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+    if (!name) return res.writeHead(400).end('`list` takes the list\'s name')
+    if (!Array.isArray(tasks) || !tasks.length || tasks.length > 20 || !tasks.every(t => typeof t?.text === 'string' && t.text.trim() && t.text.length <= 300)) return res.writeHead(400).end('`tasks` takes 1 to 20 tasks, each with `text`')
+    const folder = path.join(ownFiles('DOCUMENTS', 'Documents'), 'VR Workspace'), file = path.join(folder, `${name}.md`), when = new Date().toLocaleString('sv')
+    fs.mkdirSync(folder, { recursive: true })
+    const rows = tasks.map((task, k) => {
+      const mark = marks.find(m => m.n === task.mark), picture = mark && `${name} ${when.replace(/[ :]/g, '-')} ${k + 1}.png`
+      if (mark) fs.writeFileSync(path.join(folder, picture), mark.png)
+      return { text: task.text, window: mark && panelsNow().find(p => p.id === mark.id)?.name, picture }
+    })
+    fs.appendFileSync(file, tasksText(name, when.slice(0, 16), rows, fs.existsSync(file)))
+    return sent({ file, added: rows.length })
+  }
+  // The watcher and the clip of before and after: both start from a mark of the user's
+  if ((url === '/assist/watch' || url === '/assist/clip') && req.method === 'POST' && local) {
+    const { mark, until, stop, step } = JSON.parse(await readBody(req)) ?? {}, m = marks.find(m => m.n === mark), panel = m && panelsNow().find(p => p.id === m.id)
+    const place = () => ({ id: m.id, source: panel.source ?? 0, rect: region(m) })
+    const noMark = () => res.writeHead(400).end(marks.length ? `\`mark\` takes the number of a mark: ${marks.map(m => m.n).join(', ')}` : 'Nothing is marked: ask the user to mark the place with the mouse')
+    if (url === '/assist/watch') {
+      if (stop === true) return (watchEnd(), sent({ watching: false }))
+      if (!panel) return noMark()
+      if (typeof until !== 'string' || until.trim().length < 3 || until.length > 200) return res.writeHead(400).end('`until` takes what to wait for, in a few words')
+      watchEnd()
+      watch = { n: ++watches, ...place(), until: until.trim(), since: Date.now(), busyAt: Date.now(), judgedAt: Date.now(), looks: 0 }
+      return sent({ watching: true, note: 'the user is told in the headset when it happens; the watch ends by itself after half an hour' })
+    }
+    if (step === 'before') {
+      if (!panel) return noMark()
+      kept = { ...place(), png: m.png }
+      return sent({ kept: true, note: 'ask for "after" when the place has changed' })
+    }
+    if (step !== 'after') return res.writeHead(400).end('`step` takes "before" or "after"')
+    if (!kept) return res.writeHead(400).end('Nothing is kept as "before": the user marks the place and asks to remember how it was')
+    const png = await picture(kept)
+    if (!png) return res.writeHead(400).end('No fresh picture of that place came: its window must be in the sphere and in view')
+    const folder = ownFiles('VIDEOS', 'Videos'), file = path.join(folder, `Было и стало ${new Date().toLocaleString('sv').replace(/[ :]/g, '-')}.mp4`)
+    fs.mkdirSync(folder, { recursive: true })
+    try { await clipOf(kept.png, png, file) } catch (e) { return res.writeHead(400).end(e.message) }
+    return sent({ file, note: 'five seconds: as it was, then as it is; sphere_open shows it' })
+  }
+  if (url === '/assist/watch/picture' && local) return sent(watch?.png ? [{ n: 1, about: 'the place that is watched, as it looks now.', png: watch.png.toString('base64') }] : [])
   // Closing a window, taking it out of the sphere, typing into it. Closing and typing are asked in the headset first:
   // the window may be the wrong one (taken by the gaze), and typed text may be a command.
   if ((url === '/assist/close' || url === '/assist/type') && req.method === 'POST' && local) {

@@ -484,7 +484,28 @@ It keeps the last few exchanges in mind for ten minutes ("a bit more").
 Before closing a window and before typing, the card asks, with the window and the whole text: **Caps Lock is the
 yes**, waiting is the no. The window may be the wrong one, and typed text may be a command.
 
-It cannot press buttons in a window, read a file, or see what was not marked.
+**With what you marked** it can do more than look:
+
+- «Где здесь кнопка…?», «как включить…?»: it finds the place in the marked picture and shows it on the window, a
+  frame around the button or an arrow to it, in its own colour for half a minute, and says what to press. Mark the
+  window with a click first: without a mark it has no picture.
+- «Покажи, где это в коде»: it takes the label or the error's text from the marked picture, finds the line in your
+  code and opens the file at it in VS Code (`code --goto`; `VR_EDITOR` in the server's environment names another
+  editor that takes `--goto file:line`), whose window comes into the sphere. Your code is the folders VS Code has
+  open, and those of the setting `assistCode` (paths with ":" between). The search never looks into hidden files
+  and folders, and in a folder of git only into what git knows or would add. The lines found go to Claude.
+- A walk: mark several places, say something about each, and it writes a list of tasks, one for each place with
+  its picture beside it, into `Documents/VR Workspace/<the list's name>.md` (checkboxes; a list that is there is
+  added to).
+- «Скажи, когда сборка закончится»: it watches the marked place and tells you with a notification and on the card
+  when that has happened, and how it ended. The place is looked at again each time it has changed and stood still
+  for four seconds (a blinking cursor is no change), half an hour and twenty looks at most; each look sends its
+  picture of then to Claude. One watch at a time; «перестань следить» ends it.
+- «Запомни, как было», and later «сделай ролик было и стало»: a clip of five seconds from the two pictures of the
+  same place, each with its word, into your videos. The second picture it takes by itself: the window must be in
+  the sphere and in view.
+
+It cannot press buttons in a window, read a whole file, or see what was not marked.
 
 **From the chat in VS Code.** The same tools are offered to Claude Code in this project (`.mcp.json`; VS Code asks
 once whether to allow the server `sphere`). Ask the chat to read or change the sphere's settings, to open or move
@@ -570,8 +591,9 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 Anyone on the network who has the link with the key can watch your desktop and change the settings, and click and
 type in the windows shown in the headset (a keyboard connected to the phone): a terminal shown there runs what is
-typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it and the
-titles of the windows in the sphere, and that goes to Anthropic, as everything you show Claude does. Such text
+typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it (a watched
+place again each time it changes), the titles of the windows in the sphere and the lines of your code that hold a
+text it looked for, and that goes to Anthropic, as everything you show Claude does. Such text
 comes from outside (a web page names its own window) and may try to give the helper orders: it is told to take it
 for data, and what it can do at all is little: the sphere's settings, moving windows, opening a web address or a
 file of your own folders with its usual program. It cannot read a file. Closing a window and typing into one (which
@@ -615,7 +637,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
 - `app/track.js` — where the head is, from the phone camera's pictures (leaning toward a window).
-- `assist.js` — the helper: runs Claude for a request, tells what it may change, open and place; `assist-tools.js` — its tools
+- `assist.js` — the helper: runs Claude for a request, tells what it may change, open, place, show, find in the code and watch; `assist-tools.js` — its tools
   as Claude takes them (also for the chat in VS Code, `.mcp.json`); `listen.py` — its ears, speech into text
   (`setup-speech.sh` installs what it needs into `.speech/`); the server keeps its card and the marks.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,

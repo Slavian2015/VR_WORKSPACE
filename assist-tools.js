@@ -6,6 +6,7 @@
 import readline from 'node:readline'
 
 const SERVER = process.env.VR_SERVER ?? 'http://127.0.0.1:8080'
+const MARKS = process.env.VR_MARKS ?? '/assist/marks' // where the marked pictures are asked for (the watcher's: the place it watches)
 const TOOLS = [
   { name: 'sphere_settings', description: 'The settings of the VR sphere the user sits in, as they are now: each with what it is, its value and, for numbers, its range and step; also the backgrounds to choose from and whether a video is being recorded. Read this before a relative change ("darker", "a bit stronger").',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -26,6 +27,18 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { panel: { type: 'string' }, how: { type: 'string', enum: ['close', 'out'] } }, required: ['panel', 'how'], additionalProperties: false } },
   { name: 'sphere_type', description: 'Type text into a window of the sphere, where its cursor is (it is pasted, so any language and signs work). `panel`: its id from sphere_windows. `text`: plain text, 160 characters at most (longer: several calls). `enter`: true presses Enter after it, to send a message or run a command. The user is shown the text in the headset and must confirm it first.',
     inputSchema: { type: 'object', properties: { panel: { type: 'string' }, text: { type: 'string' }, enter: { type: 'boolean' } }, required: ['panel', 'text'], additionalProperties: false } },
+  { name: 'sphere_show', description: 'Show the user a place in the sphere: a frame around something or an arrow pointing at it, drawn on the panel for half a minute. The place is given inside the picture of one of the user\'s marks (sphere_marks): `mark` its number, `from` and `to` as [x, y] in percent of that picture, across and down from its top left. "frame": its two corners, around the button or text meant. "arrow": its tail and its tip, the tip on the thing. Use it to answer "where is…", "how do I switch on…": show the button, and say in words what to press.',
+    inputSchema: { type: 'object', properties: { mark: { type: 'integer' }, kind: { type: 'string', enum: ['frame', 'arrow'] }, from: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, to: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 } }, required: ['mark', 'kind', 'from', 'to'], additionalProperties: false } },
+  { name: 'sphere_code_find', description: 'Find where a text stands in the user\'s code: the lines that hold `text` exactly as given (capitals aside), each with its file and line number, 30 at most. Looks in the folders VS Code has open (and those of the setting assistCode); `folders` in the answer names them. Give a short exact piece: a label of a button, a part of an error message, a name of a function.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } },
+  { name: 'sphere_code_open', description: 'Open a file of the user\'s code at a line in the editor (VS Code), and bring that window into the sphere. `file`: its path as sphere_code_find gave it. `line`: the line number.',
+    inputSchema: { type: 'object', properties: { file: { type: 'string' }, line: { type: 'integer' } }, required: ['file'], additionalProperties: false } },
+  { name: 'sphere_tasks', description: 'Write tasks into a list kept as a file in the user\'s documents (checkboxes; a list that is there is added to). `list`: its name. `tasks`: each with `text` (what to do, one sentence) and, when it is about a marked place, `mark`: the number of that mark, whose picture is put beside the task. Answers with the file, which sphere_open can show.',
+    inputSchema: { type: 'object', properties: { list: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, mark: { type: 'integer' } }, required: ['text'], additionalProperties: false } } }, required: ['list', 'tasks'], additionalProperties: false } },
+  { name: 'sphere_watch', description: 'Watch a marked place and tell the user in the headset when something happens there ("tell me when the build has finished"). `mark`: the number of the user\'s mark to watch. `until`: what to wait for, in the user\'s language, as said. The place is looked at again whenever it has changed and come to rest; half an hour at most, one watch at a time. If it has happened already by the mark\'s picture, say so instead. `stop`: true ends the watch.',
+    inputSchema: { type: 'object', properties: { mark: { type: 'integer' }, until: { type: 'string' }, stop: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'sphere_clip', description: 'A short video "before and after" of one place. `step` "before" keeps the picture of the user\'s mark `mark` as it is now. `step` "after", asked later when the place has changed, takes a fresh picture of the same place by itself and makes a five second clip of the two; it answers with the file.',
+    inputSchema: { type: 'object', properties: { step: { type: 'string', enum: ['before', 'after'] }, mark: { type: 'integer', description: 'for "before"' } }, required: ['step'], additionalProperties: false } },
   { name: 'sphere_layout', description: 'Arrangements of the sphere kept under names. "save" remembers under `name` where every panel stands now and which program each window is. "restore" brings that back: windows of those programs that are open come into the sphere at their places, programs that are not running are started (documents inside them are not opened again). "list" names what is kept. "forget" removes one.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['save', 'restore', 'list', 'forget'] }, name: { type: 'string', description: 'for all but "list"' } }, required: ['action'], additionalProperties: false } },
 ]
@@ -42,11 +55,12 @@ async function call(name, input) {
   if (name === 'sphere_set') return text(await server('/assist/settings', { changes: input?.changes }))
   if (name === 'sphere_do') return text(await server('/assist/do', { action: input?.action, on: input?.on }))
   if (name === 'sphere_marks') {
-    const marks = await server('/assist/marks')
+    const marks = await server(MARKS)
     if (!marks.length) return text('Nothing is marked.')
     return marks.flatMap(m => [...text(`Mark ${m.n}: ${m.about}`), { type: 'image', data: m.png, mimeType: 'image/png' }])
   }
-  const asked = { sphere_windows: '/assist/windows', sphere_open: '/assist/open', sphere_place: '/assist/place', sphere_close: '/assist/close', sphere_type: '/assist/type', sphere_layout: '/assist/layout' }[name]
+  const asked = { sphere_windows: '/assist/windows', sphere_open: '/assist/open', sphere_place: '/assist/place', sphere_close: '/assist/close', sphere_type: '/assist/type', sphere_layout: '/assist/layout',
+    sphere_show: '/assist/show', sphere_code_find: '/assist/code/find', sphere_code_open: '/assist/code/open', sphere_tasks: '/assist/tasks', sphere_watch: '/assist/watch', sphere_clip: '/assist/clip' }[name]
   if (asked) return text(await server(asked, name === 'sphere_windows' ? undefined : input ?? {}))
   throw new Error(`no tool "${name}"`)
 }
