@@ -9,9 +9,10 @@ import crypto from 'node:crypto'
 import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
+import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, VOICES, complete, voiceOf } from './app/params.js'
+import { LANGS, tr } from './app/words.js'
 import { cleanOrder, HOME, blocked, foreign, passKey, wrongKey } from './orders.js'
-import { ask, clipOf, codeFind, codeFolders, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, shownOf, sigDiff, tasksText,
+import { ask, clipOf, codeFind, codeFolders, echoOf, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, saidStop, saidYes, settingsPatch, settingsTold, shownOf, sigDiff, tasksText,
   userFolder, userFolders, watched } from './assist.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
@@ -55,7 +56,7 @@ let pose = 'null', spectatorSeen = 0
 let picturePose = { text: 'null', at: 0 } // the same from the picture of a headset on a cable, while there is one and somebody watches
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
-const live = { fullscreen: false, recording: false, passthrough: false, grab: false, grab2: false, assistOn: false, scanning: false, roomReady: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 } // recording: record.mjs runs, as the extension tells
+const live = { fullscreen: false, recording: false, passthrough: false, grab: false, grab2: false, assistOn: false, talkOn: false, scanning: false, roomReady: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 } // recording: record.mjs runs, as the extension tells
 // Arranging monitors with the mouse: whoever holds the mouse (the GNOME extension on Num Lock, or the control page)
 // says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
 // added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
@@ -96,11 +97,15 @@ const push = (event, data) => {
   }
 }
 let connectors = {}, connectorsAt = 0 // capture.py's .connectors.json (which GNOME connector each monitor is), read at most every 2 s
+let voicesHere = [] // the helper's voices that are on this PC (piper's names), looked up as often
 let enter = { at: 0 }, enterQuiet = 0 // where the glasses page asks the PC's mouse into a monitor or window; no asks taken before enterQuiet
 // Keys of the phone's keyboard held down in windows ("w0 30" -> the order). Should the phone go silent meanwhile (its
 // Wi-Fi gone, its battery flat), they are let go: else they would stay pressed on the PC, Ctrl for ever.
 const keysHeld = new Map()
 setInterval(() => {
+  // The helper listens only while somebody is in the sphere: a phone that locked, ran flat or left the Wi-Fi ends its
+  // live talk and its mode with marks (their keys are the extension's only while the headset is in use).
+  if ((live.talkOn || live.assistOn) && !glassesOn() && Date.now() - phoneSeen > 5000) live.talkOn ? talkEnd() : (assistEnd(), assist = null)
   if (!keysHeld.size || Date.now() - phoneSeen < 3000) return
   for (const order of keysHeld.values()) tellWindows({ ...order, down: false })
   keysHeld.clear()
@@ -147,7 +152,7 @@ const region = mark => [...inMark(mark, 0, 0), ...inMark(mark, 100, 100)] // the
 // videos, beside the recordings. VR_ASSIST_FILES names one folder for both (the stand: never the user's own).
 const ownFiles = (name, usual) => process.env.VR_ASSIST_FILES ?? userFolder(os.homedir(), name, usual)
 const assistModel = () => /^claude-[a-z0-9-]+$/.test(params.assistModel) ? params.assistModel : undefined // the setting `assistModel`; else the usual one (assist.js)
-const toClaude = () => ({ model: assistModel(), server: `http://127.0.0.1:${pages.address().port}`, tools: path.join(ROOT, 'assist-tools.js') })
+const toClaude = () => ({ model: assistModel(), language: voiceNow().lang, server: `http://127.0.0.1:${pages.address().port}`, tools: path.join(ROOT, 'assist-tools.js') })
 // A fresh picture of a place, from the page that shows the sphere to its user: a promise of the PNG, null when none
 // came (no such page, the panel gone or out of view). One at a time: a later asking takes the earlier one's turn.
 function picture({ id, source, rect }, ms = 8000) {
@@ -161,7 +166,7 @@ function picture({ id, source, rect }, ms = 8000) {
 // the picture and Claude whether what the user waits for has happened. Half an hour and twenty looks at most.
 function watchSeen(sig) {
   const w = watch, now = Date.now(), before = w.judged
-  if (now - w.since > 1800000) return watchEnd('Сторож: прошло полчаса, больше не слежу')
+  if (now - w.since > 1800000) return watchEnd(t('half an hour has passed, I no longer watch'))
   if (!w.last) w.judged = sig // as Claude saw it with the request
   else if (sigDiff(sig, w.last) >= 100) w.busyAt = now
   w.last = sig
@@ -176,33 +181,32 @@ function watchSeen(sig) {
     const said = await run.done.catch(e => (console.log('the watcher could not look:', e.message), { yes: false }))
     if (watch !== w) return
     console.log(`the watcher looked, time ${++w.looks}: ${said.yes ? 'it has happened' : 'not yet'}`)
-    if (said.yes) watchEnd(`Сторож: ${said.text || w.until}`)
-    else if (w.looks >= 20) watchEnd('Сторож: посмотрел двадцать раз и не дождался, больше не слежу')
+    if (said.yes) watchEnd(said.text || w.until)
+    else if (w.looks >= 20) watchEnd(t('I looked twenty times and it did not happen, I no longer watch'))
   })().finally(() => { w.look = w.stop = null })
 }
 function watchEnd(text) { // text: told to the user, as a notification and, when the card is free, on it
   watch?.stop?.()
   watch = null
   if (!text) return
-  const n = ++notes
-  note = { n, app: 'Claude', title: 'Сторож', body: text.replace(/^Сторож: /, ''), icon: '' }
-  setTimeout(() => { if (note?.n === n) note = null }, 10000)
-  if (!asking && !live.assistOn && !confirming) card('done', text, 20000)
+  banner(t('Watcher'), text)
+  if (!asking && !live.assistOn && !confirming) card('done', `${t('Watcher')}: ${text}`, 20000)
 }
 // The helper's ears (listen.py): speech into text on this PC, once ./setup-speech.sh has made .speech/. Started with
 // the first use of the mode and kept, its model loaded. heard: who waits for the words of a recording that has ended.
 const EARS = path.join(ROOT, '.speech/venv/bin/python')
-let ears = null, heard = null
+let ears = null, heard = null, heardTimer, lateWords = 0 // lateWords: recordings given up or waited for in vain, whose words may still come
 process.on('exit', () => ears?.kill())
 function earsTold(word) { // start, stop or cancel; false: there are no ears
   if (!fs.existsSync(EARS)) return false
   if (!ears) {
     const mine = ears = spawn(EARS, [path.join(ROOT, 'listen.py')], { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] })
-    const gone = () => { if (ears === mine) { ears = null; heard?.('') } }
+    const gone = () => { if (ears === mine) { ears = null; heard?.(''); if (live.talkOn) talkEnd(t('The microphone is not heard')) } }
     mine.on('exit', gone)
     mine.on('error', gone)
     mine.stdin.on('error', () => {})
     mine.stdout.setEncoding('utf8') // whole letters: a Cyrillic one may be cut in two between two pieces
+    mine.stdin.write(`language ${voiceNow().lang}\n`)
     let rest = ''
     mine.stdout.on('data', text => {
       const lines = (rest + text).split('\n')
@@ -211,8 +215,12 @@ function earsTold(word) { // start, stop or cancel; false: there are no ears
         let told
         try { told = JSON.parse(line) } catch { continue }
         if (told.partial && live.assistOn) card('listen', `«${told.partial}»`)
-        if (typeof told.text === 'string') heard?.(told.text.slice(0, 1000))
+        if (told.partial && live.talkOn && !confirming) card('talk', `«${told.partial}»`)
+        if (told.speech && live.talkOn) talkBegun()
+        if (typeof told.text === 'string' && told.live) live.talkOn && talkSaid(told.text.slice(0, 1000))
+        else if (typeof told.text === 'string') lateWords ? lateWords-- : heard?.(told.text.slice(0, 1000))
         if (told.error) console.log('the helper cannot hear:', told.error)
+        if (told.error && live.talkOn) talkEnd(t('The microphone is not heard'))
       }
     })
   }
@@ -222,7 +230,144 @@ function earsTold(word) { // start, stop or cancel; false: there are no ears
 function card(state, text = '', ms = 0) {
   assist = { n: ++assistN, state, text: String(text).slice(0, 400) }
   clearTimeout(cardTimer)
-  if (ms) cardTimer = setTimeout(() => { assist = null }, ms)
+  if (ms) cardTimer = setTimeout(() => { assist = live.talkOn ? { n: ++assistN, state: 'talk', text: '' } : null }, ms) // a live talk: its small sign stays, the microphone is on
+}
+// --- a live talk with the helper, no key held. Insert (Fn+0 on the user's keyboard; told by the extension, or by
+// the page for a keyboard connected to the phone) switches it on and off. While it is on (live.talkOn) the ears
+// find every phrase by themselves (listen.py, `live`), and each goes to Claude as it ends. The answer shows on the
+// card and is spoken (speak.py) into the PC's sound, which goes to the headset. Who speaks while the helper speaks
+// stops its voice at once: a phrase's beginning is told before its words. A phrase said while Claude still works
+// takes that request's place. After `talkSleep` seconds with nothing said and nothing going on it switches off.
+const MOUTH = path.join(ROOT, 'speak.py'), VOICE_FILES = path.join(ROOT, '.speech/voices')
+// The helper's language (that of the sphere: `lang`), voice, speed and timbre as the settings have them (assistVoice,
+// assistSpeed, assistPitch; the settings pages offer the voices of app/params.js), and whether that voice is on
+// this PC. A voice chosen that is not is downloaded (voiceWanted).
+const voiceNow = () => {
+  const percent = key => Math.min(LAYOUT_SPEC[key][2], Math.max(LAYOUT_SPEC[key][1], Number(params[key]) || LAYOUT_SPEC[key][0])) / 100
+  return { ...voiceOf(params), speed: percent('assistSpeed'), pitch: percent('assistPitch') }
+}
+// On this PC: with its description, which a download fetches last (a broken one leaves half a file without it)
+const voiceFile = name => path.join(VOICE_FILES, `${name}.onnx`), voiceWhole = name => name !== fetching && fs.existsSync(voiceFile(name)) && fs.existsSync(voiceFile(name) + '.json')
+const voiceThere = (voice = voiceNow().voice) => voiceWhole(voice.split('#')[0])
+// What the server itself puts on the helper's card, asks and says: written in English and shown, and spoken, in the
+// language of the sphere (the setting `lang`: app/words.js), which is the helper's language too.
+const t = (text, ...values) => tr(voiceNow().lang, text, ...values)
+function banner(title, body) { // told as a notification is: on every page, for ten seconds
+  const n = ++notes
+  note = { n, app: 'Claude', title, body, icon: '' }
+  setTimeout(() => { if (note?.n === n) note = null }, 10000)
+}
+// After a change of the voice's settings: a sample of it is heard. A voice that is not on this PC yet is downloaded
+// first (piper's own downloader, 60 to 80 MB, one at a time), and the one wanted by then is sampled.
+let fetching = null, voiceTimer
+function voiceWanted() {
+  const { voice, lang } = voiceNow(), file = voice.split('#')[0]
+  if (voiceThere(voice)) return void (hush(), speak(t('This is how my voice sounds.')))
+  if (!fs.existsSync(EARS)) return banner(t('Voice'), t('Speech is not installed: ./setup-speech.sh'))
+  if (fetching) return
+  fs.rmSync(voiceFile(file), { force: true }) // half of an earlier try: the downloader would take it for the whole
+  fetching = file
+  banner(t('Voice'), t('Downloading the voice {0}…', VOICES[lang].find(([name]) => name === voice)[1]))
+  execFile(EARS, ['-m', 'piper.download_voices', file, '--data-dir', VOICE_FILES], { timeout: 600000 }, error => {
+    fetching = null
+    if (error || !voiceThere(voice)) for (const part of [voiceFile(file), voiceFile(file) + '.json']) fs.rmSync(part, { force: true })
+    if (error || !voiceThere(voice)) return banner(t('Voice'), t('The voice could not be downloaded: no network, or run ./setup-speech.sh again'))
+    voiceWanted()
+  })
+}
+let mouth = null, speaking = false, talkTimer, talkHeard = false, talkCut = false // talkHeard: a phrase is being said; talkCut: it broke into the helper's voice
+let talkAt = 0, askedAt = 0 // when the phrase being said began; when the question that is open was asked
+let spoken = { text: '', at: 0 } // what the helper last said aloud and when it fell silent: its own voice, heard back by the microphone, is no request
+process.on('exit', () => mouth?.kill())
+function speak(text) { // false: there is no voice
+  const { voice, speed, pitch } = voiceNow()
+  if (!voiceThere(voice)) return false
+  if (!mouth) {
+    const mine = mouth = spawn(EARS, [MOUTH], { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] })
+    const gone = () => { if (mouth === mine) { mouth = null; speaking = false } }
+    mine.on('exit', gone)
+    mine.on('error', gone)
+    mine.stdin.on('error', () => {})
+    mine.stdout.setEncoding('utf8')
+    let rest = ''
+    mine.stdout.on('data', text => {
+      const lines = (rest + text).split('\n')
+      rest = lines.pop()
+      for (const line of lines.filter(Boolean)) {
+        let told
+        try { told = JSON.parse(line) } catch { continue }
+        if (told.error) console.log('the helper cannot speak:', told.error)
+        if (typeof told.speaking !== 'boolean') continue
+        speaking = told.speaking
+        // The ears are told: while the voice sounds (and a moment after, as it dies away) only louder speech begins a phrase
+        if (speaking) ears?.stdin.write('speaking\n')
+        else setTimeout(() => speaking || ears?.stdin.write('silent\n'), 400)
+        if (!speaking) spoken.at = Date.now()
+        talkRest()
+      }
+    })
+  }
+  spoken = { text: speaking ? `${spoken.text} ${text}` : text, at: Date.now() }
+  mouth.stdin.write(JSON.stringify({ say: text, voice, speed, pitch }) + '\n')
+  return true
+}
+const hush = () => mouth?.stdin.write('{"stop": true}\n')
+function talkRest() { // the time to falling asleep counts anew
+  clearTimeout(talkTimer)
+  if (!live.talkOn) return
+  const seconds = Math.min(LAYOUT_SPEC.talkSleep[2], Math.max(LAYOUT_SPEC.talkSleep[1], Number(params.talkSleep) || LAYOUT_SPEC.talkSleep[0]))
+  talkTimer = setTimeout(() => asking || speaking || confirming || talkHeard ? talkRest() : talkEnd(t('The live talk fell asleep: silence')), seconds * 1000)
+}
+function talkKey() {
+  if (live.talkOn) return talkEnd(t('The live talk is off'))
+  if (Date.now() - editSeen < 2500) return card('fail', t('Leave the arranging of windows first (Num Lock)'), 3500)
+  if (live.assistOn) assistEnd() // the mode with the marks gives way
+  if (!earsTold('live')) return card('fail', t('Speech is not set up: ./setup-speech.sh'), 4000)
+  live.talkOn = true
+  talkHeard = false
+  card('talk', voiceThere() ? t('Speak. Insert: switch off') : t('Speak. Insert: switch off. There is no voice for the answers: ./setup-speech.sh'), 4000)
+  talkRest()
+}
+function talkEnd(text) {
+  confirming?.(false) // a question that was open is a no: its card goes with the talk
+  live.talkOn = talkHeard = false
+  clearTimeout(talkTimer)
+  earsTold('cancel')
+  hush()
+  if (text) card('fail', text, 2500)
+  else if (assist?.state === 'talk') assist = null
+}
+function talkBegun() { // somebody speaks: the helper falls silent and listens
+  talkAt = Date.now()
+  talkCut = speaking
+  hush()
+  talkHeard = true
+  looks = gaze.at && pageHere() ? [{ ...gaze, at: Date.now() }] : []
+  talkRest()
+  if (!confirming && !asking) card('talk', '…')
+}
+function talkSaid(said) { // the phrase has ended: its words ('' when there were none: a cough, a door)
+  talkHeard = false
+  talkRest()
+  if (!said) return void (assist?.state === 'talk' && card('talk', ''))
+  // The helper's own voice come back through the microphone (no headphones): not a request (it would answer itself
+  // on and on), and not a "no" to the question it is asking.
+  const echo = (speaking || Date.now() - spoken.at < 3000) && echoOf(said, spoken.text)
+  if (confirming) {
+    // To a question: a yes counts whenever it is said ("да, закрыть окно" repeats the question's words and is still
+    // a yes). Anything else is a no only if it was said after the question was asked and not into its voice: a
+    // phrase begun before it, and the question itself heard back, are no answers.
+    if (saidYes(said, voiceNow().lang) && talkAt >= askedAt) return confirming(true)
+    return echo || talkCut || talkAt < askedAt ? undefined : confirming(false)
+  }
+  if (echo) return void (assist?.state === 'talk' && card('talk', ''))
+  // One word that broke into the helper's voice only stops it, whatever the word: "стоп" came out of the recognizer
+  // as "Топ." (the stand, 2026-11-23), and a word that short is no request.
+  if (talkCut && !asking && said.trim().split(/\s+/).length === 1) return card('fail', t('Stopped'), 2000)
+  if (asking) asking.stop() // said anew while Claude still worked: the new words count
+  asking = null
+  spoke = lookedMost(looks, Date.now())
+  request(said.trim())
 }
 // Settings changed: kept in the file. Written aside and renamed: a rename is atomic, so a crash never leaves half a
 // file (all settings would be lost), and capture.py never reads one.
@@ -235,23 +380,27 @@ function assistEnd() { // the mode off, nothing sent
   live.assistOn = live.grab2 = marking = false
   marks = []
   spoke = null
+  if (heard) lateWords++ // its words are still being made out: when they come they are nobody's
+  clearTimeout(heardTimer)
   heard = null
   if (ears) earsTold('cancel')
 }
 function request(said) { // to Claude: the words and what is marked
   live.assistOn = live.grab2 = marking = false
-  const nothing = /^(стоп|отмена|отбой|хватит)[.! ]*$/i.test(said) ? 'Отменено' : !said && !marks.length
+  const nothing = saidStop(said) ? 'given up' : !said && !marks.length
   if (nothing) spoke = null
-  if (nothing === 'Отменено') return (marks = [], card('fail', 'Отменено', 2500))
-  if (nothing) return card('fail', fs.existsSync(EARS) ? 'Ничего не сказано и не помечено' : 'Ничего не помечено. Речь не подключена: ./setup-speech.sh', 4000)
-  card('think', said || 'Смотрю помеченное')
+  if (nothing === 'given up') return (marks = [], card('fail', t('Cancelled'), 2500))
+  if (nothing) return card('fail', fs.existsSync(EARS) ? t('Nothing was said and nothing marked') : t('Nothing is marked. Speech is not set up: ./setup-speech.sh'), 4000)
+  card('think', said || t('Looking at what is marked'))
   const before = exchanges.filter(e => Date.now() - e.at < 600000).slice(-3)
-  const mine = asking = ask({ said, marks: marks.length, before, ...toClaude() }, doing => asking === mine && card('do', doing))
+  const mine = asking = ask({ said, marks: marks.length, before, aloud: live.talkOn, ...toClaude() }, doing => asking === mine && card('do', doing))
   mine.done.then(answer => {
     exchanges.push({ at: Date.now(), said: said || '(пометил место)', answer })
     if (exchanges.length > 6) exchanges.shift()
-    if (asking === mine) card('done', answer, Math.min(20000, 4000 + 70 * answer.length))
-  }, e => asking === mine && card('fail', e.message, 5000)).finally(() => { if (asking === mine) { asking = null; marks = []; spoke = null } })
+    if (asking !== mine) return
+    card('done', answer, Math.min(20000, 4000 + 70 * answer.length))
+    if (live.talkOn) speak(answer)
+  }, e => asking === mine && (confirming?.(false), card('fail', e.message, 5000), live.talkOn && speak(e.message))).finally(() => { if (asking === mine) { asking = null; marks = []; spoke = null } })
 }
 function assistKey() {
   if (confirming) return confirming(true)
@@ -260,32 +409,37 @@ function assistKey() {
     asking.stop()
     asking = null
     marks = []
-    return card('fail', 'Остановлено', 2500)
+    spoke = null
+    return card('fail', t('Stopped'), 2500)
   }
   if (live.assistOn) { // the mode ends: what was said and what is marked goes to Claude
     live.assistOn = live.grab2 = false
     spoke = lookedMost(looks, Date.now())
-    const listened = earsTold('stop'), timer = setTimeout(() => heard?.(''), listened ? 20000 : 400) // without ears: a moment for the last mark to come
-    if (listened) card('think', 'Распознаю речь')
-    heard = said => { clearTimeout(timer); heard = null; request(said.trim()) }
+    const listened = earsTold('stop')
+    heardTimer = setTimeout(() => { if (listened) lateWords++; heard?.('') }, listened ? 20000 : 400) // without ears: a moment for the last mark to come
+    if (listened) card('think', t('Making out the speech'))
+    heard = said => { clearTimeout(heardTimer); heard = null; request(said.trim()) }
     return
   }
-  if (Date.now() - editSeen < 2500) return card('fail', 'Сначала выйдите из расстановки окон (Num Lock)', 3500)
+  if (Date.now() - editSeen < 2500) return card('fail', t('Leave the arranging of windows first (Num Lock)'), 3500)
+  if (live.talkOn) talkEnd() // the mode with the marks takes the microphone
   live.assistOn = marking = true
   marks = []
   shown = []
   looks = gaze.at && pageHere() ? [{ ...gaze, at: Date.now() }] : []
-  card('listen', earsTold('start') ? 'Говорите и помечайте мышью. Caps Lock: отправить, Esc: отмена'
-    : 'Пометьте место мышью: щелчок, рамка, правой кнопкой стрелка. Caps Lock: отправить. Речь не подключена: ./setup-speech.sh')
+  card('listen', earsTold('start') ? t('Speak and mark with the mouse. Caps Lock: send, Esc: cancel')
+    : t('Mark a place with the mouse: a click, a frame, an arrow with the right button. Caps Lock: send. Speech is not set up: ./setup-speech.sh'))
 }
 // "Yes or no" in the headset before something that cannot be taken back (switching off, closing a window, typing
 // into one): the helper's key is the yes, ten seconds of nothing the no
 function confirmed(question, ms = 10000) { // ms: longer when there is more to read
   confirming?.(false) // one question at a time: an earlier one is a no
   return new Promise(resolve => {
-    const timer = setTimeout(() => confirming(false), ms)
-    confirming = yes => { clearTimeout(timer); confirming = null; card(asking ? 'do' : 'fail', yes ? 'Да' : 'Не подтверждено', asking ? 0 : 2500); resolve(yes) }
-    card('ask', `${question} Да: Caps Lock. Нет: подождите`)
+    const timer = setTimeout(() => confirming(false), ms + (live.talkOn ? 8000 : 0)) // (a live talk: the question is heard first)
+    confirming = yes => { clearTimeout(timer); confirming = null; card(asking ? 'do' : 'fail', yes ? t('Yes') : t('Not confirmed'), asking ? 0 : 2500); resolve(yes) }
+    askedAt = Date.now()
+    card('ask', live.talkOn ? t('{0} Yes: Caps Lock or say “yes”. No: wait', question) : t('{0} Yes: Caps Lock. No: wait', question))
+    if (live.talkOn) speak(`${question} ${t('Say yes or no.')}`)
   })
 }
 const isSelf = m => cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen // this monitor shows the picture of a headset on a cable, so it is not a panel there
@@ -338,7 +492,7 @@ function syncWindows() {
     if (!openWindows.some(w => w.id === id)) { wantedWindows.delete(id); adopted.delete(id) }
   }
   for (const id of placed) if (!wantedWindows.has(id)) placed.delete(id) // shown again later, it comes where the user looks
-  if (watch && !panelsNow().some(p => p.id === watch.id && (p.source ?? 0) === watch.source)) watchEnd('Сторож: окно ушло из сферы, больше не слежу')
+  if (watch && !panelsNow().some(p => p.id === watch.id && (p.source ?? 0) === watch.source)) watchEnd(t('the window has left the sphere, I no longer watch'))
   if (SETTINGS_ONLY || (!wantedWindows.size && !windowsModule)) return
   // need: how much of its picture a window uses, from the top left: itself and its open menus (which may reach out of it)
   tellWindows({ raw: cableOn(), streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1],
@@ -619,11 +773,15 @@ async function handle(req, res) {
     if ('assistKey' in patch && local) assistKey() // Caps Lock, from the extension
     delete patch.assistKey
     delete patch.assistOn // its mode is switched by its key only, not as the other live values are
+    if (!local) for (const key of ['assistFolders', 'assistCode', 'assistModel']) delete patch[key] // where the helper may look, and its model: from this PC only
+    if ('talkKey' in patch) talkKey() // Insert: from the extension, or from the page (a keyboard connected to the phone)
+    delete patch.talkKey
+    delete patch.talkOn
     if (Array.isArray(patch.looked)) { // from the working page: the panel under the centre of its view and where the view points
       const [id, yaw, pitch] = patch.looked
       if (typeof id === 'string' && /^([mw]\d+)?$/.test(id) && [yaw, pitch].every(Number.isFinite)) {
         gaze = { id, yaw, pitch, at: Date.now() }
-        if (live.assistOn && looks.length < 500) looks.push(gaze)
+        if ((live.assistOn || talkHeard) && looks.length < 500) looks.push(gaze)
       }
     }
     delete patch.looked
@@ -653,6 +811,11 @@ async function handle(req, res) {
       delete patch[key]
     }
     if (Object.keys(patch).length) keep(patch)
+    if (['lang', 'assistVoice', 'assistPitch', 'assistSpeed'].some(key => key in patch)) { // the helper's voice: heard half a second after the last change
+      if ('lang' in patch) ears?.stdin.write(`language ${voiceNow().lang}\n`)
+      clearTimeout(voiceTimer)
+      voiceTimer = setTimeout(voiceWanted, 700)
+    }
     // capture.py reads the number and the sizes of the virtual monitors when MediaMTX starts it again
     if ('virtual' in patch || 'virtualSize' in patch || Object.keys(patch).some(key => /^m\d\.size$/.test(key))) {
       readMonitors()
@@ -665,10 +828,12 @@ async function handle(req, res) {
     if (Date.now() - connectorsAt > 2000) { // the pages ask up to 25 times a second
       connectorsAt = Date.now()
       try { connectors = JSON.parse(fs.readFileSync(path.join(ROOT, '.connectors.json'), 'utf8')) } catch { connectors = {} }
+      try { voicesHere = fs.readdirSync(VOICE_FILES).filter(f => f.endsWith('.onnx')).map(f => f.slice(0, -5)).filter(voiceWhole) } catch { voicesHere = [] }
     }
     // self: this monitor shows the picture of a headset on a cable, so it is not a panel there
     const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: isSelf(m) })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
-    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), watched: Date.now() - spectatorSeen < 2000, ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
+    const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), watched: Date.now() - spectatorSeen < 2000, ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY,
+      voicesHere, voiceGetting: fetching } // for the settings: which of the helper's voices are here, and the one being downloaded
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
@@ -701,6 +866,7 @@ async function handle(req, res) {
     marks.push({ n: marks.length + 1, kind, id, rect, about, png })
     return res.writeHead(204).end()
   }
+  if (url === '/assist/voice' && req.method === 'POST') return (voiceWanted(), res.writeHead(204).end()) // "listen": a sample of the voice as it is set
   if (url === '/assist/cancel' && req.method === 'POST') {
     confirming?.(false)
     if (asking) asking.stop()
@@ -715,7 +881,7 @@ async function handle(req, res) {
   if (url === '/assist/key' && req.method === 'POST' && local) return (assistKey(), res.writeHead(204).end())
   if (url === '/assist' && req.method === 'POST' && local) {
     const said = String(JSON.parse(await readBody(req))?.text ?? '').trim().slice(0, 1000)
-    if (confirming) confirming(/^(да|ага|давай|yes)(?![а-яёa-z])/i.test(said))
+    if (confirming) confirming(saidYes(said, voiceNow().lang))
     else if (!asking && !heard) request(said)
     return res.writeHead(204).end()
   }
@@ -744,7 +910,7 @@ async function handle(req, res) {
       return (keep({ scanCall: Date.now() }), done({ done: true, note: 'the user now looks around the room for 15 seconds' }))
     }
     if (action === 'switch_off') {
-      if (!await confirmed('Выключить VR Workspace?')) return done({ done: false, why: 'the user did not confirm it' })
+      if (!await confirmed(t('Switch VR Workspace off?'))) return done({ done: false, why: 'the user did not confirm it' })
       return (keep({ offCall: Date.now() }), done({ done: true }))
     }
     return res.writeHead(400).end('The actions: record, recenter, look_around, switch_off')
@@ -857,16 +1023,16 @@ async function handle(req, res) {
     if (!kept) return res.writeHead(400).end('Nothing is kept as "before": the user marks the place and asks to remember how it was')
     const png = await picture(kept)
     if (!png) return res.writeHead(400).end('No fresh picture of that place came: its window must be in the sphere and in view')
-    const folder = ownFiles('VIDEOS', 'Videos'), file = path.join(folder, `Было и стало ${new Date().toLocaleString('sv').replace(/[ :]/g, '-')}.mp4`)
+    const folder = ownFiles('VIDEOS', 'Videos'), file = path.join(folder, t('Before and after {0}', new Date().toLocaleString('sv').replace(/[ :]/g, '-')) + '.mp4')
     fs.mkdirSync(folder, { recursive: true })
-    try { await clipOf(kept.png, png, file) } catch (e) { return res.writeHead(400).end(e.message) }
+    try { await clipOf(kept.png, png, file, [t('Before'), t('After')]) } catch (e) { return res.writeHead(400).end(e.message) }
     return sent({ file, note: 'five seconds: as it was, then as it is; sphere_open shows it' })
   }
   if (url === '/assist/watch/picture' && local) return sent(watch?.png ? [{ n: 1, about: 'the place that is watched, as it looks now.', png: watch.png.toString('base64') }] : [])
   // Closing a window, taking it out of the sphere, typing into it. Closing and typing are asked in the headset first:
   // the window may be the wrong one (taken by the gaze), and typed text may be a command.
   if ((url === '/assist/close' || url === '/assist/type') && req.method === 'POST' && local) {
-    const { panel, how, text, enter } = JSON.parse(await readBody(req)) ?? {}, p = windowPanels().find(p => p.id === panel), name = `«${[p?.app, p?.name].filter(Boolean).join(': ').slice(0, 34)}»`
+    const { panel, how, text, enter } = JSON.parse(await readBody(req)) ?? {}, p = windowPanels().find(p => p.id === panel), name = [p?.app, p?.name].filter(Boolean).join(': ').slice(0, 34)
     if (!p) return res.writeHead(400).end(`"${panel}" is not a window in the sphere (monitors cannot be closed or typed into). The windows: ${windowPanels().map(p => p.id).join(', ') || 'none'}`)
     if (url === '/assist/close' && how === 'out') {
       takeOut(p.source)
@@ -876,13 +1042,14 @@ async function handle(req, res) {
     if (Date.now() - windowsAt > 3000) return res.writeHead(400).end('The VR Workspace extension of GNOME is not answering: this cannot be done now')
     if (url === '/assist/close') {
       if (how !== 'close') return res.writeHead(400).end('`how` takes "close" (the window is closed on the PC) or "out" (it leaves the sphere and stays open)')
-      if (!await confirmed(`Закрыть окно ${name}?`)) return sent({ done: false, why: 'the user did not confirm it' })
+      if (!await confirmed(t('Close the window “{0}”?', name))) return sent({ done: false, why: 'the user did not confirm it' })
       closeWish = p.source
       return sent({ done: true, note: 'its program was asked to close the window; it may first ask about unsaved work in a dialog' })
     }
     // 160: what the card shows whole with the question around it, so that what is confirmed is what is typed
     if (typeof text !== 'string' || !text.trim() || text.length > 160 || /[\x00-\x09\x0b-\x1f\x7f]/.test(text)) return res.writeHead(400).end('`text` takes plain text, 160 characters at most (more: in parts)')
-    if (!await confirmed(`Напечатать в ${name}: «${text.replace(/\n/g, ' ⏎ ')}»${enter === true ? ' и нажать Enter' : ''}?`, 10000 + 60 * text.length)) return sent({ done: false, why: 'the user did not confirm it' })
+    const shown = text.replace(/\n/g, ' ⏎ ')
+    if (!await confirmed(enter === true ? t('Type into “{0}”: “{1}” and press Enter?', name, shown) : t('Type into “{0}”: “{1}”?', name, shown), 10000 + 60 * text.length)) return sent({ done: false, why: 'the user did not confirm it' })
     typeWish = { id: p.source, text, enter: enter === true }
     return sent({ done: true, note: 'the text was pasted into the window where its cursor is; whether the program took it cannot be seen from here' })
   }
@@ -933,7 +1100,7 @@ async function handle(req, res) {
   // ranges of the settings.
   if (url === '/host' && local) {
     return res.writeHead(200, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ phone: PHONE_URL, ca: CA_URL, bgDir: BG, layout: LAYOUT_SPEC, monitor: MONITOR_SPEC, lens: LENS_SPEC }))
+      .end(JSON.stringify({ phone: PHONE_URL, ca: CA_URL, bgDir: BG, layout: LAYOUT_SPEC, monitor: MONITOR_SPEC, lens: LENS_SPEC, langs: LANGS, voices: VOICES }))
   }
 
   if (url === '/bgs') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(backgrounds().map(f => 'bg/' + f)))

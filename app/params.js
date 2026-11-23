@@ -13,6 +13,9 @@ export const LAYOUT_SPEC = {
   sharpen: [40, 0, 100, 5, 'Резкость текста, %'],
   renderScale: [100, 50, 100, 5, 'Разрешение отрисовки, % (меньше: телефон греется меньше, текст мягче)'],
   windowDist: [2, 0.5, 5, 0.1, 'Расстояние до новых окон, м'], // at 1.5 they are 1:1 with the screen, farther smaller
+  talkSleep: [45, 10, 600, 5, 'Живой разговор с Claude: засыпает после тишины, с'],
+  assistPitch: [100, 85, 115, 1, 'Голос помощника: тембр, % (меньше 100: ниже и гуще, больше: выше и легче)'],
+  assistSpeed: [100, 70, 140, 5, 'Голос помощника: скорость речи, %'],
 }
 // One set per monitor, stored as "m0.yaw", "m1.span", ...
 export const MONITOR_SPEC = {
@@ -34,6 +37,20 @@ export const LENS_SPEC = {
   cy: [0, -10, 10, 0.25, 'Сдвиг центра по вертикали, мм'],
   glassesFov: [46, 20, 120, 1, 'Очки на кабеле: угол обзора по диагонали, °'], // index.html?glasses; 46: XREAL-like, to be measured
 }
+// The helper speaks and listens in the language of the sphere (the setting `lang`: words.js), with one of that
+// language's voices (`assistVoice`): piper's name of each, "#name" for one speaker of a voice that has several, and
+// how the settings call it. A voice that is not on the PC yet is downloaded when it is chosen (server.js).
+export const VOICES = {
+  en: [['en_US-amy-medium', 'Amy'], ['en_US-ryan-medium', 'Ryan'], ['en_US-lessac-medium', 'Lessac'], ['en_GB-alan-medium', 'Alan (British)']],
+  ru: [['ru_RU-irina-medium', 'Ирина'], ['ru_RU-denis-medium', 'Денис'], ['ru_RU-dmitri-medium', 'Дмитрий'], ['ru_RU-ruslan-medium', 'Руслан']],
+  fr: [['fr_FR-siwis-medium', 'Siwis'], ['fr_FR-tom-medium', 'Tom'], ['fr_FR-upmc-medium#jessica', 'Jessica'], ['fr_FR-upmc-medium#pierre', 'Pierre']],
+}
+// The language and the voice in force: a language that is not one of ours is English, a voice that is not one of
+// the language's is its first.
+export function voiceOf(settings) {
+  const lang = VOICES[settings.lang] ? settings.lang : 'en', names = VOICES[lang].map(([name]) => name)
+  return { lang, voice: names.includes(settings.assistVoice) ? settings.assistVoice : names[0] }
+}
 const DEG = Math.PI / 180
 const SLOT_YAW = [0, 95, -95, 190] // where monitors stand until the user moves them: centre, right, left, behind (same list in capture.py)
 const WINDOW_YAW = [0, 55, -55, 110, -110, 165, -165, 0] // and single windows (w0, w1, ...): a row under the monitors
@@ -43,7 +60,8 @@ export function complete(answer) {
   const all = { bg: 'bg/old_field.jpg', recenter: 0, menuCall: 0, scanCall: 0, autoBlack: true, hideMonitors: false, camKeep: false, sixDof: true, virtualSize: answer.virtualSizes[0],
     glowColor: '#4fb2ff', focusGlow: true, // the light around panels; around the one that gets the keyboard
     publicHost: '', // this PC's address on the internet, for the phone's link from outside the home (server.js)
-    phoneMic: false } // the phone's microphone as this PC's (mic.py)
+    phoneMic: false, // the phone's microphone as this PC's (mic.py)
+    lang: 'en', assistVoice: '' } // the language of the sphere and of the helper, and the helper's voice (words.js, voiceOf)
   for (const [key, spec] of Object.entries({ ...LAYOUT_SPEC, ...LENS_SPEC })) all[key] = spec[0]
   answer.monitors.forEach(({ id, virtual, window }, i) => {
     if (virtual) all[`${id}.size`] = answer.virtualSize ?? answer.virtualSizes[0] // its own size, until set: the one for all

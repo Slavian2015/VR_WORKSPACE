@@ -197,12 +197,16 @@ a mouse connected to the phone.
    seconds; then it does what the emergency key does: the picture of a headset on a cable closes and VR Workspace
    is switched off.
 
-   **Settings** shows, in place of the icons, four blocks side by side, all in view at once and always at the same
-   size: **Картинка** (text sharpness, the drawing's resolution, the light around the window that gets the keyboard, hiding the monitors),
-   **Движение головы** (on or off, the strength of the lean, "look around again"), **Камера телефона** (the camera
-   as the background, below which angle it shows, keeping it open, the angle and the shift of its picture) and
-   **Фон**: the backgrounds as round pictures, nine a page (a click shows one at once; the arrows under them or the
-   wheel turn the pages), with its darkening and blur. Only what shows at once in the headset is there; the rest stays in the
+   **Settings** shows, in place of the icons, five blocks side by side (the outer ones reach the edges of the
+   view: a small turn of the head) and always at the same size: **Picture** (text sharpness, the drawing's resolution, the light around the window that gets the keyboard, hiding the monitors),
+   **Head movement** (on or off, the strength of the lean, "look around again"), **Phone camera** (the camera
+   as the background, below which angle it shows, keeping it open, the angle and the shift of its picture),
+   **Background**: the backgrounds as round pictures, nine a page (a click shows one at once; the arrows under them
+   or the wheel turn the pages), with its darkening and blur, and **AI helper** (the language of the sphere and the
+   helper's voice, chosen with the arrows at their sides, its timbre and speed, when a live talk falls asleep, and
+   its keys). Everything written in the sphere is in English until another language is chosen there: Russian or
+   French (see "The language" below).
+   Rest the pointer on a row for a moment and its tooltip tells more. Only what shows at once in the headset is there; the rest stays in the
    settings window on the PC. A switch flips with a click. A slider: hold the button on it and look left or right;
    while it is held everything else disappears and the view is not darkened, so what it does is seen at once. The
    same button brings the icons back, and the list always opens with the icons.
@@ -441,10 +445,11 @@ arrow, with the window's title and its program. Never the whole desktop. For a r
 told, as text, the titles and programs of the windows in the sphere, and of the windows open elsewhere on the PC
 only their programs.
 
-**Speech** is turned into text on this PC and never leaves it. Set it up once, without sudo:
+**Speech** is turned into text on this PC and never leaves it, and so is the helper's own voice made here. Set
+both up once, without sudo (run it again after an update that brought the voice):
 
 ```bash
-./setup-speech.sh        # makes .speech/ here: the recognizer (faster-whisper) and its model, 0.9 GB
+./setup-speech.sh        # makes .speech/ here: the recognizer (faster-whisper) with its model and the voice (piper), 1 GB
 ```
 
 Then restart VR Workspace. The microphone is the system's own: the phone's while "the phone's microphone" is on,
@@ -452,6 +457,49 @@ else the PC's. A short phrase is recognized in about a second, at most a minute 
 taken for Russian. `./setup-speech.sh medium` gets a larger, more exact and slower model (then
 `VR_SPEECH_MODEL=medium` in the server's environment). Without the setup the mode still marks, and words can be
 given as text: `curl -X POST http://127.0.0.1:8080/assist -d '{"text": "сделай фон темнее"}'`.
+
+**A live talk, no key held: Insert** (Fn+0 on a small keyboard; on the PC's keyboard or on one connected to the
+phone) switches it on and off while the headset is in use. Insert alone is the helper's then; with Shift or Ctrl
+it stays the clipboard's key. While it is on, a small sign stays on the card and the microphone is listened to:
+
+- every phrase is found by itself, by its loudness over the room's noise: it begins when you speak and ends when
+  you have been silent for 0.8 s; its words show on the card as they come, and it goes to Claude;
+- the answer shows on the card and is spoken into the PC's sound, so it is heard in the headset. On the stand the
+  voice began about seven seconds after the end of a phrase: one for the silence that ends it, one to two to make
+  out the words, four for Claude;
+- speak while it speaks and it falls silent at once and listens. One word said into its voice ("стоп", or any)
+  only stops it;
+- a question before closing a window or typing is spoken too, and "да" is the yes (Caps Lock still is); anything
+  else, or waiting, is the no;
+- "this window" is the one you looked at while the phrase was said; there are no marks in a live talk: Caps Lock
+  starts the mode with marks and takes the microphone;
+- after 45 s with nothing said and nothing going on it switches itself off (the setting `talkSleep`, on the
+  settings page: 10 to 600 s).
+
+Everything said in the room while it is on is taken for a request to the helper: somebody else's words, a video's.
+While its voice sounds, only speech three times louder than usual begins a phrase, because the microphone hears
+the voice too, and what the ears then make out is dropped when it is the helper's own words come back; headphones
+on the phone make that sure. Without a voice installed the talk works with the card alone.
+
+**The language.** Everything written in the sphere (the settings, the buttons, the notes, the helper's card and
+its questions) is in English as it comes, and in Russian or French when that is chosen: the first row of the block
+**AI helper** among the settings in the sphere, or **Language** on the page **Helper** of the settings window (which
+itself is in English). The helper goes with it: what you say is taken for that language, it answers in it and
+speaks with one of its voices. The texts are in `app/words.js`, each in English with its Russian and French; a test
+fails when one that the code shows has no translation. The pages for the PC (`control.html` and the two checks)
+are still in Russian.
+
+**The helper's settings** are that block (**AI helper**) and that page (**Helper**); what a row means is its
+tooltip. The voice: four English ones (Amy, Ryan, Lessac, Alan), four Russian (Ирина, Денис, Дмитрий, Руслан), four
+French (Siwis, Tom, Jessica, Pierre). One that is not on the PC yet is marked ↓ and is downloaded when chosen
+(piper's own voices, 60 to 80 MB each, from huggingface.co). The timbre (85 to 115 %: deeper or lighter; the sound is made
+slower and played faster, as a tape) and the speed of speech. After every change a sample is spoken; the page's
+**Listen** speaks it again. Both places also list the helper's keys. Ask it to speak slower and it changes the
+speed itself.
+
+To a question a yes is a clear yes: "да нет", "давай не будем", "ok, wait" are not. A phrase begun before the
+question was asked is no answer to it. When the phone locks, runs flat or leaves the Wi-Fi, the live talk and the
+mode with marks end within five seconds: the microphone is not left open.
 
 It can change every setting of the blocks over the list of applications (the picture, the head movement, the phone
 camera, the background), start and stop the recording, centre the sphere, start a look around the room, and switch
@@ -591,7 +639,9 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 Anyone on the network who has the link with the key can watch your desktop and change the settings, and click and
 type in the windows shown in the headset (a keyboard connected to the phone): a terminal shown there runs what is
-typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it (a watched
+typed. The helper (Claude) is asked by its keys on this PC and, in a live talk, by voice; a device with the key
+can switch that talk on too (Insert on a keyboard connected to the phone), but where the helper may look for files
+and code, and its model, are set from this PC only. What it gets to see is what was marked for it (a watched
 place again each time it changes), the titles of the windows in the sphere and the lines of your code that hold a
 text it looked for, and that goes to Anthropic, as everything you show Claude does. Such text
 comes from outside (a web page names its own window) and may try to give the helper orders: it is told to take it
@@ -638,7 +688,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
   list of monitors; starts MediaMTX.
 - `app/track.js` — where the head is, from the phone camera's pictures (leaning toward a window).
 - `assist.js` — the helper: runs Claude for a request, tells what it may change, open, place, show, find in the code and watch; `assist-tools.js` — its tools
-  as Claude takes them (also for the chat in VS Code, `.mcp.json`); `listen.py` — its ears, speech into text
+  as Claude takes them (also for the chat in VS Code, `.mcp.json`); `listen.py` — its ears, speech into text, `speak.py` — its voice
   (`setup-speech.sh` installs what it needs into `.speech/`); the server keeps its card and the marks.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,
   so stereo and lens correction are done in a single pass and text is sampled once.

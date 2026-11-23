@@ -19,6 +19,7 @@ const CSS = `
   .vr-cell:hover .vr-delete, .vr-delete:focus-visible { opacity: 1; }
   .vr-thumb { border-radius: 8px; background: black; }
   .vr-qr { border-radius: 12px; }
+  .vr-key { padding: 2px 9px; border-radius: 6px; border: 1px solid alpha(currentColor, 0.3); border-bottom-width: 2px; font-size: 0.9em; }
 `
 const VIDEO = /\.(mp4|webm|mov)$/i
 
@@ -511,7 +512,47 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       colour('glowColor', _('Colour'), _('It drifts a little around the panel')),
       toggle('focusGlow', _('Light the window that gets the keyboard'), _('What you type on the PC goes there'))))
 
-      pages = [monitors, background, headset]
+      // ---- Helper: Claude in the sphere. How it speaks, and its keys. What a row means is told by its tooltip, not
+      // by a line under it.
+      const helper = new Adw.PreferencesPage({ title: _('Helper'), icon_name: 'audio-input-microphone-symbolic' })
+      const tip = (row, text) => Object.assign(row, { tooltip_text: text })
+      const langs = Object.keys(host.langs), language = new Adw.ComboRow({ title: _('Language'), model: Gtk.StringList.new(Object.values(host.langs)) })
+      const voice = new Adw.ComboRow({ title: _('Voice') })
+      let voices = [] // piper's names of the voices on offer, in the order of the list: those of the language in force
+      const showVoice = () => { // from the server: the language, its voices (↓: not on this PC yet, … being downloaded), the one chosen
+        const lang = host.voices[last.lang] ? last.lang : 'en', here = last.voicesHere ?? [], file = name => name.split('#')[0]
+        const labels = host.voices[lang].map(([name, label]) => label + (last.voiceGetting === file(name) ? ' …' : here.includes(file(name)) ? '' : ' ↓'))
+        if (labels.join() !== voices.shown) voice.model = Gtk.StringList.new(labels)
+        voices = Object.assign(host.voices[lang].map(([name]) => name), { shown: labels.join() })
+        voice.selected = Math.max(0, voices.indexOf(last.assistVoice))
+        language.selected = langs.indexOf(lang)
+      }
+      for (const key of ['lang', 'assistVoice', 'voicesHere', 'voiceGetting']) shows[key] = showVoice
+      language.connect('notify::selected', () => change('lang', langs[language.selected]))
+      voice.connect('notify::selected', () => voices[voice.selected] && change('assistVoice', voices[voice.selected]))
+      group(helper, { title: _('Voice') },
+        tip(language, _('The language of everything written in the sphere. You speak with the helper in it, and it answers in it.')),
+        tip(voice, _('The voice of its answers in a live talk. One marked ↓ is not on this PC yet: it is downloaded when chosen, 60 to 80 MB. A sample is spoken after every change.')),
+        tip(number('assistPitch', host.layout.assistPitch, _('Timbre, %')), _('Under 100: a deeper voice. Over 100: a lighter one.')),
+        tip(number('assistSpeed', host.layout.assistSpeed, _('Speed of speech, %')), _('How fast the helper speaks.')),
+        tip(number('talkSleep', host.layout.talkSleep, _('Falls asleep after silence, s')), _('A live talk switches itself off when nobody has said anything for this long.')),
+        tip(action(_('Sample of the voice'), '', _('Listen'), () => talk(session, '/assist/voice', {})),
+          _('A short phrase in the voice as it is set now. It sounds where the sound of this PC goes: in the headset while a phone is connected.')))
+      // A key, as its cap, or for the mouse plain words; what it does; and more of it, as the tooltip
+      const key = (cap, words, does, more) => {
+        const row = new Adw.ActionRow({ title: does })
+        row.add_suffix(new Gtk.Label({ label: cap || words, valign: Gtk.Align.CENTER, css_classes: [cap ? 'vr-key' : 'dim-label'] }))
+        return tip(row, more)
+      }
+      group(helper, { title: _('Keys') },
+        key('Insert', '', _('Live talk on and off'), _('No key held: you speak, the helper answers by voice. Fn+0 on a small keyboard. Shift+Insert and Ctrl+Insert stay the programs\'. Only while the headset is in use.')),
+        key('Caps Lock', '', _('Mode with marks'), _('First press: speak, and mark with the mouse what the helper is to look at. Second press: send. While the helper works: stop it. When it asks: yes. Only while the headset is in use.')),
+        key('Esc', '', _('Give the mode up'), _('In the mode with marks: leave it, and the marks are wiped.')),
+        key('', _('click'), _('Mark a whole window'), _('In the mode with marks: the helper will see all of this window.')),
+        key('', _('left button, drag'), _('Mark a part of a window'), _('In the mode with marks: a frame around what the helper is to look at.')),
+        key('', _('right button, drag'), _('Point with an arrow'), _('In the mode with marks: from the arrow\'s tail to what it points at.')))
+
+      pages = [monitors, background, headset, helper]
       for (const page of pages) window.add(page)
       pages.push(pc)
     }
@@ -558,7 +599,7 @@ export default class VrWorkspacePrefs extends ExtensionPreferences {
       try { settingsOnly(false) } catch {} // if it was ours; VR Workspace itself is not touched
       return false
     })
-    window.set_default_size(700, 860)
+    window.set_default_size(820, 860) // wide enough for the five tabs to stay in the title bar
     window.search_enabled = true
   }
 }

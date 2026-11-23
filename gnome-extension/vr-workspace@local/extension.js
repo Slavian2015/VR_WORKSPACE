@@ -112,6 +112,7 @@ export default class VrWorkspace extends Extension {
     this._capsTimer = 0
     for (const timer of this._typeTimers) GLib.source_remove(timer)
     this._typeTimers.clear()
+    this._typing = false
     this._leave()
     this._out()
     global.display.disconnect(this._windowCreated)
@@ -135,7 +136,8 @@ export default class VrWorkspace extends Extension {
     global.display.disconnect(this._emergencyPressed)
     Main.overview.toggle = this._toggleOverview
     if (this._emergency !== Meta.KeyBindingAction.NONE) global.display.ungrab_accelerator(this._emergency)
-    for (const action of this._hotkeys.keys()) global.display.ungrab_accelerator(action)
+    for (const action of this._hotkeys.keys()) global.display.ungrab_accelerator(action) // (the live talk's key among them)
+    this._talkKeys = null
     Main.messageTray.disconnectObject(this)
     for (const source of Main.messageTray.getSources()) source.disconnectObject(this)
     if (this._cursorTimer) GLib.source_remove(this._cursorTimer)
@@ -229,6 +231,7 @@ export default class VrWorkspace extends Extension {
       const before = this._shownWindows.length
       this._shownWindows = answer?.shown ?? []
       this._phoneOnline = !!answer?.phoneOnline
+      this._talkKey(this._phoneOnline || !!this._glassesWindow())
       if (answer && this._numLockSeen !== undefined && answer.numLock !== this._numLockSeen) this._pressNumLock()
       if (answer) this._numLockSeen = answer.numLock
       // The record button over the list of applications in the sphere; whether the recording runs is looked up
@@ -673,6 +676,9 @@ export default class VrWorkspace extends Extension {
   // pastes in GNOME's and Qt's programs, in browsers and VS Code; terminals paste the "primary" selection on it,
   // which gets the text too. The window gets the keyboard first. The texts those two held before are put back (a
   // picture copied before is not: it is lost from the clipboard).
+  // The two are read first, each by itself, and only then, from a timer of our own, set: set from inside the
+  // answer to its own reading, a selection that the shell itself held (as after an earlier typing) crashed the
+  // whole shell (a segfault on the stand, 2026-11-23). What was typed before is typed first: one at a time.
   _type(window, text, enter) {
     if (!window) return
     const clipboard = St.Clipboard.get_default(), { CLIPBOARD, PRIMARY } = St.ClipboardType
@@ -680,19 +686,35 @@ export default class VrWorkspace extends Extension {
       const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => (this._typeTimers.delete(timer), what(), GLib.SOURCE_REMOVE))
       this._typeTimers.add(timer)
     }
+    if (this._typing) return void later(400, () => this._indicator && this._type(window, text, enter)) // the one before is still on its way
+    this._typing = true
+    later(4000, () => { this._typing = false }) // whatever happens to this one, the next is not held for ever
     this._ownKeyboard() // made now: the first keys of a keyboard made the moment they are pressed went nowhere (the stand, 2026-11-23)
-    clipboard.get_text(CLIPBOARD, (_clipboard, copied) => clipboard.get_text(PRIMARY, (_primary, selected) => {
-      if (!this._indicator) return // switched off meanwhile
-      clipboard.set_text(CLIPBOARD, text)
-      clipboard.set_text(PRIMARY, text)
-      window.activate(global.get_current_time())
-      later(300, () => this._pressKey(110, 42)) // Linux's KEY_INSERT with KEY_LEFTSHIFT, once the window has the keyboard
-      if (enter) later(700, () => this._pressKey(28)) // KEY_ENTER
-      later(1500, () => { // the program has read them by then
-        if (copied !== null) clipboard.set_text(CLIPBOARD, copied)
-        if (selected !== null) clipboard.set_text(PRIMARY, selected)
+    const held = {}
+    const go = () => {
+      if (!('copied' in held) || !('selected' in held) || held.gone || !this._indicator) return // (not yet both; or switched off meanwhile)
+      held.gone = true
+      later(60, () => {
+        clipboard.set_text(CLIPBOARD, text)
+        clipboard.set_text(PRIMARY, text)
+        window.activate(global.get_current_time())
+        // Pasted only if that window has the keyboard by then: not into a dialog that stands before it, a window on
+        // another workspace that did not come, or the shell's own prompt. Enter only after the paste.
+        later(300, () => {
+          held.pasted = global.display.focus_window === window
+          if (held.pasted) this._pressKey(110, 42) // Linux's KEY_INSERT with KEY_LEFTSHIFT
+          else console.log('VR Workspace: the helper typed nothing: its window did not get the keyboard')
+        })
+        if (enter) later(700, () => held.pasted && global.display.focus_window === window && this._pressKey(28)) // KEY_ENTER
+        later(1500, () => { // the program has read them by then
+          if (held.copied !== null) clipboard.set_text(CLIPBOARD, held.copied)
+          if (held.selected !== null) clipboard.set_text(PRIMARY, held.selected)
+          this._typing = false
+        })
       })
-    }))
+    }
+    clipboard.get_text(CLIPBOARD, (_clipboard, copied) => { held.copied = copied; go() })
+    clipboard.get_text(PRIMARY, (_clipboard, selected) => { held.selected = selected; go() })
   }
 
   // Caps Lock while the headset is in use (a phone connected, or the picture of a headset on a cable): the key of
@@ -713,6 +735,24 @@ export default class VrWorkspace extends Extension {
       return GLib.SOURCE_REMOVE
     })
     this._talk({ assistKey: 1 }, () => this._http && this._tellWindows()) // the answer to that report says whether its mode is on now
+  }
+
+  // Insert alone (Fn+0 on the user's keyboard): the helper's live talk, on and off (the server's talkKey). A key of
+  // ours only while the headset is in use; with Shift or Ctrl it stays the clipboard's key, also then. The keypad's
+  // Insert (its 0 with Num Lock off) as well: a small keyboard may send that one.
+  _talkKey(ours) {
+    if (ours === !!this._talkKeys) return
+    for (const action of this._talkKeys ?? []) {
+      global.display.ungrab_accelerator(action)
+      this._hotkeys.delete(action)
+    }
+    this._talkKeys = null
+    if (!ours) return
+    this._talkKeys = ['Insert', 'KP_Insert'].map(name => global.display.grab_accelerator(name, Meta.KeyBindingFlags.IGNORE_AUTOREPEAT)).filter(action => action !== Meta.KeyBindingAction.NONE)
+    for (const action of this._talkKeys) {
+      Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.ALL)
+      this._hotkeys.set(action, () => this._talk({ talkKey: 1 }))
+    }
   }
 
   // The helper's mode: the mouse is held for its marks, as for the list (with a headset on a cable its picture has

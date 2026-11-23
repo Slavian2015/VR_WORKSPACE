@@ -1,7 +1,8 @@
 // Phone page: draws both eyes in one pass. Every screen pixel is turned into a view ray through the lens,
 // so lens correction costs nothing and the desktop text is sampled only once (no blur from a second pass).
 import * as THREE from 'three'
-import { KEYCODES, LAYOUT_SPEC, MONITOR_SPEC, placeIcon, resizeWindow, setParams, snapPanel, watchParams } from './params.js'
+import { KEYCODES, LAYOUT_SPEC, MONITOR_SPEC, VOICES, placeIcon, resizeWindow, setParams, snapPanel, voiceOf, watchParams } from './params.js'
+import { LANGS, tr } from './words.js'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './orient.js'
 import { clip, shrink, space, turnAt } from './track.js'
 
@@ -22,6 +23,9 @@ if (GLASSES) {
   document.documentElement.style.cursor = 'none'
 }
 const SPECTATOR = new URLSearchParams(location.search).has('spectator')
+// The words drawn in the sphere are written here in English and shown in its language (the setting `lang`: words.js).
+// tx: a text in that language, now. L: a text kept as written and put into the language where it is drawn.
+const tx = (text, ...values) => tr(settings?.lang, text, ...values), L = text => text
 const sensorOnly = () => !!settings?.glasses && !GLASSES && !SPECTATOR // the phone while a headset on a cable is the headset: it gives the head's turn, nothing more
 // The spectator while a headset on a cable shows its picture: it shows what that headset's wearer sees (that page's
 // pointer and list, not the phone's), and on the PC it gets the pictures as that page does, as they are (plain).
@@ -682,11 +686,11 @@ function showArranging() {
   cursorDrawn = undefined // the note takes the canvas; the pointer comes back after
   const where = held ? held.snap ?? held : resizing ?? { yaw: settings[`${id}.yaw`], pitch: settings[`${id}.pitch`] }
   const lines = [
-    id ? `${m.window ? `Окно «${m.name.slice(0, 40)}»` : `Монитор ${i + 1} (${m.name})`}${held ? ': в руке' : resizing ? `: ${resizing.w} × ${resizing.h}` : ''}` : 'Наведите указатель или взгляд на панель',
-    (id ? `вправо ${Math.round(where.yaw)}°   вверх ${Math.round(where.pitch)}°   ` +
-      `ширина ${Math.round(resizing?.span ?? settings[`${id}.span`])}°   изгиб ${settings[`${id}.curve`]}%   расстояние ${settings[`${id}.dist`]} м` : 'мышь телефона или мышь компьютера'),
-    'левая кнопка в любом месте: нести  ·  край или угол окна: размер окна  ·  колесо: размер  ·  Shift / Ctrl + колесо: изгиб / расстояние',
-    'цифры: ' + settings.monitors.map(({ id }, n) => `${n + 1} ${settings[`${id}.hidden`] ? 'показать' : 'скрыть'} монитор ${n + 1}`).join(',  ') + '  ·  5: центрировать  ·  Esc: выход',
+    id ? (m.window ? tx('Window “{0}”', m.name.slice(0, 40)) : tx('Monitor {0} ({1})', i + 1, m.name)) + (held ? tx(': in hand') : resizing ? `: ${resizing.w} × ${resizing.h}` : '') : tx('Point or look at a panel'),
+    id ? tx('right {0}°   up {1}°   width {2}°   curve {3}%   distance {4} m', Math.round(where.yaw), Math.round(where.pitch), Math.round(resizing?.span ?? settings[`${id}.span`]), settings[`${id}.curve`], settings[`${id}.dist`])
+      : tx('the phone’s mouse or the PC’s'),
+    tx('left button anywhere: carry  ·  a side or corner of a window: its size  ·  wheel: size  ·  Shift / Ctrl + wheel: curve / distance'),
+    tx('digits: ') + settings.monitors.map(({ id }, n) => settings[`${id}.hidden`] ? tx('{0} show monitor {0}', n + 1) : tx('{0} hide monitor {0}', n + 1)).join(',  ') + tx('  ·  5: centre  ·  Esc: leave'),
   ]
   if (lines.join() === hudShown) return
   hudShown = lines.join()
@@ -756,7 +760,12 @@ watchParams(p => {
   scanSeen = p.scanCall
   byKeys(p)
   arrange(p)
+  const spoken = settings?.lang // the language so far: the words of the page before the sphere follow a change of it
   settings = p
+  if (p.lang !== spoken) {
+    for (const [id, text] of [['inputTest', L('Mouse and keyboard check')], ['trackTest', L('Head movement check')], ['sensor', L('The phone works as the sensor of a headset on a cable')]]) document.getElementById(id).textContent = tx(text)
+    if (!tapped) document.getElementById('start').textContent = tx('Tap to start')
+  }
   if (GLASSES) {
     // their eyes are set up in every frame, from the window's size (see the drawing loop)
   } else if (SPECTATOR) { // a plain camera: the screen is as wide as the wanted view at this distance; the rest stays zero
@@ -1143,6 +1152,13 @@ addEventListener('keydown', e => {
     if (!e.repeat) setParams({ numLock: Date.now() })
     return
   }
+  // Insert alone (Fn+0 on the user's keyboard): the live talk with the helper, on and off. With Shift or Ctrl it is
+  // the clipboard's key and goes to the window as ever.
+  if (e.key === 'Insert' && !e.shiftKey && !e.ctrlKey && !e.altKey && settings && tapped && !SPECTATOR && !GLASSES && !sensorOnly()) {
+    e.preventDefault()
+    if (!e.repeat) setParams({ talkKey: Date.now() })
+    return
+  }
   const key = e.code !== 'NumLock' && KEYCODES[e.code], target = key && settings && working() && !GLASSES && (settings.monitors.find(m => m.window && m.focused) ?? windowLooked())
   if (!target) return
   e.preventDefault() // Space, Tab and the arrows would scroll the page or move its focus
@@ -1172,13 +1188,13 @@ document.addEventListener('visibilitychange', () => document.hidden && releaseKe
 // and the head; it is drawn to its neighbours. A side or corner of a window changes the size of the window itself,
 // on the PC; its panel grows with it, the text keeping its size.
 // For the helper: which panel is under the centre of the view and where the view points in the layout. Told when
-// the panel changes; in the helper's mode also as the view moves, for what "this window" and "here" mean in what is
-// said (server.js). At most four times a second.
+// the panel changes; in the helper's mode and in a live talk also as the view moves, for what "this window" and
+// "here" mean in what is said (server.js). At most four times a second.
 let gazeTold = { id: '', yaw: 0, pitch: 0, at: 0 }
 function tellGaze(now) {
   if (!tapped || SPECTATOR || sensorOnly() || document.hidden || now - gazeTold.at < 250) return
   const id = settings.monitors[looked]?.id ?? '', { yaw, pitch } = gazeInLayout(anchor, head)
-  if (id === gazeTold.id && !(settings.assistOn && Math.hypot(yaw - gazeTold.yaw, pitch - gazeTold.pitch) > 4)) return
+  if (id === gazeTold.id && !((settings.assistOn || settings.talkOn) && Math.hypot(yaw - gazeTold.yaw, pitch - gazeTold.pitch) > 4)) return
   gazeTold = { id, yaw, pitch, at: now }
   setParams({ looked: [id, Math.round(yaw), Math.round(pitch)] })
 }
@@ -1282,13 +1298,33 @@ const BUTTONS = ['record', 'lean', 'set', 'off']
 // 'call' (the key then gets the time), else a switch. While a slider is held, nothing but its row is drawn and the
 // view is not darkened: what it does is to be seen, not the settings.
 const BLOCKS = [
-  { title: 'Картинка', rows: [['sharpen', 'Резкость текста, %'], ['renderScale', 'Разрешение отрисовки, %'], ['focusGlow', 'Подсветка окна с клавиатурой'], ['hideMonitors', 'Только окна, без мониторов']] },
-  { title: 'Движение головы', rows: [['sixDof', 'Движение по камере'], ['leanGain', 'Сила приближения, ×'], ['scanCall', 'Осмотреться заново', 'call']] },
-  { title: 'Камера телефона', foot: () => settings.camLabel ? `Камера: ${settings.camLabel}` : '', rows: [['passthrough', 'Камера как фон'], ['camBelow', 'Камера при взгляде вниз, °'],
-    ['camKeep', 'Не закрывать камеру'], ['camFov', 'Угол обзора её картинки, °'], ['camShiftX', 'Сдвиг картинки вправо / влево, °'], ['camShiftY', 'Сдвиг картинки вверх / вниз, °']] },
-  { title: 'Фон', bgs: true, rows: [['bgDim', 'Затемнение, %'], ['bgBlur', 'Размытие, %']] },
+  { title: L('Picture'), rows: [['sharpen', L('Text sharpness, %'), undefined, L('Crisper letters through the lenses; too much draws bright edges around them.')],
+    ['renderScale', L('Drawing resolution, %'), undefined, L('Lower: the phone heats less, the text is softer.')], ['focusGlow', L('Light around the window with the keyboard')], ['hideMonitors', L('Windows only, no monitors')]] },
+  { title: L('Head movement'), rows: [['sixDof', L('Movement from the camera')],
+    ['leanGain', L('Strength of the lean, ×'), undefined, L('1: a window comes nearer as a real monitor an arm away would. More: a smaller lean does as much.')], ['scanCall', L('Look around again'), 'call']] },
+  { title: L('Phone camera'), foot: () => settings.camLabel ? tx('Camera: {0}', settings.camLabel) : '', rows: [['passthrough', L('Camera as the background')],
+    ['camBelow', L('Camera when looking down, °'), undefined, L('To see the keyboard and your hands: the camera shows below this angle under the horizon. 0 switches it off.')],
+    ['camKeep', L('Keep the camera open')], ['camFov', L('View angle of its picture, °'), undefined, L('Set it so that things look their real size.')],
+    ['camShiftX', L('Shift the picture right / left, °')], ['camShiftY', L('Shift the picture up / down, °')]] },
+  { title: L('Background'), bgs: true, rows: [['bgDim', L('Darkening, %')], ['bgBlur', L('Blur, %')]] },
+  // The helper (Claude): the language of the sphere and of the talk with it, how it speaks, and its keys. A row of
+  // the kind 'pick' is one of a few, between two arrows; 'key' shows a key and what it does, nothing to press. The
+  // fourth of a row: its tooltip.
+  { title: L('AI helper'), rows: [
+    ['lang', L('Language'), 'pick', L('The language of everything written in the sphere. You speak with the helper in it, and it answers in it.')],
+    ['assistVoice', L('Voice'), 'pick', L('The voice of the answers in a live talk. With an arrow down: it is not on the PC yet and is downloaded when chosen (60–80 MB). A sample is spoken after every change.')],
+    ['assistPitch', L('Timbre, %'), undefined, L('Under 100: a deeper voice. Over 100: a lighter one.')],
+    ['assistSpeed', L('Speed of speech, %'), undefined, L('How fast the helper speaks.')],
+    ['talkSleep', L('Falls asleep after silence, s'), undefined, L('A live talk switches itself off when nobody has said anything for this long.')],
+    ['Insert', L('Live talk'), 'key', L('Switches the talk with no key on and off: you speak, the helper answers by voice. Fn+0 on a small keyboard. Shift+Insert and Ctrl+Insert stay the programs’.')],
+    ['Caps Lock', L('Marks mode'), 'key', L('First press: speak and mark with the mouse. Second: send. While the helper works: stop it. To its question: yes.')],
+    ['Esc', L('Cancel'), 'key', L('In the mode with marks: leave it and wipe the marks.')],
+    [L('Click'), L('Whole window'), 'key', L('In the mode with marks: the helper will see this whole window.')],
+    [L('Left button'), L('Frame'), 'key', L('In the mode with marks: drag with the left button held to frame a part of a window.')],
+    [L('Right button'), L('Arrow'), 'key', L('In the mode with marks: drag with the right button held, from the arrow’s tail to what it points at.')],
+  ] },
 ]
-const BLOCK = { w: 400, gap: 24, row: 140, head: 96, foot: 56, finer: 1.1 } // a block's width, the room between two, a row's height, the room for the title and under the rows
+const BLOCK = { w: 400, gap: 24, row: 140, key: 56, head: 96, foot: 56, finer: 1.1 } // a block's width, the room between two, a row's height (a key's row), the room for the title and under the rows
 // The backgrounds in their block: round pictures, a page of 3 x 3 (cell: a picture's room across, line: down, size:
 // its own), under them the arrows to the other pages (at `arrows`; the wheel turns the pages too); h: all of it.
 // A click on a picture shows that background at once.
@@ -1310,7 +1346,8 @@ function turnBgs(by) { // to the page before (-1) or after; the wheel comes in b
 }
 const FIELD = MENU.field * MENU.rows // its places, numbered by rows: 0 1 2 3 / 4 5 6 7 / ...
 // set: the settings show in place of the list; slider: the row whose slider is being moved; offAt: when the off button was pressed first
-const menu = { open: false, set: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, spot: null, press: null, drag: -1, slider: null, offAt: -1e9, layout: null }
+// over: the setting the pointer is on, since overAt; tip: the one whose tooltip shows (after it rested there for 0.7 s)
+const menu = { open: false, set: false, fade: 0, names: [], ids: [], icons: new Map(), drawn: '', at: 0, yaw: 0, spot: null, press: null, drag: -1, slider: null, offAt: -1e9, layout: null, over: null, overAt: 0, tip: null }
 let launchSpot // { yaw, pitch, at }: where the user looked before calling the list, for the window of what was started from it
 const menuTurn = new THREE.Quaternion() // head space -> the frame the ribbon hangs in: level, -Z at the middle of the field
 function openMenu() {
@@ -1343,8 +1380,9 @@ function menuLayout() {
   if (menu.set) { // a sheet of its own: the blocks from its left side on, the buttons over their middle
     const W = BLOCKS.length * BLOCK.w + (BLOCKS.length - 1) * BLOCK.gap, items = BLOCKS.flatMap((block, b) => {
       const x = b * (BLOCK.w + BLOCK.gap), over = block.bgs ? bgItems(x + 24, MENU.top + BLOCK.head) : [], y = MENU.top + BLOCK.head + (block.bgs ? BGS.h : 0)
-      return [{ n: -1, k: -1, block, x, y: MENU.top, w: BLOCK.w, h: y - MENU.top + block.rows.length * BLOCK.row + BLOCK.foot }, ...over,
-        ...block.rows.map(([key, label, kind], r) => ({ n: -1, k: -1, key, label, kind, x: x + 24, y: y + r * BLOCK.row, w: BLOCK.w - 48, h: BLOCK.row }))]
+      let down = y // (the words of a row and of its tooltip: in the language of the sphere; a key's name too, where it is a word)
+      const rows = block.rows.map(([key, label, kind, tip]) => ({ n: -1, k: -1, key, name: kind === 'key' ? tx(key) : key, label: tx(label), kind, tip: tip && tx(tip), x: x + 24, y: (down += kind === 'key' ? BLOCK.key : BLOCK.row) - (kind === 'key' ? BLOCK.key : BLOCK.row), w: BLOCK.w - 48, h: kind === 'key' ? BLOCK.key : BLOCK.row }))
+      return [{ n: -1, k: -1, block, x, y: MENU.top, w: BLOCK.w, h: down - MENU.top + BLOCK.foot }, ...over, ...rows]
     })
     return { pins, items: [...items, ...buttons(W / 2)], W, H: MENU.top + H, top: MENU.top, level: MENU.top + H / 2, field: [0, W], mid: W / 2, scale: w / (MENU.column * DEG) * sheetScale() * BLOCK.finer }
   }
@@ -1373,6 +1411,9 @@ function showMenu() { // every frame while the list shows: where it hangs, what 
     fetch('/bgs').then(answer => answer.json()).then(list => { bgs.list = list }).catch(() => {})
   }
   menu.layout = menuLayout()
+  const rested = menu.set && menu.open && !menu.slider ? menuSpot().item : null, over = rested?.tip ? rested.key : null
+  if (over !== menu.over) Object.assign(menu, { over, overAt: performance.now(), tip: null })
+  else if (over && performance.now() - menu.overAt > 700) menu.tip = over
   drawMenu()
   toMatrix3(uniforms.uToMenu.value, menuTurn.setFromAxisAngle(Y, -menu.yaw).multiply(head))
   const { W, H, level, mid, scale, items } = menu.layout, spot = menuSpot()
@@ -1432,6 +1473,10 @@ function byKeys(p) {
 function dropIcon(n, k) {
   change(settings, { menuPins: placeIcon(menu.layout.pins.map(id => menu.ids.includes(id) ? id : null), menu.ids[n], k) })
 }
+function pick(key, by) { // the language of the sphere, or the helper's voice: the next of them (by 1) or the one before (-1), round
+  const { lang, voice } = voiceOf(settings), all = key === 'lang' ? Object.keys(LANGS) : VOICES[lang].map(([name]) => name)
+  change(settings, { [key]: all[(all.indexOf(key === 'lang' ? lang : voice) + by + all.length) % all.length] })
+}
 function flip(key) { // a switch; the head movement begins with a look around the room
   change(settings, { [key]: !settings[key] })
   if (key === 'sixDof' && settings.sixDof) setParams({ scanCall: Date.now() })
@@ -1457,6 +1502,8 @@ function menuPress(e, down, left) {
     if (menu.drag >= 0) return // the release went unseen: the release of this press puts the icon down
     if (left && item?.button) return void (menu.press = { button: item.button })
     if (left && item?.kind === 'call') return void (menu.press = { call: item.key })
+    if (left && item?.kind === 'pick') return pick(item.key, spot.x < item.x + item.w / 2 ? -1 : 1) // its left half: the one before
+    if (left && item?.kind === 'key') return
     if (left && item?.key) return LAYOUT_SPEC[item.key] ? setSlider(menu.slider = item, spot.x) : flip(item.key) // a slider moves while the press lasts
     if (left && item?.bg) return void change(settings, { bg: item.bg })
     if (left && item?.turn) return turnBgs(item.turn)
@@ -1500,7 +1547,7 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
   const armed = performance.now() - menu.offAt < 3000
   const state = [menu.names.length, items.map(i => i.key ? settings[i.key] : i.n).join(), [...menu.icons.values()].filter(icon => icon.ready).length,
     settings.recording, settings.sixDof, settings.scanning, settings.roomReady, menu.set, armed, settings.camLabel, menu.slider?.key,
-    settings.bg, bgs.page, bgs.list.length, [...bgs.thumbs.values()].filter(thumb => thumb.ready).length].join()
+    settings.bg, bgs.page, bgs.list.length, [...bgs.thumbs.values()].filter(thumb => thumb.ready).length, menu.tip, settings.voicesHere, settings.voiceGetting, settings.lang].join()
   if (state === menu.drawn || performance.now() - menu.at < (menu.set ? 50 : 150)) return // icons arrive in a burst: not a new sheet for each (the settings' sheet is small: a slider follows at once)
   Object.assign(menu, { drawn: state, at: performance.now() })
   const fit = Math.min(1, 4096 / W) // a texture wider than 4096 px is not safe everywhere: a very long list is drawn coarser
@@ -1526,11 +1573,11 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
     if (item.button) { // a disc with a sign, its word below; coloured while what it stands for is on
       const cx = item.x + item.w / 2, cy = item.y + 82
       const [on, colour, word] = {
-        record: [settings.recording, '#e5484d', settings.recording ? 'Остановить запись' : 'Записать видео'],
+        record: [settings.recording, '#e5484d', settings.recording ? tx('Stop recording') : tx('Record video')],
         lean: [settings.sixDof && (settings.roomReady || settings.scanning), '#3584e4',
-          !settings.sixDof ? '6DoF выключен' : settings.scanning ? 'Идёт осмотр…' : settings.roomReady ? '6DoF включён' : 'Осмотреться'],
-        set: [menu.set, '#3584e4', menu.set ? 'К программам' : 'Настройки'],
-        off: [armed, '#e5484d', armed ? 'Нажмите ещё раз' : 'Выключить'],
+          !settings.sixDof ? tx('6DoF off') : settings.scanning ? tx('Looking around…') : settings.roomReady ? tx('6DoF on') : tx('Look around')],
+        set: [menu.set, '#3584e4', menu.set ? tx('To the programs') : tx('Settings')],
+        off: [armed, '#e5484d', armed ? tx('Press again') : tx('Switch off')],
       }[item.button]
       c.beginPath()
       c.arc(cx, cy, 72, 0, 7)
@@ -1571,10 +1618,10 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
     if (item.block) {
       ground(item.x, item.y, item.w, item.h, 'rgba(12, 16, 24, 0.82)')
       Object.assign(c, { fillStyle: '#fff', font: '600 36px system-ui, sans-serif' })
-      c.fillText(item.block.title, item.x + item.w / 2, item.y + 30)
+      c.fillText(tx(item.block.title), item.x + item.w / 2, item.y + 30)
       Object.assign(c, { fillStyle: '#9fb0c2', font: '500 24px system-ui, sans-serif' })
       c.fillText(fitLine(c, item.block.foot?.() ?? '', item.w - 48), item.x + item.w / 2, item.y + item.h - 42)
-      if (item.block.bgs) c.fillText(bgs.list.length ? `${bgs.page + 1} / ${bgs.pages}` : 'Загружается…', item.x + item.w / 2, item.y + BLOCK.head + BGS.arrows + 14)
+      if (item.block.bgs) c.fillText(bgs.list.length ? `${bgs.page + 1} / ${bgs.pages}` : tx('Loading…'), item.x + item.w / 2, item.y + BLOCK.head + BGS.arrows + 14)
       continue
     }
     if (item.bg) { // a background: the middle of its picture, round; a ring around the one that shows
@@ -1618,6 +1665,46 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
       c.lineTo(mx + 7 * item.turn, my)
       c.lineTo(mx - 7 * item.turn, my + 13)
       c.stroke()
+      continue
+    }
+    if (item.kind === 'key') { // a key and what it does: nothing to press, more in its tooltip
+      const mid = item.y + item.h / 2
+      c.font = '600 22px system-ui, sans-serif'
+      const cap = Math.max(92, c.measureText(item.name).width + 28)
+      Object.assign(c, { fillStyle: 'rgba(255, 255, 255, 0.12)', strokeStyle: 'rgba(255, 255, 255, 0.45)', lineWidth: 2 })
+      c.beginPath()
+      c.roundRect(item.x + 8, mid - 20, cap, 40, 10)
+      c.fill()
+      c.stroke()
+      c.fillStyle = '#fff'
+      c.fillText(item.name, item.x + 8 + cap / 2, mid - 12)
+      Object.assign(c, { textAlign: 'left', fillStyle: '#d8e2ec', font: '500 24px system-ui, sans-serif' })
+      c.fillText(fitLine(c, item.label, item.w - cap - 30), item.x + 8 + cap + 14, mid - 13)
+      Object.assign(c, { textAlign: 'center', lineWidth: 3 })
+      continue
+    }
+    if (item.kind === 'pick') { // one of a few: the words, and under them what is chosen between two arrows
+      const { lang, voice } = voiceOf(settings), file = voice.split('#')[0], mid = item.x + item.w / 2, y = item.y + item.h - 42
+      // a voice that is not on the PC yet has an arrow down behind its name; three dots while it is downloaded
+      const chosen = item.key === 'lang' ? LANGS[lang] : VOICES[lang].find(([name]) => name === voice)[1] + (settings.voiceGetting === file ? ' …' : settings.voicesHere?.includes(file) === false ? ' ↓' : '')
+      Object.assign(c, { textAlign: 'left', fillStyle: '#fff', font: '500 28px system-ui, sans-serif' })
+      c.fillText(item.label, item.x + 8, item.y + 16)
+      Object.assign(c, { textAlign: 'center', font: '600 28px system-ui, sans-serif' })
+      c.fillText(fitLine(c, chosen, item.w - 150), mid, y - 15)
+      for (const turn of [-1, 1]) {
+        const at = mid + turn * (item.w / 2 - 38)
+        c.fillStyle = 'rgba(255, 255, 255, 0.14)'
+        c.beginPath()
+        c.arc(at, y, 28, 0, 7)
+        c.fill()
+        Object.assign(c, { strokeStyle: '#fff', lineWidth: 5, lineCap: 'round', lineJoin: 'round' })
+        c.beginPath()
+        c.moveTo(at - 6 * turn, y - 12)
+        c.lineTo(at + 6 * turn, y)
+        c.lineTo(at - 6 * turn, y + 12)
+        c.stroke()
+      }
+      Object.assign(c, { lineWidth: 3, lineCap: 'butt', lineJoin: 'miter' })
       continue
     }
     if (item.key) { // the words on one or two lines; a slider's value at their right and its track under them, else a switch or a button at the right
@@ -1685,9 +1772,24 @@ function drawMenu() { // the whole sheet, drawn again only when the list, the fi
     c.font = `600 ${24 * k}px system-ui, sans-serif`
     twoLines(c, menu.names[item.n], item.w - 16 * k).forEach((line, j) => c.fillText(line, item.x + item.w / 2, item.y + 128 * k + j * 30 * k))
   }
-  const words = menu.set ? [] : !menu.names.length ? ['Список загружается…'] : empty ? ['Перетащите сюда', 'свои программы'] : []
+  const words = menu.set ? [] : !menu.names.length ? [tx('The list is loading…')] : empty ? [tx('Drag your programs'), tx('here')] : []
   Object.assign(c, { fillStyle: '#c8d4e0', font: '500 40px system-ui, sans-serif' })
   words.forEach((line, i) => c.fillText(line, (field[0] + field[1]) / 2, level - 52 + i * 56))
+  // The tooltip of the setting the pointer rests on: over everything, above its row where there is room, else under it
+  const tipped = menu.tip && items.find(i => i.key === menu.tip && i.tip)
+  if (tipped) {
+    Object.assign(c, { textAlign: 'left', font: '500 24px system-ui, sans-serif' })
+    const wide = 500, lines = twoLines(c, tipped.tip, wide - 40, 6).filter(Boolean), high = lines.length * 32 + 28
+    const x = Math.max(8, Math.min(W - wide - 8, tipped.x + tipped.w / 2 - wide / 2)), y = tipped.y - high - 6 > top ? tipped.y - high - 6 : tipped.y + tipped.h + 6
+    Object.assign(c, { fillStyle: 'rgba(6, 9, 14, 0.96)', strokeStyle: 'rgba(120, 190, 255, 0.7)', lineWidth: 2 })
+    c.beginPath()
+    c.roundRect(x, y, wide, high, 18)
+    c.fill()
+    c.stroke()
+    c.fillStyle = '#e8eef5'
+    lines.forEach((line, n) => c.fillText(line, x + 20, y + 16 + n * 32))
+    Object.assign(c, { textAlign: 'center', lineWidth: 3 })
+  }
   menuTexture.needsUpdate = true
 }
 
@@ -1702,7 +1804,7 @@ function setSlider({ key, x: x0, w }, x) {
 // number and its picture goes to the server at once: the frame's part alone, for an arrow the part around it with
 // the arrow drawn in. Nothing else of the screen is sent. The marks stay drawn until Claude has answered.
 const ASSIST = { across: 40, height: -21 } // the card's width and the height of its second line, degrees: it grows down from there
-const STATES = { listen: ['Режим Claude', '#3ec9c1'], think: ['Думаю', '#f0b23c'], do: ['Делаю', '#f0b23c'], done: ['Готово', '#57c97a'], ask: ['Вопрос', '#ff5533'], fail: ['Claude', '#9fb0c2'] }
+const STATES = { talk: [L('Live talk'), '#3ec9c1'], listen: [L('Claude mode'), '#3ec9c1'], think: [L('Thinking'), '#f0b23c'], do: [L('Working'), '#f0b23c'], done: [L('Done'), '#57c97a'], ask: [L('Question'), '#ff5533'], fail: ['Claude', '#9fb0c2'] }
 let assistSeen, assistFade = 0
 function assistFrom(card) { // from the settings: { n, state, text }, or null
   if (card?.n === assistSeen) return
@@ -1721,7 +1823,7 @@ function assistFrom(card) { // from the settings: { n, state, text }, or null
   c.arc(52, 44, 13, 0, 7)
   c.fill()
   Object.assign(c, { textAlign: 'left', textBaseline: 'top', fillStyle: '#fff', font: '700 32px system-ui, sans-serif' })
-  c.fillText(word, 80, 26)
+  c.fillText(tx(word), 80, 26)
   Object.assign(c, { fillStyle: '#d8e2ec', font: '400 30px system-ui, sans-serif' })
   lines.forEach((line, i) => c.fillText(line, 40, 78 + i * 38))
   toSheets(assistCanvas, SHEETS.assist)
@@ -1853,16 +1955,16 @@ let scanShown = 0, scanSaid = '', reminded = false
 function roomNote(p) {
   const now = performance.now(), say = (title, body, app = 'VR Workspace') => { note.until = now + NOTE.shown; drawNote(app, title, body) }
   if (p.sixDof && p.scanning && now - (scanShown ||= now) < SCAN + 5000) { // (a phone that went away while scanning: not for ever)
-    const left = `ещё ${Math.max(0, Math.ceil((SCAN + DARK - (now - scanShown)) / 1000))} с`
-    if (left !== scanSaid) say('Осмотритесь', 'Медленно поверните голову влево, вправо, вверх и вниз: так запоминается комната', `Движение головы · ${scanSaid = left}`)
+    const left = tx('{0} s more', Math.max(0, Math.ceil((SCAN + DARK - (now - scanShown)) / 1000)))
+    if (left !== scanSaid) say(tx('Look around you'), tx('Slowly turn your head left, right, up and down: this is how the room is remembered'), tx('Head movement · {0}', scanSaid = left))
   } else if (scanShown && !p.scanning) {
     scanShown = 0
     scanSaid = ''
-    if (p.sixDof) say(p.roomReady ? 'Комната запомнена' : 'Осмотр не удался', p.roomReady ? 'Наклон к окну теперь приближает его, поворот головы ничего не двигает'
-      : 'Мало ориентиров: камере нужны предметы, не пустая стена и не темнота. Кнопка 6D над списком программ: ещё раз')
+    if (p.sixDof) say(p.roomReady ? tx('The room is remembered') : tx('The look around failed'), p.roomReady ? tx('Leaning toward a window now brings it nearer; turning the head moves nothing')
+      : tx('Too few landmarks: the camera needs things to see, not a bare wall or the dark. The 6D button over the list of programs: once more'))
   } else if (!reminded && tapped && !SPECTATOR && p.sixDof && !p.roomReady && !p.scanning && now > 8000) {
     reminded = true
-    say('Движение головы ждёт осмотра', 'Когда сядете: список программ (Super), кнопка 6D, и оглядитесь по сторонам')
+    say(tx('Head movement waits for a look around'), tx('When you are seated: the list of programs (Super), the 6D button, and look around'))
   }
 }
 function drawNote(app, title, body, icon) {
@@ -2130,7 +2232,7 @@ button.onclick = async () => {
   // such thing for a page; there the home screen icon gives the whole screen.
   if (!SPECTATOR && !GLASSES) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {})
   const answer = GLASSES ? 'granted' : await (window.DeviceOrientationEvent?.requestPermission?.().catch(() => 'denied') ?? 'granted') // a PC has no motion sensors to ask for
-  if (answer !== 'granted') return void (button.textContent = 'Нет доступа к датчикам движения. Разрешите его в настройках Safari и обновите страницу.')
+  if (answer !== 'granted') return void (button.textContent = tx('No access to the motion sensors. Allow it in Safari’s settings and reload the page.'))
   button.hidden = true
   bgVideo?.play().catch(() => {})
   keepAwake()

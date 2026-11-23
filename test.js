@@ -4,7 +4,8 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 import { blocked, cleanOrder, foreign, passKey, wrongKey } from './orders.js'
-import { KEYCODES, besidePanel, complete, placeIcon, resizeWindow, snapPanel } from './app/params.js'
+import { KEYCODES, VOICES, besidePanel, complete, placeIcon, resizeWindow, snapPanel, voiceOf } from './app/params.js'
+import { LANGS, TEXTS, tr } from './app/words.js'
 import { space } from './app/track.js'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
@@ -13,7 +14,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { claudeProgram, clipOf, codeFind, codeFolders, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, shownOf, sigDiff,
+import { DOING, claudeProgram, clipOf, codeFind, codeFolders, echoOf, editorProgram, fileNamed, inMark, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, saidStop, saidYes, settingsPatch, settingsTold, shownOf, sigDiff,
   tasksText, userFolder, userFolders } from './assist.js'
 
 const RAD = Math.PI / 180
@@ -408,6 +409,9 @@ test('what the helper may open: a program by its name or a part of it, web links
     assert.throws(() => fileNamed('key', home, folders), /No file or folder is named like "key".*The newest there/)   // hidden folders are not looked into
     for (const not of ['~/.ssh/id_rsa', '~/Documents/.hidden/key.txt', path.join(other, 'secret.txt'), '~/Documents/../.ssh/id_rsa', '/etc/passwd', '~/nothing']) assert.throws(() => fileNamed(not, home, folders), /no such file among the user's own/, not)
     assert.equal(fileNamed('secret', home, userFolders(home, other)), path.join(other, 'secret.txt'))        // a folder named in the setting
+    fs.symlinkSync(path.join(home, '.ssh'), path.join(home, 'Documents/keys'))                                 // a link that leads to what is hidden
+    fs.symlinkSync(other, path.join(home, 'Documents/elsewhere'))                                              // and one that leads out of the user's folders
+    for (const name of ['keys', 'elsewhere']) assert.throws(() => fileNamed(name, home, folders), /no such file among the user's own/, name)
   } finally {
     fs.rmSync(home, { recursive: true })
     fs.rmSync(other, { recursive: true })
@@ -495,4 +499,48 @@ test('a clip of before and after is made of two pictures', async () => {
   } finally {
     fs.rmSync(folder, { recursive: true })
   }
+})
+
+test('the helper\'s own voice come back through the microphone is told from what the user says', () => {
+  const spoken = 'Сейчас в сфере открыто одно окно: браузер со страницей магазина. Оно стоит прямо перед вами.'
+  assert.equal(echoOf('в сфере открыто одно окно браузер со страницей', spoken), true)   // a part of it, as the ears made it out
+  assert.equal(echoOf('Сейчас в сфере открыта одна окна, браузер со страницей магазина', spoken), true) // with a few words misheard
+  assert.equal(echoOf('Закрой это окно', spoken), false)                                    // the user's own words, though "окно" is among the helper's
+  assert.equal(echoOf('Окно', spoken), false)                                               // one word is never an echo: "да", "стоп"
+  assert.equal(echoOf('сделай фон темнее', ''), false)
+})
+
+test('every text shown in the sphere has its Russian and its French, and the dictionary holds nothing else', () => {
+  const used = new Set()
+  // tx('…') and L('…') on the page, t('…') on the server and in the helper: a text written in English as the dictionary names it
+  for (const file of ['app/main.js', 'server.js', 'assist.js']) for (const [, text] of fs.readFileSync(file, 'utf8').matchAll(/\b(?:tx|t|L)\('((?:[^'\\]|\\.)*)'/g)) used.add(text.replace(/\\'/g, "'"))
+  // what Claude is doing, as the card says it: every answer of every tool's words
+  const inputs = [undefined, {}, ...['record', 'recenter', 'look_around', 'switch_off', 'save', 'restore', 'list', 'forget'].map(action => ({ action })), { how: 'out' }, { stop: true }, { step: 'before' }]
+  for (const words of Object.values(DOING)) for (const input of inputs) used.add(words(input, text => text)[0])
+  for (const lang of ['ru', 'fr']) {
+    assert.deepEqual([...used].filter(text => !TEXTS[lang][text]).sort(), [], `shown, with no ${LANGS[lang]}`)
+    assert.deepEqual(Object.keys(TEXTS[lang]).filter(text => !used.has(text)).sort(), [], `${LANGS[lang]} for a text that nothing shows`)
+    for (const [text, own] of Object.entries(TEXTS[lang])) assert.deepEqual(own.match(/\{\d\}/g)?.sort(), text.match(/\{\d\}/g)?.sort(), `the values of "${text}" in ${LANGS[lang]}`)
+  }
+  assert.equal(tr('fr', 'Close the window “{0}”?', 'Firefox'), 'Fermer la fenêtre « Firefox » ?')
+  assert.equal(tr('ru', 'Monitor {0} ({1})', 2, 'HDMI-2'), 'Монитор 2 (HDMI-2)')
+  assert.equal(tr('en', 'Picture'), 'Picture')                 // English is what the code says
+  assert.equal(tr(undefined, 'Picture'), 'Picture')            // before the settings have come
+  assert.equal(tr('de', 'Camera: {0}', 'wide'), 'Camera: wide') // a language that is not ours: English
+})
+
+test('the helper\'s language is the sphere\'s, its voice one of that language\'s', () => {
+  assert.deepEqual(Object.keys(VOICES), Object.keys(LANGS))
+  assert.deepEqual(voiceOf({}), { lang: 'en', voice: 'en_US-amy-medium' })                                    // nothing set: English, its first voice
+  assert.deepEqual(voiceOf({ lang: 'fr', assistVoice: 'fr_FR-upmc-medium#pierre' }), { lang: 'fr', voice: 'fr_FR-upmc-medium#pierre' })
+  assert.deepEqual(voiceOf({ lang: 'fr', assistVoice: 'ru_RU-denis-medium' }), { lang: 'fr', voice: 'fr_FR-siwis-medium' }) // a voice of another language: this one's first
+  assert.deepEqual(voiceOf({ lang: 'uk', assistVoice: 'x' }), { lang: 'en', voice: 'en_US-amy-medium' })       // a language that is not ours
+})
+
+test('a yes to the helper\'s question is a clear yes: not "да нет", not a word that only begins like one', () => {
+  for (const [said, lang] of [['Да.', 'ru'], ['Да, закрывай', 'ru'], ['давай', 'ru'], ['Yes, close it.', 'en'], ['OK', 'en'], ['Oui.', 'fr'], ['D’accord, ferme-la', 'fr']]) assert.equal(saidYes(said, lang), true, said)
+  for (const [said, lang] of [['Да нет, не надо', 'ru'], ['Давай не будем', 'ru'], ['Да подожди', 'ru'], ['данные', 'ru'], ['Нет', 'ru'], ['', 'ru'], ['OK, wait', 'en'], ['yes... no, don\'t', 'en'], ['yesterday', 'en'],
+    ['Oui, non, attends', 'fr'], ['Non', 'fr'], ['Oui mais n\'envoie pas', 'fr'], ['да', 'en'], ['yes', 'ru']]) assert.equal(saidYes(said, lang), false, said)
+  for (const said of ['Стоп.', 'отмена', 'Stop!', 'Annule.', ' хватит ']) assert.equal(saidStop(said), true, said)
+  for (const said of ['стоп машина', 'остановка', 'non-stop music']) assert.equal(saidStop(said), false, said)
 })

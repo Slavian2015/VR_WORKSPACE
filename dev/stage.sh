@@ -10,7 +10,13 @@ P=$(cd "$(dirname "$0")/.." && pwd); D=$1
 mkdir -p "$D"; cd "$D"
 for f in app node_modules bin package.json orders.js assist.js assist-tools.js cert.sh raw.py; do ln -sfn "$P/$f" "$f"; done
 rm -rf certs; cp -r "$P/certs" certs # a copy: the server may make a new certificate and key, the real ones must stay
-sed -e 's/listen(8080/listen(18080/' -e 's/listen(8443)/listen(18443)/' -e 's/127.0.0.1:8889/127.0.0.1:18889/' -e 's/RAW_PORT = 8700/RAW_PORT = 18700/' "$P/server.js" > server.js
+# The helper there looks for code and for files only in the folders of the settings assistCode and assistFolders:
+# never in those your VS Code has open, nor in your documents (what is found goes to Claude).
+sed -e 's/listen(8080/listen(18080/' -e 's/listen(8443)/listen(18443)/' -e 's/127.0.0.1:8889/127.0.0.1:18889/' -e 's/RAW_PORT = 8700/RAW_PORT = 18700/' \
+  -e "s|codeFolders(os.homedir(), params.assistCode)|codeFolders('/nowhere', params.assistCode)|" \
+  -e "s|fileNamed(wish.file, os.homedir(), userFolders(os.homedir(), params.assistFolders))|fileNamed(wish.file, '/nowhere', userFolders('/nowhere', params.assistFolders))|" "$P/server.js" > server.js
+grep -q "codeFolders('/nowhere', params.assistCode)" server.js && grep -q "fileNamed(wish.file, '/nowhere'" server.js \
+  || { echo "stage.sh: server.js has changed, cannot keep its test copy out of your code folders and files" >&2; exit 1; }
 sed -e 's/:8554/:18554/' -e 's/:8889/:18889/' -e 's/:8189/:18189/' -e 's/:1935/:11935/' "$P/mediamtx.yml" > mediamtx.yml
 # The encoders on the processor (x264): the GPU's video engine can hang, and a hang there freezes the real desktop
 # too (2026-11-21). Every replacement must take place: one that silently did not would let a test use that engine.
@@ -56,8 +62,17 @@ PY
 import sys
 s, old = open(sys.argv[1]).read(), "RECORD = ['parec', '--format=s16le', '--rate=16000', '--channels=1', '--latency-msec=40']"
 assert s.count(old) == 1 and s.count("'parec'") == 1, 'stage.sh: listen.py has changed, cannot take the microphone out of its test copy'
-print(s.replace(old, "RECORD = ['ffmpeg', '-v', 'quiet', '-re', '-i', os.environ.get('VR_TEST_SPEECH', '/dev/null'), '-f', 's16le', '-ar', '16000', '-ac', '1', '-']"), end='')
+# (a named pipe: raw sound as its writer gives it, for a talk whose phrases come when the test decides)
+print(s.replace(old, '''RECORD = ['sh', '-c', 'if [ -p "$VR_TEST_SPEECH" ]; then exec cat "$VR_TEST_SPEECH"; else exec ffmpeg -v quiet -re -i "${VR_TEST_SPEECH:-/dev/null}" -f s16le -ar 16000 -ac 1 -; fi']'''), end='')
+PY
+# Its voice sounds nowhere there: each thing spoken becomes a sound file in the folder VR_TEST_SPOKEN, written at
+# the speed it would be heard at (so that speaking can be interrupted). Never the real sound output.
+/usr/bin/python3 - "$P/speak.py" > speak.py <<'PY'
+import sys
+s, old = open(sys.argv[1]).read(), "PLAY = ['pacat', '--format=s16le', '--channels=1', '--latency-msec=60']"
+assert s.count(old) == 1 and s.count("'pacat'") == 1, 'stage.sh: speak.py has changed, cannot take the sound output out of its test copy'
+print(s.replace(old, '''PLAY = ['sh', '-c', 'exec ffmpeg -v quiet -re -f s16le -ac 1 -ar "${1#--rate=}" -i - -y "${VR_TEST_SPOKEN:-/tmp}/$(date +%s%N).wav"', 'play']'''), end='')
 PY
 [ -d "$P/.speech" ] && ln -sfn "$P/.speech" .speech
-chmod +x capture.py windows.py mic.py
+chmod +x capture.py windows.py mic.py speak.py
 [ -f params.json ] || echo '{"virtual": 0}' > params.json
