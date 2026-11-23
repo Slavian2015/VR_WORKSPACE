@@ -67,14 +67,23 @@ export function placeIcon(pins, id, k) {
   return out
 }
 
+const turn = a => ((a + 540) % 360) - 180
+const halfTurn = (w, pitch) => Math.atan(Math.tan(w / 2 * DEG) / Math.cos(pitch * DEG)) / DEG
+// Where a panel goes to stand beside another one (side: left, right, above, below), `gap` degrees apart, as snapPanel
+// would leave it there: at its height to a side, in line with it above or below. Panels as for snapPanel.
+export function besidePanel(moving, o, side, gap = 2) {
+  if (side === 'above' || side === 'below') return { yaw: o.yaw, pitch: o.pitch + (side === 'above' ? 1 : -1) * ((moving.h + o.h) / 2 + gap) }
+  const away = halfTurn(moving.w, o.pitch) + halfTurn(o.w, o.pitch) + gap / Math.cos(o.pitch * DEG)
+  return { yaw: turn(o.yaw + (side === 'right' ? away : -away)), pitch: o.pitch }
+}
+
 // Where a panel being carried is drawn to: within `reach` degrees of lining up with another panel it goes there (side
 // by side or one over the other `gap` apart, edges or middles in line). Panels: { yaw, pitch, w, h }
 // in degrees, yaw to the right, pitch up, w and h what they take in the view. Returns { yaw, pitch, to }: to is the
 // index of the panel it lined up with, or -1. Above or below the eyes a degree of turn is less than a degree across,
 // so half a panel's width takes more turn there (halfTurn: to the middle of its side).
 export function snapPanel(moving, others, reach = 3, gap = 2) {
-  const turn = a => ((a + 540) % 360) - 180, off = o => turn(moving.yaw - o.yaw)
-  const halfTurn = (w, pitch) => Math.atan(Math.tan(w / 2 * DEG) / Math.cos(pitch * DEG)) / DEG
+  const off = o => turn(moving.yaw - o.yaw)
   const best = { yaw: moving.yaw, pitch: moving.pitch, to: -1 }
   let miss = reach
   others.forEach((o, i) => { // first the height, if it is beside or over another: over or under it, middles, tops or bottoms in line

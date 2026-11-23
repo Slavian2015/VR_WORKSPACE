@@ -4,12 +4,15 @@ import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
 import { blocked, cleanOrder, foreign, passKey, wrongKey } from './orders.js'
-import { KEYCODES, placeIcon, resizeWindow, snapPanel } from './app/params.js'
+import { KEYCODES, besidePanel, complete, placeIcon, resizeWindow, snapPanel } from './app/params.js'
 import { space } from './app/track.js'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { claudeProgram, settingsPatch, settingsTold } from './assist.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { claudeProgram, fileNamed, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, userFolders } from './assist.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -314,7 +317,11 @@ test('the helper\'s tools answer Claude\'s requests and pass them on to the serv
   try {
     assert.equal((await ask(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'vr-sphere')
     tools.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n') // a notice gets no answer
-    assert.deepEqual((await ask(2, 'tools/list')).result.tools.map(t => t.name), ['sphere_settings', 'sphere_set', 'sphere_do', 'sphere_marks'])
+    assert.deepEqual((await ask(2, 'tools/list')).result.tools.map(t => t.name), ['sphere_settings', 'sphere_set', 'sphere_do', 'sphere_marks', 'sphere_windows', 'sphere_open', 'sphere_place', 'sphere_close', 'sphere_type', 'sphere_layout'])
+    await ask(7, 'tools/call', { name: 'sphere_windows', arguments: {} })
+    assert.deepEqual(asked.at(-1), ['GET', '/assist/windows', ''])
+    await ask(8, 'tools/call', { name: 'sphere_place', arguments: { panel: 'w0', beside: { panel: 'm0', side: 'right' } } })
+    assert.deepEqual(asked.at(-1), ['POST', '/assist/place', '{"panel":"w0","beside":{"panel":"m0","side":"right"}}'])
     assert.deepEqual((await ask(3, 'tools/call', { name: 'sphere_set', arguments: { changes: { bgDim: 40 } } })).result.content, [{ type: 'text', text: '{"now":{"bgDim":40}}' }])
     assert.deepEqual(asked.at(-1), ['POST', '/assist/settings', '{"changes":{"bgDim":40}}'])
     assert.deepEqual((await ask(4, 'tools/call', { name: 'sphere_marks', arguments: {} })).result.content,
@@ -327,4 +334,100 @@ test('the helper\'s tools answer Claude\'s requests and pass them on to the serv
     tools.kill()
     server.close()
   }
+})
+
+// --- the helper and the windows
+// A sphere for the tests: a monitor ahead and two windows, as server.js lists the panels
+const PANELS = [{ id: 'm0', name: 'HDMI-2' }, { id: 'w0', name: 'main.js — VR_WORKSPACE — Visual Studio Code', app: 'Visual Studio Code', appId: 'code.desktop', window: true, crop: [20, 20, 1200, 800], focused: true },
+  { id: 'w1', name: 'Site', app: 'Firefox', appId: 'firefox.desktop', window: true, crop: [0, 0, 1000, 1000] }]
+const sphere = more => complete({ virtualSizes: ['1920x1080'], monitors: PANELS, 'm0.span': 60, 'w0.yaw': 40, 'w0.pitch': 10, 'w0.span': 30, 'w0.dist': 1.5, 'w1.yaw': -50, 'w1.pitch': 0, 'w1.span': 40, 'w1.dist': 2, ...more })
+
+test('a panel put beside another stands where carrying it there by hand would leave it', () => {
+  const other = { yaw: 10, pitch: 20, w: 40, h: 25 }, mine = { w: 30, h: 20 }
+  for (const side of ['left', 'right', 'above', 'below']) {
+    const at = besidePanel(mine, other, side), kept = snapPanel({ ...mine, ...at }, [other])
+    assert.ok(Math.abs(kept.yaw - at.yaw) < 1e-9 && Math.abs(kept.pitch - at.pitch) < 1e-9 && kept.to === 0, side)
+  }
+  assert.ok(besidePanel(mine, other, 'right').yaw > 10 + 35 && besidePanel(mine, other, 'left').yaw < 10 - 35) // half of each and the gap, more than that above the eyes
+  assert.equal(besidePanel(mine, other, 'above').pitch, 20 + 22.5 + 2)
+})
+
+test('the helper is told the panels: where each hangs, how much of the view it takes, which one was looked at', () => {
+  const told = panelsTold(sphere({ 'm0.hidden': true }), PANELS, 'w1')
+  assert.deepEqual(told[0], { panel: 'm0', kind: 'monitor', title: 'HDMI-2', yaw: 0, pitch: 0, width: 60, height: 33.8, dist: 1.5, hidden: true })
+  assert.deepEqual(told[1], { panel: 'w0', kind: 'window', title: 'main.js — VR_WORKSPACE — Visual Studio Code', program: 'Visual Studio Code', yaw: 40, pitch: 10, width: 30, height: 20, dist: 1.5, keyboard: true })
+  assert.deepEqual(told[2], { panel: 'w1', kind: 'window', title: 'Site', program: 'Firefox', yaw: -50, pitch: 0, width: 30, height: 30, dist: 2, looked: true }) // 40 degrees at 1.5 m are 30 at 2 m
+})
+
+test('the helper places a panel: numbers into their ranges, the size in the view kept apart from the distance, beside another one', () => {
+  const all = sphere()
+  assert.deepEqual(placePatch(all, PANELS, 'w0', { yaw: 200, pitch: -90 }), { 'w0.yaw': -160, 'w0.pitch': -60 })
+  assert.deepEqual(placePatch(all, PANELS, 'w1', { width: 45 }), { 'w1.span': 60 })            // 45 degrees seen from 2 m
+  assert.deepEqual(placePatch(all, PANELS, 'w1', { dist: 1 }), { 'w1.dist': 1 })                // nearer alone: larger in the view, as a real screen
+  assert.deepEqual(placePatch(all, PANELS, 'w1', { dist: 1, width: 30 }), { 'w1.dist': 1, 'w1.span': 20 })
+  // to the right of the code window, at its height: half of each (15.2 and 15.2 of turn at 10 degrees up) and the gap of 2
+  assert.deepEqual(placePatch(all, PANELS, 'w1', { beside: { panel: 'w0', side: 'right' } }), { 'w1.yaw': 72, 'w1.pitch': 10 })
+  assert.equal(placePatch(all, PANELS, 'w1', { beside: { panel: 'w0', side: 'below' } })['w1.pitch'], 10 - (20 + 30) / 2 - 2)
+  assert.throws(() => placePatch(all, PANELS, 'w7', { yaw: 0 }), /no panel "w7".*m0, w0, w1/)
+  assert.throws(() => placePatch(all, PANELS, 'w0', {}), /Say where/)
+  assert.throws(() => placePatch(all, PANELS, 'w0', { yaw: 'left' }), /takes a number/)
+  assert.throws(() => placePatch(all, PANELS, 'w0', { beside: { panel: 'w0', side: 'left' } }), /another panel/)
+  assert.throws(() => placePatch(all, PANELS, 'w0', { beside: { panel: 'w1', side: 'behind' } }), /left, right, above or below/)
+})
+
+test('what the helper may open: a program by its name or a part of it, web links only, files of the user only', () => {
+  const apps = [{ id: 'org.gnome.TextEditor.desktop', name: 'Текстовый редактор' }, { id: 'firefox_firefox.desktop', name: 'Firefox' }, { id: 'org.gnome.Nautilus.desktop', name: 'Файлы' }]
+  const program = name => meant(apps.map(a => a.name), name, 'program', apps.map(a => a.id))
+  assert.equal(program('firefox'), 1)
+  assert.equal(program('редактор'), 0)
+  assert.equal(program('nautilus'), 2) // by GNOME's id, when the name is in another language
+  assert.throws(() => program('gnome'), /Several programs fit "gnome": Текстовый редактор, Файлы/)
+  assert.throws(() => program('Blender'), /no program "Blender". There are: Текстовый редактор, Firefox, Файлы/)
+
+  assert.equal(linkOf('youtube.com/watch?v=1'), 'https://youtube.com/watch?v=1')
+  assert.equal(linkOf('localhost:3000'), 'http://localhost:3000/')
+  for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'mailto:a@b.c', 'https://user:pass@site.com', '', 'http://']) assert.throws(() => linkOf(bad), /web address/, bad)
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-home-')), other = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-other-'))
+  try {
+    for (const file of ['Documents/work/report 2026.pdf', 'Documents/notes.txt', 'Downloads/report-old.pdf', 'Documents/.hidden/key.txt', '.ssh/id_rsa', '.config/user-dirs.dirs']) {
+      fs.mkdirSync(path.dirname(path.join(home, file)), { recursive: true })
+      fs.writeFileSync(path.join(home, file), file.endsWith('.dirs') ? 'XDG_DOCUMENTS_DIR="$HOME/Documents"\nXDG_DOWNLOAD_DIR="$HOME/Downloads"\nXDG_TEMPLATES_DIR="$HOME/"\nXDG_MUSIC_DIR="$HOME/Music"\n' : 'x')
+    }
+    fs.writeFileSync(path.join(other, 'secret.txt'), 'x')
+    const folders = userFolders(home)
+    assert.deepEqual(folders, [path.join(home, 'Documents'), path.join(home, 'Downloads')]) // not the home folder itself, not one that is missing
+    assert.equal(fileNamed('notes', home, folders), path.join(home, 'Documents/notes.txt'))
+    assert.equal(fileNamed('report 2026', home, folders), path.join(home, 'Documents/work/report 2026.pdf'))
+    assert.equal(fileNamed('downloads', home, folders), path.join(home, 'Downloads'))                       // a folder by its name
+    assert.equal(fileNamed('~/Documents/notes.txt', home, folders), path.join(home, 'Documents/notes.txt'))
+    assert.throws(() => fileNamed('report', home, folders), /Several fit "report".*report 2026\.pdf.*report-old\.pdf|Several fit "report".*report-old\.pdf.*report 2026\.pdf/)
+    assert.throws(() => fileNamed('key', home, folders), /No file or folder is named like "key".*The newest there/)   // hidden folders are not looked into
+    for (const not of ['~/.ssh/id_rsa', '~/Documents/.hidden/key.txt', path.join(other, 'secret.txt'), '~/Documents/../.ssh/id_rsa', '/etc/passwd', '~/nothing']) assert.throws(() => fileNamed(not, home, folders), /no such file among the user's own/, not)
+    assert.equal(fileNamed('secret', home, userFolders(home, other)), path.join(other, 'secret.txt'))        // a folder named in the setting
+  } finally {
+    fs.rmSync(home, { recursive: true })
+    fs.rmSync(other, { recursive: true })
+  }
+})
+
+test('an arrangement is kept and brought back: each kept window is the open one of its program whose title fits best', () => {
+  const kept = layoutOf(sphere({ hideMonitors: true }), [...PANELS, { id: 'w2', name: 'Open file', app: 'Firefox', appId: 'firefox.desktop', window: true, crop: [0, 0, 600, 400], over: 'w1' }])
+  assert.equal(kept.hideMonitors, true)
+  assert.deepEqual(kept.panels.map(p => p.id ?? p.appId), ['m0', 'code.desktop', 'firefox.desktop']) // the dialog is not kept
+  assert.deepEqual(kept.panels[1], { appId: 'code.desktop', app: 'Visual Studio Code', title: 'main.js — VR_WORKSPACE — Visual Studio Code', w: 1200, yaw: 40, pitch: 10, span: 30, dist: 1.5, curve: 100 })
+  const open = [{ id: 1, appId: 'code.desktop', title: 'index.ts — shop — Visual Studio Code' }, { id: 2, appId: 'code.desktop', title: 'server.js — VR_WORKSPACE — Visual Studio Code' },
+    { id: 3, appId: 'firefox.desktop', title: 'Save as', parent: 9 }, { id: 4, appId: 'org.gnome.Nautilus.desktop', title: 'Home' }]
+  // the code window of the same project, though another file is open in it now; Firefox has only a dialog open: to be started
+  assert.deepEqual(layoutWindows(kept, open).map(({ entry, window }) => [entry.app, window]), [['Visual Studio Code', 2], ['Firefox', undefined]])
+  // two kept windows of one program: each open window is taken once
+  const two = { panels: [{ appId: 'a', title: 'one' }, { appId: 'a', title: 'two' }, { appId: 'a', title: 'three' }] }
+  assert.deepEqual(layoutWindows(two, [{ id: 7, appId: 'a', title: 'two' }, { id: 8, appId: 'a', title: 'zero' }]).map(m => m.window), [8, 7, undefined])
+})
+
+test('"this window" is the panel looked at longest while speaking, not the glance at the keyboard for the key', () => {
+  const looks = [{ id: 'w0', yaw: 40, pitch: 10, at: 0 }, { id: 'w0', yaw: 44, pitch: 12, at: 500 }, { id: 'w1', yaw: -50, pitch: 0, at: 4000 }, { id: '', yaw: 0, pitch: -55, at: 4600 }]
+  assert.deepEqual(lookedMost(looks, 12000), { id: 'w0', yaw: 44, pitch: 12 }) // the longer of its two looks; the 7 s at nothing do not count
+  assert.deepEqual(lookedMost([{ id: '', yaw: 5, pitch: -3, at: 0 }], 1000), { id: '', yaw: 5, pitch: -3 }) // no panel at all: where one looked
+  assert.equal(lookedMost([], 1000), null)
 })

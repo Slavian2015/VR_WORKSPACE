@@ -180,6 +180,7 @@ app/bg/
 /bin/
 /certs/
 /params.json*
+/layouts.json*
 .connectors.json
 
 .cable.json*

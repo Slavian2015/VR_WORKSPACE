@@ -721,11 +721,12 @@ watchParams(p => {
   // a start from the list of applications opens where the user looked before calling the list. Any other window
   // opens where the user is looking, at the distance of the setting windowDist, as large as it would be at 1.5 m
   // with one of its pixels on one pixel of the screen there (text as sharp as it can be: the picture arrives as sharp
-  // as on the PC); farther it is smaller. (Windows that were there when the page started keep their places.)
+  // as on the PC); farther it is smaller. (Windows that were there when the page started keep their places, and so
+  // does one the server has placed: `placed`, a window of an arrangement the helper brought back.)
   const perDegree = pxPerDegree(p)
   for (const m of p.monitors) {
     const { id, window, over, crop } = m
-    if (!window || monitorIds === undefined || monitorIds.split(',').includes(key(m)) || !tapped || SPECTATOR || sensorOnly() || document.hidden) continue
+    if (!window || m.placed || monitorIds === undefined || monitorIds.split(',').includes(key(m)) || !tapped || SPECTATOR || sensorOnly() || document.hidden) continue
     const parent = p.monitors.find(o => o.id === over), started = Date.now() - (launchSpot?.at ?? 0) < 20000
     const gaze = parent ? { yaw: p[`${over}.yaw`], pitch: p[`${over}.pitch`] } : started ? launchSpot : gazeInLayout(anchor, head)
     if (!parent && started) launchSpot = undefined
@@ -887,6 +888,7 @@ renderer.setAnimationLoop(now => {
     pointed = { i, u: pu, v: pv, edge: crop && edge.some(Boolean) ? edge : null }
   })
   glow()
+  tellGaze(now)
   showMarks()
   showArranging()
   point(dt)
@@ -1167,6 +1169,17 @@ document.addEventListener('visibilitychange', () => document.hidden && releaseKe
 // catches then, works too: see arrange). A panel is taken anywhere with the left button and goes with the pointer
 // and the head; it is drawn to its neighbours. A side or corner of a window changes the size of the window itself,
 // on the PC; its panel grows with it, the text keeping its size.
+// For the helper: which panel is under the centre of the view and where the view points in the layout. Told when
+// the panel changes; in the helper's mode also as the view moves, for what "this window" and "here" mean in what is
+// said (server.js). At most four times a second.
+let gazeTold = { id: '', yaw: 0, pitch: 0, at: 0 }
+function tellGaze(now) {
+  if (!tapped || SPECTATOR || sensorOnly() || document.hidden || now - gazeTold.at < 250) return
+  const id = settings.monitors[looked]?.id ?? '', { yaw, pitch } = gazeInLayout(anchor, head)
+  if (id === gazeTold.id && !(settings.assistOn && Math.hypot(yaw - gazeTold.yaw, pitch - gazeTold.pitch) > 4)) return
+  gazeTold = { id, yaw, pitch, at: now }
+  setParams({ looked: [id, Math.round(yaw), Math.round(pitch)] })
+}
 let pointed = { i: -1 } // the panel under our pointer: { i, u, v (0..1 from its top left), edge: [left, right, top, bottom] or null }
 let resizing            // { i, id, source, edge, from: { w, h, span, yaw, pitch, dist }, start: the pointer then, w, h, span, yaw, pitch, sent }
 let fitting             // { id, source, edge, from, w, h, at }: a window let go after resizing (w, h: the size asked for; at: when)

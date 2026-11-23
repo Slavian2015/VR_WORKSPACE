@@ -7,11 +7,11 @@ import os from 'node:os'
 import net from 'node:net'
 import crypto from 'node:crypto'
 import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
 import { cleanOrder, HOME, blocked, foreign, passKey, wrongKey } from './orders.js'
-import { ask, settingsPatch, settingsTold } from './assist.js'
+import { ask, fileNamed, layoutOf, layoutWindows, linkOf, lookedMost, meant, panelsTold, placePatch, settingsPatch, settingsTold, userFolders } from './assist.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -108,8 +108,10 @@ setInterval(() => {
 // --- single application windows in the headset. The GNOME extension tells which windows are open and which of them
 // the user wants there; windows.py records those and works them. A wanted window that is open takes a slot and is
 // one more panel in the list of monitors, cut out of its stream (`crop`: left, top, width, height in the picture).
-// Eight: each is a stream of its own (12 Mbit/s, a hardware encoder, about 200 MB of graphics memory), and dialogs count.
-const WINDOW_SLOTS = Array.from({ length: 8 }, (_, i) => `w${i}`)
+// Ten at most, dialogs counted: each is a stream of its own (12 Mbit/s, a hardware encoder; what ten cost was
+// measured on the stand, see the README). And monitors and windows together at most PANELS: the page's shader takes
+// one texture for each and five for itself, and a phone's browser (and Chromium) gives a shader sixteen.
+const WINDOW_SLOTS = Array.from({ length: 10 }, (_, i) => `w${i}`), PANELS = 11
 let openWindows = []            // [{ id, title, w, h, left, top, parent }], as the extension last told; parent: the window a dialog belongs to, or 0
 const wantedWindows = new Map() // GNOME's window id -> slot, in the order they came into the headset
 let activeWindow = null, activeAt = 0, activeSince = 0 // the window the headset's pointer is in, when it last did something there, and since when
@@ -130,6 +132,11 @@ let assistN = 0, cardTimer, asking = null, confirming = null, pages = null
 let marking = false             // marks are taken: from the mode's start until the request leaves (a mark made just before the second press is still on its way then)
 let marks = []                  // { n, kind: window | frame | arrow, id: the panel, rect: [u0, v0, u1, v1] from its top left, about, png }
 const exchanges = []            // the last few: { at, said, answer }, so that "a bit more" is understood
+// Where the user looks, as the working page tells it when that changes (POST /params, `looked`): the panel under the
+// centre of the view ('' for none) and the direction in the layout. looks: the same all through the helper's mode,
+// for what "this window" and "here" mean; spoke: what came of them (assist.js, lookedMost), for the request now with Claude.
+let gaze = { id: '', yaw: 0, pitch: 0, at: 0 }, looks = [], spoke = null
+const pause = ms => new Promise(done => setTimeout(done, ms))
 // The helper's ears (listen.py): speech into text on this PC, once ./setup-speech.sh has made .speech/. Started with
 // the first use of the mode and kept, its model loaded. heard: who waits for the words of a recording that has ended.
 const EARS = path.join(ROOT, '.speech/venv/bin/python')
@@ -175,13 +182,16 @@ function keep(patch) {
 function assistEnd() { // the mode off, nothing sent
   live.assistOn = live.grab2 = marking = false
   marks = []
+  spoke = null
   heard = null
   if (ears) earsTold('cancel')
 }
 function request(said) { // to Claude: the words and what is marked
   live.assistOn = live.grab2 = marking = false
-  if (/^(стоп|отмена|отбой|хватит)[.! ]*$/i.test(said)) return (marks = [], card('fail', 'Отменено', 2500))
-  if (!said && !marks.length) return card('fail', fs.existsSync(EARS) ? 'Ничего не сказано и не помечено' : 'Ничего не помечено. Речь не подключена: ./setup-speech.sh', 4000)
+  const nothing = /^(стоп|отмена|отбой|хватит)[.! ]*$/i.test(said) ? 'Отменено' : !said && !marks.length
+  if (nothing) spoke = null
+  if (nothing === 'Отменено') return (marks = [], card('fail', 'Отменено', 2500))
+  if (nothing) return card('fail', fs.existsSync(EARS) ? 'Ничего не сказано и не помечено' : 'Ничего не помечено. Речь не подключена: ./setup-speech.sh', 4000)
   card('think', said || 'Смотрю помеченное')
   const before = exchanges.filter(e => Date.now() - e.at < 600000).slice(-3)
   const model = /^claude-[a-z0-9-]+$/.test(params.assistModel) ? params.assistModel : undefined // the setting `assistModel`; else the usual one (assist.js)
@@ -190,7 +200,7 @@ function request(said) { // to Claude: the words and what is marked
     exchanges.push({ at: Date.now(), said: said || '(пометил место)', answer })
     if (exchanges.length > 6) exchanges.shift()
     if (asking === mine) card('done', answer, Math.min(20000, 4000 + 70 * answer.length))
-  }, e => asking === mine && card('fail', e.message, 5000)).finally(() => { if (asking === mine) { asking = null; marks = [] } })
+  }, e => asking === mine && card('fail', e.message, 5000)).finally(() => { if (asking === mine) { asking = null; marks = []; spoke = null } })
 }
 function assistKey() {
   if (confirming) return confirming(true)
@@ -203,6 +213,7 @@ function assistKey() {
   }
   if (live.assistOn) { // the mode ends: what was said and what is marked goes to Claude
     live.assistOn = live.grab2 = false
+    spoke = lookedMost(looks, Date.now())
     const listened = earsTold('stop'), timer = setTimeout(() => heard?.(''), listened ? 20000 : 400) // without ears: a moment for the last mark to come
     if (listened) card('think', 'Распознаю речь')
     heard = said => { clearTimeout(timer); heard = null; request(said.trim()) }
@@ -211,27 +222,48 @@ function assistKey() {
   if (Date.now() - editSeen < 2500) return card('fail', 'Сначала выйдите из расстановки окон (Num Lock)', 3500)
   live.assistOn = marking = true
   marks = []
+  looks = gaze.at && pageHere() ? [{ ...gaze, at: Date.now() }] : []
   card('listen', earsTold('start') ? 'Говорите и помечайте мышью. Caps Lock: отправить, Esc: отмена'
     : 'Пометьте место мышью: щелчок, рамка, правой кнопкой стрелка. Caps Lock: отправить. Речь не подключена: ./setup-speech.sh')
 }
-// "Yes or no" in the headset before something that cannot be taken back: the helper's key is the yes, ten seconds of nothing the no
-function confirmed(question) {
+// "Yes or no" in the headset before something that cannot be taken back (switching off, closing a window, typing
+// into one): the helper's key is the yes, ten seconds of nothing the no
+function confirmed(question, ms = 10000) { // ms: longer when there is more to read
   confirming?.(false) // one question at a time: an earlier one is a no
   return new Promise(resolve => {
-    const timer = setTimeout(() => confirming(false), 10000)
+    const timer = setTimeout(() => confirming(false), ms)
     confirming = yes => { clearTimeout(timer); confirming = null; card(asking ? 'do' : 'fail', yes ? 'Да' : 'Не подтверждено', asking ? 0 : 2500); resolve(yes) }
     card('ask', `${question} Да: Caps Lock. Нет: подождите`)
   })
 }
+const isSelf = m => cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen // this monitor shows the picture of a headset on a cable, so it is not a panel there
+const panelsNow = () => [...CAPTURE.monitors.filter(m => !isSelf(m)), ...windowPanels()]
+const settingsNow = () => complete({ ...params, ...CAPTURE, monitors: panelsNow(), ...live })
 let windowsModule               // the windows.py process, started when first needed
 // The headset's own list of applications: the extension tells which are installed (name and icon file), the headset
 // shows them and names one to start, and the extension starts it and shows its window.
 let apps = []    // [{ id, name, icon }]
-let launch = null // the application the headset asked for, until the extension has taken it
+const launches = [] // the applications the headset or the helper asked for, until the extension has taken them (one with each report)
+let openWish = null // a link or a file (as file://...) the helper asked to open, until the extension has taken it
+let opening = Promise.resolve() // the helper's openings, one after another: each waits for its own window
+let closeWish = null, typeWish = null // a window the helper asked to close; text it asked to type into one: { id, text, enter }; both confirmed in the headset
+let windowsAt = 0   // when the extension last told the windows
+const placed = new Set() // windows shown with a place of their own (an arrangement brought back): the page does not put those where the user looks
+let awaited = []    // programs started for an arrangement: [{ entry: its kept window, until }], placed when their window opens
+// Arrangements the helper keeps under names (assist.js, layoutOf): a file beside the settings
+const LAYOUTS_FILE = path.join(ROOT, 'layouts.json')
+const layouts = () => { try { return JSON.parse(fs.readFileSync(LAYOUTS_FILE, 'utf8')) } catch { return {} } }
+// Where a kept window stands in the place of the list it has now: as kept, as wide as keeps its text the size it was (w: its width in pixels now)
+const placeOf = (slot, kept, w) => ({ ...Object.fromEntries(['yaw', 'pitch', 'dist', 'curve'].map(key => [`${slot}.${key}`, kept[key]])),
+  [`${slot}.span`]: +Math.min(MONITOR_SPEC.span[2], Math.max(MONITOR_SPEC.span[1], kept.span * w / kept.w)).toFixed(1) })
+const freeSlot = () => CAPTURE.monitors.length + wantedWindows.size < PANELS ? WINDOW_SLOTS.find(s => ![...wantedWindows.values()].includes(s)) : undefined
+// A window out of the headset, and its dialogs with it (it stays open on the PC)
+const takeOut = id => { for (const w of openWindows) if ([w.id, w.parent, adopted.get(w.id)].includes(id)) wantedWindows.delete(w.id) }
+const pageHere = () => Date.now() - phoneSeen < 2000 || glassesOn() // a page that shows the sphere to its user is open
 // In the order the windows came into the headset: it draws the later ones on top, as a dialog over its window.
 // A dialog's panel names the panel of its window (`over`).
 const windowPanels = () => [...wantedWindows].map(([id, slot]) => [openWindows.find(w => w.id === id), slot]).filter(([w]) => w)
-  .map(([w, slot]) => ({ id: slot, name: w.title, app: w.app, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups,
+  .map(([w, slot]) => ({ id: slot, name: w.title, app: w.app, appId: w.appId, placed: placed.has(w.id) || undefined, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups,
     focused: w.id === focusedWindow }))
 function tellWindows(order) {
   if (!windowsModule) {
@@ -253,6 +285,7 @@ function syncWindows() {
   for (const id of new Set([...wantedWindows.keys(), ...adopted.keys()])) { // it was closed
     if (!openWindows.some(w => w.id === id)) { wantedWindows.delete(id); adopted.delete(id) }
   }
+  for (const id of placed) if (!wantedWindows.has(id)) placed.delete(id) // shown again later, it comes where the user looks
   if (SETTINGS_ONLY || (!wantedWindows.size && !windowsModule)) return
   // need: how much of its picture a window uses, from the top left: itself and its open menus (which may reach out of it)
   tellWindows({ raw: cableOn(), streams: Object.fromEntries(windowPanels().map(p => [p.id, { id: p.source, left: p.crop[0], top: p.crop[1],
@@ -322,6 +355,7 @@ async function handle(req, res) {
   if (url === '/windows' && req.method === 'POST' && local) {
     const told = JSON.parse(await readBody(req))
     let opened = [] // windows that were not there at the last report
+    windowsAt = Date.now()
     if (Number.isFinite(told?.focus)) focusedWindow = told.focus
     for (const key of ['fullscreen', 'recording']) if (typeof told?.[key] === 'boolean') live[key] = told[key]
     if (told?.picture !== undefined) { // the monitor that shows the picture of a headset on a cable, of those capture.py named
@@ -331,7 +365,7 @@ async function handle(req, res) {
     if (Array.isArray(told?.open)) {
       const before = new Set(openWindows.map(w => w.id))
       openWindows = told.open.filter(w => [w?.id, w?.left, w?.top].every(Number.isFinite) && w.w > 0 && w.h > 0)
-        .map(w => ({ id: w.id, title: String(w.title).slice(0, 80), app: String(w.app ?? '').slice(0, 60), w: w.w, h: w.h, left: w.left, top: w.top, parent: Number.isFinite(w.parent) ? w.parent : 0, type: w.type,
+        .map(w => ({ id: w.id, title: String(w.title).slice(0, 80), app: String(w.app ?? '').slice(0, 60), appId: String(w.appId ?? '').slice(0, 200), w: w.w, h: w.h, left: w.left, top: w.top, parent: Number.isFinite(w.parent) ? w.parent : 0, type: w.type,
           popups: (Array.isArray(w.popups) ? w.popups : []).filter(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > 0 && r[3] > 0).slice(0, 3) }))
       opened = windowsTold ? openWindows.filter(w => !before.has(w.id)) : []
       windowsTold = true
@@ -340,11 +374,18 @@ async function handle(req, res) {
       apps = told.apps.slice(0, 500).filter(a => typeof a?.id === 'string' && typeof a.name === 'string')
         .map(a => ({ id: a.id.slice(0, 200), name: a.name.slice(0, 60), icon: String(a.icon ?? '') }))
     }
+    // A program started for an arrangement (the helper's "restore"): its window goes to the place kept for it
+    awaited = awaited.filter(a => Date.now() < a.until)
+    for (const w of opened) {
+      const i = awaited.findIndex(a => (a.entry.appId || a.entry.app) === (w.appId || w.app))
+      if (i < 0 || w.parent || wantedWindows.has(w.id) || !freeSlot()) continue
+      wantedWindows.set(w.id, freeSlot())
+      placed.add(w.id)
+      keep(placeOf(wantedWindows.get(w.id), awaited.splice(i, 1)[0].entry, w.w))
+    }
     // toggle: the user's choice in the menu of the top bar; show: the window of an application started from the headset
-    const freeSlot = () => WINDOW_SLOTS.find(s => ![...wantedWindows.values()].includes(s))
-    if (wantedWindows.has(told?.toggle)) { // out of the headset, and its dialogs with it
-      for (const w of openWindows) if ([w.id, w.parent, adopted.get(w.id)].includes(told.toggle)) wantedWindows.delete(w.id)
-    } else if ([told?.toggle, told?.show].some(id => openWindows.some(w => w.id === id) && !wantedWindows.has(id))) {
+    if (wantedWindows.has(told?.toggle)) takeOut(told.toggle)
+    else if ([told?.toggle, told?.show].some(id => openWindows.some(w => w.id === id) && !wantedWindows.has(id))) {
       if (freeSlot()) wantedWindows.set(told.toggle ?? told.show, freeSlot())
     }
     // A dialog of a window that is in the headset goes there too: who looks only into the headset would not know
@@ -364,7 +405,7 @@ async function handle(req, res) {
     syncWindows()
     // `active` only while the pointer is at work there: otherwise the desktop's own choice of window stands
     // soon: a window is being resized from the headset; the extension then asks again in a tenth of a second
-    const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch, needApps: !apps.length,
+    const answer = { shown: [...wantedWindows.keys()], active: Date.now() - activeAt < 1000 ? activeWindow : null, launch: launches.shift() ?? null, open: openWish, close: closeWish, type: typeWish, needApps: !apps.length,
       resize: resizeWish, soon: Date.now() - resizeAt < 1000, cursor: cursor.n > 0,
       phoneOnline: Date.now() - phoneSeen < 2000, menuOpen: Date.now() - menuOpenAt < 3000, // for the Super key: our list instead of GNOME's overview
       numLock: params.numLock ?? 0, // F12 on the phone's keyboard: the extension presses the PC's Num Lock
@@ -373,7 +414,7 @@ async function handle(req, res) {
       assistOn: live.assistOn, // the helper's mode: the extension holds the mouse for its marks
       connectors: Object.values(connectors), // GNOME's names of the monitors in the headset: the extension says which shows the picture
       enter: glassesOn() && Date.now() - enter.at < 400 ? enter : null } // the monitor or window the PC's mouse is to go into
-    launch = resizeWish = null
+    openWish = resizeWish = closeWish = typeWish = null
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer))
   }
   // For the headset's list of applications: names and GNOME's ids in order (the user's own places in the list are
@@ -387,7 +428,7 @@ async function handle(req, res) {
   if (url === '/launch' && req.method === 'POST') {
     const wish = JSON.parse(await readBody(req))
     if (!apps[wish?.app]) throw new SyntaxError('the number of an application expected')
-    launch = apps[wish.app].id
+    launches.push(apps[wish.app].id)
     headsetClick = { at: Date.now(), in: null }
     return res.writeHead(204).end()
   }
@@ -525,6 +566,14 @@ async function handle(req, res) {
     if ('assistKey' in patch && local) assistKey() // Caps Lock, from the extension
     delete patch.assistKey
     delete patch.assistOn // its mode is switched by its key only, not as the other live values are
+    if (Array.isArray(patch.looked)) { // from the working page: the panel under the centre of its view and where the view points
+      const [id, yaw, pitch] = patch.looked
+      if (typeof id === 'string' && /^([mw]\d+)?$/.test(id) && [yaw, pitch].every(Number.isFinite)) {
+        gaze = { id, yaw, pitch, at: Date.now() }
+        if (live.assistOn && looks.length < 500) looks.push(gaze)
+      }
+    }
+    delete patch.looked
     const e = patch.enter
     if (e && Date.now() > enterQuiet && /^[mw]\d+$/.test(e.id) && Number.isInteger(e.source) && typeof e.connector === 'string' && [e.u, e.v].every(Number.isFinite)
       && Array.isArray(e.corners) && e.corners.length === 4 && e.corners.every(c => Array.isArray(c) && c.length === 2 && c.every(Number.isFinite)))
@@ -560,7 +609,7 @@ async function handle(req, res) {
       try { connectors = JSON.parse(fs.readFileSync(path.join(ROOT, '.connectors.json'), 'utf8')) } catch { connectors = {} }
     }
     // self: this monitor shows the picture of a headset on a cable, so it is not a panel there
-    const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: cableOn() && !!pictureScreen && connectors[m.id] === pictureScreen })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
+    const monitors = [...CAPTURE.monitors.map(m => ({ ...m, connector: connectors[m.id], self: isSelf(m) })), ...windowPanels()] // with `source`: the page tells by it that a place in the list holds another window now
     const answer = { ...params, ...CAPTURE, monitors, ...live, edit: Date.now() - editSeen < 2500, glasses: cableOn(), watched: Date.now() - spectatorSeen < 2000, ...(local && { raw: { port: RAW_PORT, key: process.env.VR_RAW_KEY } }), build: BUILD, phoneOnline: Date.now() - phoneSeen < 2000, spectator: Date.now() - spectatorSeen < 2000 || glassesOn(), settingsOnly: SETTINGS_ONLY }
     // ?full: with the defaults filled in, for the GNOME settings window (the pages do that themselves)
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
@@ -633,6 +682,110 @@ async function handle(req, res) {
       return (keep({ offCall: Date.now() }), done({ done: true }))
     }
     return res.writeHead(400).end('The actions: record, recenter, look_around, switch_off')
+  }
+  // Windows for the helper: what is in the sphere and where, opening, placing, arrangements kept under names.
+  const sent = what => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(what))
+  if (url === '/assist/windows' && local) {
+    const at = spoke ?? (gaze.at && pageHere() ? gaze : null) // while speaking; asked without the mode (text, the chat): now
+    return sent({ panels: panelsTold(settingsNow(), panelsNow(), at?.id), gaze: at && { yaw: at.yaw, pitch: at.pitch },
+      // of the windows that are not in the sphere only the programs: their titles stay on this PC
+      elsewhere: [...new Set(openWindows.filter(w => !w.parent && !wantedWindows.has(w.id) && w.app).map(w => w.app))], layouts: Object.keys(layouts()) })
+  }
+  if (url === '/assist/place' && req.method === 'POST' && local) {
+    const { panel, ...where } = JSON.parse(await readBody(req)) ?? {}
+    try { keep(placePatch(settingsNow(), panelsNow(), panel, where)) } catch (e) { return res.writeHead(400).end(e.message) }
+    return sent({ now: panelsTold(settingsNow(), panelsNow()).find(p => p.panel === panel) })
+  }
+  if (url === '/assist/open' && req.method === 'POST' && local) {
+    const wish = JSON.parse(await readBody(req)) ?? {}, before = opening
+    opening = new Promise(over => res.on('close', over)) // answered, or Claude was stopped meanwhile: the next one's turn
+    await before
+    const had = new Set(wantedWindows.keys())
+    try {
+      if (Date.now() - windowsAt > 3000) throw new Error('The VR Workspace extension of GNOME is not answering: nothing can be opened now')
+      if (!freeSlot()) throw new Error(`No more windows fit into the sphere: ${wantedWindows.size} are there (sphere_close with "out" takes one out)`)
+      if (typeof wish.program === 'string') {
+        const app = apps[meant(apps.map(a => a.name), wish.program, 'program', apps.map(a => a.id))]
+        const there = openWindows.find(w => w.appId === app.id && !w.parent && !wantedWindows.has(w.id)) // open on the PC and not in the sphere: that one comes
+        if (there) wantedWindows.set(there.id, freeSlot())
+        else launches.push(app.id)
+      } else if (typeof wish.link === 'string') openWish = linkOf(wish.link)
+      else if (typeof wish.file === 'string') openWish = pathToFileURL(fileNamed(wish.file, os.homedir(), userFolders(os.homedir(), params.assistFolders))).href
+      else throw new Error('One of `program`, `link`, `file` is needed')
+    } catch (e) { return res.writeHead(400).end(e.message) }
+    headsetClick = { at: Date.now(), in: null } // the window that opens now comes into the sphere, as after a start from the list
+    syncWindows()
+    let panel
+    for (const until = Date.now() + 10000; !(panel = windowPanels().find(p => !had.has(p.source))) && Date.now() < until;) await pause(150)
+    if (!panel) return sent({ opened: false, note: 'No new window came within 10 seconds: the program may have used a window it already has (see sphere_windows), or it is slow to start.' })
+    await pause(700) // the page puts a new window where the user looks: after that its place is in the settings
+    return sent({ opened: panelsTold(settingsNow(), panelsNow()).find(p => p.panel === panel.id) })
+  }
+  // Closing a window, taking it out of the sphere, typing into it. Closing and typing are asked in the headset first:
+  // the window may be the wrong one (taken by the gaze), and typed text may be a command.
+  if ((url === '/assist/close' || url === '/assist/type') && req.method === 'POST' && local) {
+    const { panel, how, text, enter } = JSON.parse(await readBody(req)) ?? {}, p = windowPanels().find(p => p.id === panel), name = `«${[p?.app, p?.name].filter(Boolean).join(': ').slice(0, 34)}»`
+    if (!p) return res.writeHead(400).end(`"${panel}" is not a window in the sphere (monitors cannot be closed or typed into). The windows: ${windowPanels().map(p => p.id).join(', ') || 'none'}`)
+    if (url === '/assist/close' && how === 'out') {
+      takeOut(p.source)
+      syncWindows()
+      return sent({ done: true, note: 'the window is out of the sphere and still open on the PC' })
+    }
+    if (Date.now() - windowsAt > 3000) return res.writeHead(400).end('The VR Workspace extension of GNOME is not answering: this cannot be done now')
+    if (url === '/assist/close') {
+      if (how !== 'close') return res.writeHead(400).end('`how` takes "close" (the window is closed on the PC) or "out" (it leaves the sphere and stays open)')
+      if (!await confirmed(`Закрыть окно ${name}?`)) return sent({ done: false, why: 'the user did not confirm it' })
+      closeWish = p.source
+      return sent({ done: true, note: 'its program was asked to close the window; it may first ask about unsaved work in a dialog' })
+    }
+    // 160: what the card shows whole with the question around it, so that what is confirmed is what is typed
+    if (typeof text !== 'string' || !text.trim() || text.length > 160 || /[\x00-\x09\x0b-\x1f\x7f]/.test(text)) return res.writeHead(400).end('`text` takes plain text, 160 characters at most (more: in parts)')
+    if (!await confirmed(`Напечатать в ${name}: «${text.replace(/\n/g, ' ⏎ ')}»${enter === true ? ' и нажать Enter' : ''}?`, 10000 + 60 * text.length)) return sent({ done: false, why: 'the user did not confirm it' })
+    typeWish = { id: p.source, text, enter: enter === true }
+    return sent({ done: true, note: 'the text was pasted into the window where its cursor is; whether the program took it cannot be seen from here' })
+  }
+  if (url === '/assist/layout' && req.method === 'POST' && local) {
+    const { action, name } = JSON.parse(await readBody(req)) ?? {}, kept = layouts(), names = Object.keys(kept)
+    const write = () => { fs.writeFileSync(LAYOUTS_FILE + '.tmp', JSON.stringify(kept, null, 2)); fs.renameSync(LAYOUTS_FILE + '.tmp', LAYOUTS_FILE) } // aside and renamed, as the settings
+    try {
+      if (action === 'list') return sent({ layouts: names })
+      if (action === 'save') {
+        const title = String(name ?? '').trim().slice(0, 60)
+        if (!title) throw new Error('`name` is needed')
+        kept[title] = layoutOf(settingsNow(), panelsNow())
+        write()
+        return sent({ saved: title, panels: kept[title].panels.length })
+      }
+      if (!['restore', 'forget'].includes(action)) throw new Error('The actions: save, restore, list, forget')
+      const title = names[meant(names, name, 'arrangement')], layout = kept[title]
+      if (action === 'forget') {
+        delete kept[title]
+        write()
+        return sent({ forgotten: title })
+      }
+      // The monitors go back to their places; each kept window that is open comes into the sphere at its place; a
+      // program with no window open is started, and its window is placed when it comes (/windows).
+      const patch = { hideMonitors: layout.hideMonitors }, started = [], missing = []
+      let back = 0
+      for (const { id, hidden, ...at } of layout.panels.filter(e => e.id && CAPTURE.monitors.some(m => m.id === e.id))) Object.assign(patch, { [`${id}.hidden`]: hidden }, ...Object.entries(at).map(([key, value]) => ({ [`${id}.${key}`]: value })))
+      for (const { entry, window } of layoutWindows(layout, openWindows)) {
+        const open = openWindows.find(w => w.id === window), app = entry.appId || apps.find(a => a.name === entry.app)?.id // GNOME's id of its program (the list of applications may be older than the program)
+        if (open && (wantedWindows.has(open.id) || freeSlot())) {
+          if (!wantedWindows.has(open.id)) placed.add(open.id)
+          if (!wantedWindows.has(open.id)) wantedWindows.set(open.id, freeSlot())
+          Object.assign(patch, placeOf(wantedWindows.get(open.id), entry, open.w))
+          back++
+        } else if (!open && app && Date.now() - windowsAt < 3000) {
+          launches.push(app)
+          awaited.push({ entry, until: Date.now() + 40000 })
+          started.push(entry.app)
+        } else missing.push(entry.app)
+      }
+      keep(patch)
+      if (started.length) headsetClick = { at: Date.now(), in: null }
+      syncWindows()
+      return sent({ restored: title, windowsPlaced: back, started, missing, ...(started.length && { note: 'the started programs come to their places as their windows open' }) })
+    } catch (e) { return res.writeHead(400).end(e.message) }
   }
   // What only this PC may know, for the GNOME settings window: the links for the phone (with the key) and the
   // ranges of the settings.

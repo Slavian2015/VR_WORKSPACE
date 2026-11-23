@@ -6,7 +6,8 @@
 // - single windows in the headset: the menu sends the window last used there or takes it back. While the server
 //   runs it is told twice a second which windows are open and how big; it answers which window the headset's
 //   pointer works in (that one is brought to the front: a click lands on whatever is in front) and which
-//   application the headset asked to start (its window is then shown there). It also gets the list of installed
+//   application the headset asked to start, or which link or file its helper asked to open (the window is then
+//   shown there). It also gets the list of installed
 //   applications, for the headset's own menu of them. Menus, drop-down lists and tooltips of a window shown there
 //   are copied into that window, so that its recording has them (see _copyPopup);
 // - Num Lock hands the mouse to the headset: while it is on, the left button and the wheel arrange the monitors in
@@ -38,6 +39,7 @@ export default class VrWorkspace extends Extension {
     this._http = http()
     this._shownWindows = [] // GNOME's ids of the windows shown in the headset one by one
     this._copies = new Map() // the copies of popups laid into those windows: copy -> { popup, window }
+    this._typeTimers = new Set() // the steps still to come of text being typed for the helper (_type)
     this._inside = null // a headset on a cable: { id, window, rect, corners, barriers, box, push, timer } while the PC's mouse works inside a monitor or window (_follow)
     this._windowCreated = global.display.connect('window-created', (_display, window) => {
       this._copyPopup(window)
@@ -108,6 +110,8 @@ export default class VrWorkspace extends Extension {
     if (this._assisting) this._assistOff()
     if (this._capsTimer) GLib.source_remove(this._capsTimer)
     this._capsTimer = 0
+    for (const timer of this._typeTimers) GLib.source_remove(timer)
+    this._typeTimers.clear()
     this._leave()
     this._out()
     global.display.disconnect(this._windowCreated)
@@ -210,7 +214,8 @@ export default class VrWorkspace extends Extension {
       // popups: where the menus copied into it lie, from the window's top left (they may reach out of it)
       const popups = [...this._copies.values()].filter(c => c.window === w).map(({ popup }) => popup.get_frame_rect())
         .filter(r => r.width > 0 && r.height > 0).slice(-3).map(r => [r.x - frame.x, r.y - frame.y, r.width, r.height])
-      return { id: w.get_id(), title: w.get_title() ?? '', app: Shell.WindowTracker.get_default().get_window_app(w)?.get_name() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
+      const app = Shell.WindowTracker.get_default().get_window_app(w)
+      return { id: w.get_id(), title: w.get_title() ?? '', app: app?.get_name() ?? '', appId: app?.get_id() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
         parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
     })
     // fullscreen: a film, say, so the headset can go dark around it; not the glasses' own picture. With every report:
@@ -257,6 +262,10 @@ export default class VrWorkspace extends Extension {
         active.activate(global.get_current_time())
       }
       if (answer?.launch) this._start(answer.launch)
+      if (typeof answer?.open === 'string') this._open(answer.open)
+      // The helper, after a yes in the headset: a window closed as by its own button, text typed into one
+      if (Number.isFinite(answer?.close)) windows.find(w => w.get_id() === answer.close)?.delete(global.get_current_time())
+      if (typeof answer?.type?.text === 'string') this._type(windows.find(w => w.get_id() === answer.type.id), answer.type.text, answer.type.enter === true)
       if (answer?.resize) this._resize(windows.find(w => w.get_id() === answer.resize.id), answer.resize)
       const onCable = !!this._glassesWindow()
       if (onCable && !this._catcher && !this._editing) this._follow(answer?.enter, windows)
@@ -421,6 +430,30 @@ export default class VrWorkspace extends Extension {
     if (!app) return
     this._started = { app, had: app.get_windows().map(w => w.get_id()), at: Date.now() }
     app.open_new_window(-1)
+  }
+
+  // Opens a link or a file for the helper (server.js checked which), with the program GNOME has for it. A link goes
+  // into a browser window of its own: as one more tab of a window that is not in the headset it would not be seen.
+  // The window is then shown in the headset as that of a started application is. The program is looked up without
+  // waiting here: a file on a network folder that does not answer must not hold up the shell.
+  _open(uri) {
+    Gio.File.new_for_uri(uri).query_default_handler_async(GLib.PRIORITY_DEFAULT, null, (file, result) => {
+      if (!this._indicator) return // switched off meanwhile
+      try {
+        const info = file.query_default_handler_finish(result), context = global.create_app_launch_context(0, -1)
+        const app = Shell.AppSystem.get_default().lookup_app(info.get_id() ?? '')
+        if (app) this._started = { app, had: app.get_windows().map(w => w.get_id()), at: Date.now() }
+        // The browser's own "new window" action, with the link added to its command: launch_action() takes no link.
+        const action = /^https?:/.test(uri) && info.list_actions?.().find(name => /^new-?window$/i.test(name))
+        if (!action) return void info.launch_uris([uri], context)
+        const keys = new GLib.KeyFile()
+        keys.load_from_file(info.get_filename(), GLib.KeyFileFlags.NONE)
+        const command = keys.get_string(`Desktop Action ${action}`, 'Exec').replace(/@@\w?|%[a-zA-Z]/g, '').trim() // without the places for files and links: the link is added to its end
+        Gio.AppInfo.create_from_commandline(command, null, Gio.AppInfoCreateFlags.SUPPORTS_URIS).launch_uris([uri], context)
+      } catch (e) {
+        console.log(`VR Workspace: the helper could not open what it was asked to: ${e.message}`) // not what: the journal is kept for weeks
+      }
+    })
   }
 
   _showStarted(windows, wish) {
@@ -625,11 +658,41 @@ export default class VrWorkspace extends Extension {
     this._pressKey(69) // Linux's KEY_NUMLOCK
   }
 
-  _pressKey(code) { // a key pressed and let go by us
-    this._keyboard ??= Clutter.get_default_backend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE)
-    const now = GLib.get_monotonic_time()
-    this._keyboard.notify_key(now, code, Clutter.KeyState.PRESSED)
-    this._keyboard.notify_key(now, code, Clutter.KeyState.RELEASED)
+  _ownKeyboard() {
+    return this._keyboard ??= Clutter.get_default_backend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE)
+  }
+
+  _pressKey(code, held) { // a key pressed and let go by us, with `held` (Shift, say) down meanwhile
+    const now = GLib.get_monotonic_time(), keys = held ? [held, code] : [code]
+    for (const key of keys) this._ownKeyboard().notify_key(now, key, Clutter.KeyState.PRESSED)
+    for (const key of keys.reverse()) this._ownKeyboard().notify_key(now, key, Clutter.KeyState.RELEASED)
+  }
+
+  // Types text into a window for the helper (the user said yes to it in the headset). Keys of our own cannot spell
+  // text: they make the letters of the layout in use. So the text goes by the clipboard and Shift+Insert, which
+  // pastes in GNOME's and Qt's programs, in browsers and VS Code; terminals paste the "primary" selection on it,
+  // which gets the text too. The window gets the keyboard first. The texts those two held before are put back (a
+  // picture copied before is not: it is lost from the clipboard).
+  _type(window, text, enter) {
+    if (!window) return
+    const clipboard = St.Clipboard.get_default(), { CLIPBOARD, PRIMARY } = St.ClipboardType
+    const later = (ms, what) => {
+      const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => (this._typeTimers.delete(timer), what(), GLib.SOURCE_REMOVE))
+      this._typeTimers.add(timer)
+    }
+    this._ownKeyboard() // made now: the first keys of a keyboard made the moment they are pressed went nowhere (the stand, 2026-11-23)
+    clipboard.get_text(CLIPBOARD, (_clipboard, copied) => clipboard.get_text(PRIMARY, (_primary, selected) => {
+      if (!this._indicator) return // switched off meanwhile
+      clipboard.set_text(CLIPBOARD, text)
+      clipboard.set_text(PRIMARY, text)
+      window.activate(global.get_current_time())
+      later(300, () => this._pressKey(110, 42)) // Linux's KEY_INSERT with KEY_LEFTSHIFT, once the window has the keyboard
+      if (enter) later(700, () => this._pressKey(28)) // KEY_ENTER
+      later(1500, () => { // the program has read them by then
+        if (copied !== null) clipboard.set_text(CLIPBOARD, copied)
+        if (selected !== null) clipboard.set_text(PRIMARY, selected)
+      })
+    }))
   }
 
   // Caps Lock while the headset is in use (a phone connected, or the picture of a headset on a cable): the key of

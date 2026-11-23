@@ -163,8 +163,15 @@ Besides whole monitors, one application window can be shown as a panel of its ow
 a mouse connected to the phone.
 
 1. Start the application from the list in the headset (step 4): its window comes into the headset by itself, and
-   leaves it when closed. Up to eight windows, dialogs included: each is a stream of its own, about 12 Mbit/s of
-   Wi-Fi.
+   leaves it when closed. Up to ten windows, dialogs included, and monitors and windows together at most eleven
+   (with two monitors nine windows): the page has one texture for each, and a phone's browser gives it sixteen,
+   five of them the page's own. Each window is a stream of its own, up to 12 Mbit/s of Wi-Fi while it changes.
+   What ten cost was measured on the stand (2026-11-23, windows of 900×620, the stand's encoders on the
+   processor): about 120 MB of memory a window, 1.2 GB for ten, of which 80 MB a window is the stand's own
+   encoder; the graphics memory counter rose by 230 MB a window. The picture of one monitor and ten windows,
+   all in view, was drawn at 60 frames a second on this PC. A window out of view costs the page nothing (its
+   stream is not taken), but its encoder on the PC runs on. Ten encoders of the real graphics chip at once were
+   not tried: the stand never uses that chip's encoder.
 2. The window appears as a panel where you are looking (under the monitors, if the headset is not on yet), curved
    like a monitor, at Settings → Monitors → **Distance of new windows** (2 m at first). At 1.5 m one pixel of the
    window is one pixel of the screen: its text as sharp as it gets (the picture arrives as sharp as on the PC);
@@ -221,7 +228,7 @@ What to know:
   reaching out to the left of or above the window is cut there.
 - A dialog of a window in the headset (a file chooser, a question) comes into the headset by itself, lying on
   its window, and leaves when it is closed. It shows a spinner first; the picture follows in 3–4 seconds (so does any panel before its picture comes). It takes one
-  of the eight places. So does any window that opens within 15 seconds after a click from the headset: a file
+  of the ten places. So does any window that opens within 15 seconds after a click from the headset: a file
   chooser that a Flatpak application asks the system for, the second window of an application. Such a window lies
   on the window you clicked in, with its text as large, and leaves the headset with it.
 - The iPhone shows its own round pointer too; Safari gives pages no way to hide or hold it.
@@ -412,8 +419,8 @@ still found. The tests (`node --test`) now have a room with a near wall and a de
 
 ## The helper: Claude in the sphere (a first version)
 
-Claude can be asked from inside the sphere, by voice: it changes the sphere's own settings and looks at what you
-mark with the mouse. The plan and what is done so far: `ASSISTANT-PLAN.md`.
+Claude can be asked from inside the sphere, by voice: it changes the sphere's own settings, opens and arranges
+windows, and looks at what you mark with the mouse. The plan and what is done so far: `ASSISTANT-PLAN.md`.
 
 **Caps Lock** is its key while the headset is in use (a phone connected, or the picture of a headset on a cable);
 it types no capitals then. The first press switches its mode on: a card low in the view says so. Speak (the words
@@ -429,8 +436,10 @@ Lock while Claude works stops it. With a mouse connected to the PC the
 gaze points and the buttons mark (as in the arranging mode); with a headset on a cable its picture has the mouse.
 Not while arranging (Num Lock).
 
-**Only what you marked leaves the PC**: the picture of that window, of the framed part alone, or of the part around
-an arrow, with the window's title and its program. Never the whole desktop.
+**Only what you marked leaves the PC** as a picture: that window, the framed part alone, or the part around an
+arrow, with the window's title and its program. Never the whole desktop. For a request about windows Claude is also
+told, as text, the titles and programs of the windows in the sphere, and of the windows open elsewhere on the PC
+only their programs.
 
 **Speech** is turned into text on this PC and never leaves it. Set it up once, without sudo:
 
@@ -449,9 +458,37 @@ camera, the background), start and stop the recording, centre the sphere, start 
 VR Workspace off. Before that last one it asks in the card: Caps Lock is the yes, ten seconds of nothing the no.
 It keeps the last few exchanges in mind for ten minutes ("a bit more").
 
+**Windows by voice.** It knows what is in the sphere and where it hangs, and what else is open on the PC:
+
+- «Открой калькулятор», «открой ютуб», «открой файл с отчётом»: a program by its name (a window of it that is
+  already open on the PC comes into the sphere, else it is started), a web address (in a browser window of its own),
+  a file or a folder by its name or a part of it. Files are looked for in your folders (the desktop, documents,
+  downloads, pictures, music, videos), three levels deep; more folders are the setting `assistFolders`, paths with
+  ":" between (`curl -X POST http://127.0.0.1:8080/params -d '{"assistFolders": "/home/me/projects"}'`). Nothing
+  hidden and nothing outside your home folder and those folders is opened. When a name fits nothing or several
+  files, Claude is told names of files there to choose from; otherwise no file name leaves the PC.
+- «Поставь это окно левее», «сделай крупнее», «ближе», «по центру», «справа от редактора»: the window moves. "This
+  window", with nothing marked, is the one you looked at while speaking (the glance down at the key does not count).
+- «Открой рядом сайт и дизайн»: both open and stand side by side.
+- «Запомни расстановку как работа», «верни расстановку работа»: where every monitor and window stands is kept
+  under a name (`layouts.json`). Bringing it back puts the windows of those programs that are open at their places
+  and starts the programs that are not running; it does not open documents inside them again.
+- «Закрой это окно»: the window is closed as by its own button (its program may ask about unsaved work).
+  «Убери это окно»: it only leaves the sphere and stays open on the PC.
+- «Напиши в это окно: …», «… и отправь»: the text is typed where the window's cursor is, and Enter pressed if
+  you asked to send or run it. Up to 160 characters at a time. It goes in by the clipboard and Shift+Insert (keys
+  cannot spell text: they make the letters of the layout in use), which works in GNOME's and Qt's programs,
+  browsers, VS Code and terminals; the text the clipboard held before is put back, a picture copied before is
+  lost from it.
+
+Before closing a window and before typing, the card asks, with the window and the whole text: **Caps Lock is the
+yes**, waiting is the no. The window may be the wrong one, and typed text may be a command.
+
+It cannot press buttons in a window, read a file, or see what was not marked.
+
 **From the chat in VS Code.** The same tools are offered to Claude Code in this project (`.mcp.json`; VS Code asks
-once whether to allow the server `sphere`). Ask the chat to read or change the sphere's settings, or to look at
-what you have marked.
+once whether to allow the server `sphere`). Ask the chat to read or change the sphere's settings, to open or move
+windows, or to look at what you have marked.
 
 **How it runs.** The server starts Claude Code without its window for each request (`claude -p`, the program that
 came with the VS Code extension, or `claude` if it is installed; `VR_CLAUDE` names another), under your own
@@ -533,8 +570,13 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 Anyone on the network who has the link with the key can watch your desktop and change the settings, and click and
 type in the windows shown in the headset (a keyboard connected to the phone): a terminal shown there runs what is
-typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it, and that
-goes to Anthropic, as everything you show Claude does. A page of another site, open in a browser on this PC or in
+typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it and the
+titles of the windows in the sphere, and that goes to Anthropic, as everything you show Claude does. Such text
+comes from outside (a web page names its own window) and may try to give the helper orders: it is told to take it
+for data, and what it can do at all is little: the sphere's settings, moving windows, opening a web address or a
+file of your own folders with its usual program. It cannot read a file. Closing a window and typing into one (which
+in a terminal runs a command) happen only after you have seen the window's name and the whole text on the card and
+pressed Caps Lock. A page of another site, open in a browser on this PC or in
 the home, is not answered: requests from this PC need no key, and a browser lets any page send one. Keys go only into the window that has the PC's keyboard, and never Alt+F2 (GNOME's "run a command"). The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
 (then open the codes on the phone again). The server does not start with a key that is missing or shorter than 12
 characters (an empty one would let anyone in); `./setup.sh` makes a new one then. Never commit `certs/`.
@@ -573,7 +615,7 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
 - `app/track.js` — where the head is, from the phone camera's pictures (leaning toward a window).
-- `assist.js` — the helper: runs Claude for a request and tells what it may change; `assist-tools.js` — its tools
+- `assist.js` — the helper: runs Claude for a request, tells what it may change, open and place; `assist-tools.js` — its tools
   as Claude takes them (also for the chat in VS Code, `.mcp.json`); `listen.py` — its ears, speech into text
   (`setup-speech.sh` installs what it needs into `.speech/`); the server keeps its card and the marks.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,
