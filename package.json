@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test && /usr/bin/python3 -m unittest -q test_capture test_raw"
+    "test": "node --test && /usr/bin/python3 -m unittest -q test_capture test_raw test_listen"
   },
   "dependencies": {
     "three": "^0.187.0"

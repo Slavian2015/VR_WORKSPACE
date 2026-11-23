@@ -10,6 +10,7 @@ usage: drive.py <folder for screenshots> <file with one action per line>
   click:x,y          left click there
   drag:x1,y1,x2,y2   press, move, release
   down / up          press / release the left button where the pointer is
+  rdown / rup        the same for the right button
   wiggle:<seconds>   move the pointer about
   rel:dx,dy          move the pointer by that much, in steps of 20 px as a real mouse (move: jumps, and GNOME clamps a
                      jump to the monitor it starts on, so with several monitors move: may land elsewhere)
@@ -70,6 +71,8 @@ for action in open(sys.argv[2]).read().split('\n'):
             button(False)
         elif kind in ('down', 'up'):
             button(kind == 'down')
+        elif kind in ('rdown', 'rup'):
+            call(N, session, S, 'NotifyPointerButton', GLib.Variant('(ib)', (273, kind == 'rdown')))
         elif kind == 'wiggle':
             end, i = time.time() + float(arg), 0
             while time.time() < end:

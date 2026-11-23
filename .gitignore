@@ -185,6 +185,8 @@ app/bg/
 .cable.json*
 track-clips/
 
+/.speech/
+
 # Videos (recordings of the sphere, clips): never in git. GitHub refuses a file over 100 MB.
 *.webm
 *.mp4

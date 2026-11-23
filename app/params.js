@@ -11,6 +11,7 @@ export const LAYOUT_SPEC = {
   bgDim: [0, 0, 90, 5, 'Затемнение фона, %'],
   bgBlur: [0, 0, 100, 5, 'Размытие фона, %'],
   sharpen: [40, 0, 100, 5, 'Резкость текста, %'],
+  renderScale: [100, 50, 100, 5, 'Разрешение отрисовки, % (меньше: телефон греется меньше, текст мягче)'],
   windowDist: [2, 0.5, 5, 0.1, 'Расстояние до новых окон, м'], // at 1.5 they are 1:1 with the screen, farther smaller
 }
 // One set per monitor, stored as "m0.yaw", "m1.span", ...

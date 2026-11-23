@@ -32,9 +32,13 @@ const WIDTH_AT = 1.5 // metres: a monitor's width in degrees is what it takes up
 
 const renderer = new THREE.WebGLRenderer({ powerPreference: 'high-performance' })
 document.body.append(renderer.domElement)
-const fit = () => { renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight) }
-addEventListener('resize', fit)
-fit()
+// Drawn in the screen's own pixels, never more; or in fewer, by the setting `renderScale`: the graphics card's work
+// goes with the number of pixels (at 70 % it is half), and a phone in a headset gets hot. Through the lenses the
+// screen shows about 13 pixels a degree, which an eye tells apart, so fewer is softer text: for the user to weigh.
+let renderScale = 100
+const sizeCanvas = () => { renderer.setPixelRatio(devicePixelRatio * renderScale / 100); renderer.setSize(innerWidth, innerHeight) }
+addEventListener('resize', sizeCanvas)
+sizeCanvas()
 
 function hiddenVideo(props) {
   const video = Object.assign(document.createElement('video'), { muted: true, playsInline: true, autoplay: true, ...props })
@@ -51,9 +55,10 @@ const menuCanvas = Object.assign(document.createElement('canvas'), { width: 1536
 const menuTexture = new THREE.CanvasTexture(menuCanvas)
 const clockCanvas = Object.assign(document.createElement('canvas'), { width: 640, height: 230 }) // the clock, above
 const noteCanvas = Object.assign(document.createElement('canvas'), { width: 1000, height: 220 }) // a notification of the PC
-// Those two and our arrow go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
+const assistCanvas = Object.assign(document.createElement('canvas'), { width: 1000, height: 270 }) // the helper's card, low in the view
+// Those three, our arrow and the numbers of the helper's marks go to the graphics card as one picture, each in its own place (SHEETS: x, y on it): an iPhone gives a
 // shader 16 pictures, and each panel takes one.
-const SHEETS = { clock: [0, 0], note: [0, 230], arrow: [1000, 230] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 450 })
+const SHEETS = { clock: [0, 0], note: [0, 230], arrow: [1000, 230], assist: [0, 450], digits: [0, 720] }, sheets = Object.assign(document.createElement('canvas'), { width: 1200, height: 770 })
 const sheetsTexture = new THREE.CanvasTexture(sheets)
 for (const sheet of [menuTexture, sheetsTexture]) Object.assign(sheet, { generateMipmaps: false, minFilter: THREE.LinearFilter }) // drawn about 1:1
 function toSheets(canvas, [x, y]) { // a sheet drawn anew: into its place
@@ -76,6 +81,20 @@ const arrowCanvas = Object.assign(document.createElement('canvas'), { width: 32,
   c.stroke()
   c.fill()
   toSheets(arrowCanvas, SHEETS.arrow)
+}
+const MARKS = 6 // the helper's marks at once; their numbers: red discs in a row, 48 px each
+{
+  const digits = Object.assign(document.createElement('canvas'), { width: MARKS * 48, height: 48 }), c = digits.getContext('2d')
+  for (let k = 0; k < MARKS; k++) {
+    Object.assign(c, { fillStyle: '#ff5533', strokeStyle: '#fff', lineWidth: 3 })
+    c.beginPath()
+    c.arc(k * 48 + 24, 24, 21, 0, 7)
+    c.fill()
+    c.stroke()
+    Object.assign(c, { fillStyle: '#fff', font: '700 28px system-ui, sans-serif', textAlign: 'center', textBaseline: 'middle' })
+    c.fillText(k + 1, k * 48 + 24, 26)
+  }
+  toSheets(digits, SHEETS.digits)
 }
 // Where a sheet is in that picture, for the shader: its corner and size, 0..1 from the top left
 const region = (canvas, [x, y]) => [x / sheets.width, y / sheets.height, canvas.width / sheets.width, canvas.height / sheets.height].map(n => n.toFixed(6)).join(', ')
@@ -114,7 +133,8 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
     uToYaw: { value: new THREE.Matrix3() },
     uSheets: { value: sheetsTexture }, uDark: { value: 0 },
     uClockOn: { value: 0 }, uClockPlace: { value: new THREE.Vector4() }, uClockSize: { value: new THREE.Vector2(1, 1) },
-    uNoteOn: { value: 0 }, uNotePlace: { value: new THREE.Vector4() },
+    uNoteOn: { value: 0 }, uNotePlace: { value: new THREE.Vector4() }, uAssistOn: { value: 0 }, uAssistPlace: { value: new THREE.Vector4() },
+    uMark: { value: Array.from({ length: MARKS }, () => new THREE.Vector4()) }, uMarkOf: { value: Array.from({ length: MARKS }, () => new THREE.Vector4(-1, 0, 0, 0)) },
     uBg: { value: background }, uToBg: { value: new THREE.Matrix3() }, uBgLook: { value: new THREE.Vector2() },
     uCam: { value: null }, uCamTan: { value: new THREE.Vector2() }, uCamShift: { value: new THREE.Vector2() }, uCamBelow: { value: -2 },
     uHud: { value: hudTexture }, uHudOn: { value: 0 }, uCursorBox: { value: cursorBox },
@@ -149,7 +169,11 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       uniform float uDark;                       // 1: nothing but a notification shows (a screen a camera may see, while the room is looked around)
       uniform vec4 uNotePlace;                   // a notification: fixed to the head, above the middle of the view
       uniform mat3 uToMenu, uToYaw;              // head space -> where the list hangs; -> a frame that turns with the head, but only around the vertical
-      uniform vec4 uMenuPlace, uClockPlace, uMenuLit;
+      uniform vec4 uMenuPlace, uClockPlace, uMenuLit, uAssistPlace;
+      uniform float uAssistOn;                   // how much the helper's card shows
+      // The helper's marks: uMark, a frame's two corners or an arrow's tail and tip, on its panel from the top left, 0..1;
+      // uMarkOf: the panel (-1: none), 0 a frame or 1 an arrow, the line's width and the number's disc in panel widths
+      uniform vec4 uMark[${MARKS}], uMarkOf[${MARKS}];
       uniform vec2 uMenuSize, uClockSize; // px
       uniform vec4 uMenuDrag;                    // the icon in hand: its rectangle on the sheet (x < 0: none)
       uniform vec2 uMenuAt;                      // where the pointer is on the sheet, px
@@ -195,6 +219,31 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
       vec4 arrow(vec2 px) { // our arrow (SHEETS.arrow) at px of its picture, from the top left; nothing beside it
         return px == clamp(px, vec2(0.0), vec2(${arrowCanvas.width}.0, ${arrowCanvas.height}.0))
           ? textureLod(uSheets, vec2(${SHEETS.arrow[0]}.0 + px.x, ${sheets.height - SHEETS.arrow[1]}.0 - px.y) / vec2(${sheets.width}.0, ${sheets.height}.0), 0.0) : vec4(0.0);
+      }
+      float toLine(vec2 p, vec2 a, vec2 b) { // how far p is from the stroke a..b
+        vec2 pa = p - a, ba = b - a;
+        return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-9), 0.0, 1.0));
+      }
+      // The picture of a panel with mark k drawn on it. p: the place on the panel from its top left, 0..1.
+      vec3 marked(vec3 picture, vec2 p, int k, float aspect) {
+        vec4 m = uMark[k], of = uMarkOf[k];
+        vec2 q = vec2(p.x, p.y * aspect), a = vec2(m.x, m.y * aspect), b = vec2(m.z, m.w * aspect); // in panel widths, the same across and down
+        float d;
+        if (of.y < 0.5) { // a frame: how far from its outline
+          vec2 within = min(q - a, b - q), near = clamp(q, a, b);
+          d = q == near ? min(within.x, within.y) : length(q - near);
+        } else { // an arrow: its shaft and the two strokes of its head
+          vec2 along = (b - a) / max(length(b - a), 1e-5), across = vec2(-along.y, along.x);
+          float head = min(0.5 * length(b - a), 6.0 * of.z);
+          d = min(toLine(q, a, b), min(toLine(q, b, b - head * (along + 0.55 * across)), toLine(q, b, b - head * (along - 0.55 * across))));
+        }
+        picture = mix(picture, vec3(1.0, 0.33, 0.2), 1.0 - smoothstep(0.5 * of.z, 0.8 * of.z, d));
+        vec2 r = (q - clamp(a, vec2(of.w), vec2(1.0 - of.w, aspect - of.w))) / of.w; // its number: a disc at its first corner, kept on the panel
+        if (max(abs(r.x), abs(r.y)) < 1.0) {
+          vec4 disc = textureLod(uSheets, vec2(${SHEETS.digits[0]}.0 + (float(k) + 0.5 + 0.5 * r.x) * 48.0, ${sheets.height - SHEETS.digits[1]}.0 - (0.5 + 0.5 * r.y) * 48.0) / vec2(${sheets.width}.0, ${sheets.height}.0), 0.0);
+          picture = mix(picture, disc.rgb, disc.a);
+        }
+        return picture;
       }
 
       vec3 background(vec3 dir) {
@@ -329,6 +378,7 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
                 picture = mix(picture, a.rgb, a.a);
               }
             }
+            for (int k = 0; k < ${MARKS}; k++) if (uMarkOf[k].x == ${i}.0) picture = marked(picture, vec2(uv.x, 1.0 - uv.y), k, uSize[${i}].y);
             color = mix(color, picture, inside * uLook[${i}].y);
           }
         }`).join('')}
@@ -347,6 +397,10 @@ function build(keys, asIs) { // keys: what each monitor shows. One that stays ke
         if (uNoteOn > 0.0) { // over the panels, under the list of applications
           vec4 s = sheet(uSheets, vec4(${region(noteCanvas, SHEETS.note)}), mat3(1.0), uNotePlace, vec2(${noteCanvas.width}.0, ${noteCanvas.height}.0), toward, 0.0, at);
           color = mix(color, s.rgb, s.a * uNoteOn);
+        }
+        if (uAssistOn > 0.0) { // the helper's card, low in the view, fixed to the head
+          vec4 s = sheet(uSheets, vec4(${region(assistCanvas, SHEETS.assist)}), mat3(1.0), uAssistPlace, vec2(${assistCanvas.width}.0, ${assistCanvas.height}.0), toward, 0.0, at);
+          color = mix(color, s.rgb, s.a * uAssistOn);
         }
         if (uMenuOn > 0.0) { // the list of applications: a ribbon of icons around the viewer, fixed in the room, over everything
           color *= 1.0 - uMenuDim * uMenuOn; // the whole view goes dark behind it
@@ -630,7 +684,7 @@ function showArranging() {
     id ? `${m.window ? `Окно «${m.name.slice(0, 40)}»` : `Монитор ${i + 1} (${m.name})`}${held ? ': в руке' : resizing ? `: ${resizing.w} × ${resizing.h}` : ''}` : 'Наведите указатель или взгляд на панель',
     (id ? `вправо ${Math.round(where.yaw)}°   вверх ${Math.round(where.pitch)}°   ` +
       `ширина ${Math.round(resizing?.span ?? settings[`${id}.span`])}°   изгиб ${settings[`${id}.curve`]}%   расстояние ${settings[`${id}.dist`]} м` : 'мышь телефона или мышь компьютера'),
-    'левая кнопка в любом месте: нести  ·  край или угол окна: размер окна  ·  колесо: размер  ·  Shift / Ctrl + колесо: изгиб / расстояние  ·  внизу: обои',
+    'левая кнопка в любом месте: нести  ·  край или угол окна: размер окна  ·  колесо: размер  ·  Shift / Ctrl + колесо: изгиб / расстояние',
     'цифры: ' + settings.monitors.map(({ id }, n) => `${n + 1} ${settings[`${id}.hidden`] ? 'показать' : 'скрыть'} монитор ${n + 1}`).join(',  ') + '  ·  5: центрировать  ·  Esc: выход',
   ]
   if (lines.join() === hudShown) return
@@ -713,9 +767,14 @@ watchParams(p => {
     uniforms.uChroma.value = p.chroma / 100
     uniforms.uCenter.value.set(p.cx, p.cy)
   }
+  if (!GLASSES && !SPECTATOR && p.renderScale !== renderScale) { // for a phone in a headset: what the PC draws keeps its pixels
+    renderScale = p.renderScale
+    sizeCanvas()
+  }
   setBackground(p.fullscreen && p.autoBlack ? 'black' : p.bg, p.bgBlur > 0) // dark around a film that fills a monitor
   cursorFrom(p.cursor)
   noteFrom(p.note)
+  assistFrom(p.assist)
   uniforms.uBgLook.value.set(p.bgDim / 100, p.bgBlur / 100 * 6)
   uniforms.uSharp.value.set(1 - 0.4 * p.sharpen / 100, 1.2 * p.sharpen / 100)
   uniforms.uGlowColor.value.set(p.glowColor) // and a second colour, a sixth of the way round the colour wheel, to drift to
@@ -797,24 +856,38 @@ renderer.setAnimationLoop(now => {
     // Out of view: farther from the centre of the view than an eye sees (about 60 degrees to its corners), plus half the
     // panel's diagonal and room for its glow and menus. Phones get hot in a headset, and a hot iPhone slows down.
     // (Not on the PC: a recording may be asked for a wider view than an eye's.)
-    const seen = span > 0 && (SPECTATOR || Math.acos(Math.max(-1, Math.min(1, -ahead.z))) / DEG < 65 + Math.hypot(spans[i], spans[i] * aspect) / 2 + 12)
+    const away = Math.acos(Math.max(-1, Math.min(1, -ahead.z))) / DEG, within = 65 + Math.hypot(spans[i], spans[i] * aspect) / 2 + 12
+    const seen = span > 0 && (SPECTATOR || away < within)
     uniforms.uSize.value[i].x = seen ? span : 0
     screens[i].seen = seen
+    // A panel hidden, or 30 degrees farther off than that for three seconds: its video is not taken at all, so the
+    // phone neither receives nor unpacks it (heat, and away from home traffic). Taken again when it is within 15
+    // degrees of being drawn: a turn of the head toward it gets there in a second or so, as the stream does; until
+    // then its last picture stands. Never m0: MediaMTX runs the monitors' capture only while somebody takes that
+    // one. (Pictures that come as they are: receivePlain reads none for a panel out of view.)
+    const screen = screens[i], far = !SPECTATOR && !screen.asIs && id !== 'm0' && (!span || away > within + (screen.rest ? 15 : 30))
+    if (!far) screen.farSince = 0
+    if ((far && now - (screen.farSince ||= now) > 3000) !== !!screen.rest) {
+      screen.rest = !screen.rest
+      startStreams()
+    }
     uniforms.uMonitor.value[i] = seen ? screens[i].texture : blankTexture
     const u = 0.5 + Math.atan2(ahead.x, -ahead.z) / (2 * halfWidth), v = 0.5 - Math.asin(ahead.y) / (2 * halfWidth * aspect)
     const [x0, y0, x1, y1] = crop ? reach(m).map((d, k) => d / crop[2 + k % 2]) : [0, 0, 1, 1] // a window with its open menus
     // The panels come in the order they are drawn: of those under the centre of the view, the last is on top.
     if (span && u >= x0 && u <= x1 && v >= y0 && v <= y1) looked = i
-    if ((!settings.edit && !GLASSES) || !span) return
+    if ((!settings.edit && !settings.assistOn && !GLASSES) || !span) return
     // While arranging (and on a cable always): the panel under our pointer, and whether that is at a side or corner of a window (1.5 degrees deep).
     const ray = fromMiddle(rayHere.copy(rayDir).applyQuaternion(rotation), rotation, settings[`${id}.dist`])
     const pu = 0.5 + Math.atan2(ray.x, -ray.z) / (2 * halfWidth), pv = 0.5 - Math.asin(ray.y) / (2 * halfWidth * aspect)
+    if (marking?.i === i) marking.to = [Math.min(1, Math.max(0, pu)), Math.min(1, Math.max(0, pv))] // a mark being drawn ends at the pointer, or at the panel's side
     if (pu < 0 || pu > 1 || pv < 0 || pv > 1) return
     const bu = Math.min(0.2, 1.5 / spans[i]), bv = Math.min(0.2, 1.5 / (spans[i] * aspect))
     const edge = [+(pu < bu), +(pu > 1 - bu), +(pv < bv), +(pv > 1 - bv)]
     pointed = { i, u: pu, v: pv, edge: crop && edge.some(Boolean) ? edge : null }
   })
   glow()
+  showMarks()
   showArranging()
   point(dt)
   // Above, the clock: it comes as the head turns to it.
@@ -824,21 +897,26 @@ renderer.setAnimationLoop(now => {
   roomNote(settings) // every frame: its count goes on where no setting changes meanwhile (the spectator)
   note.fade = Math.max(0, Math.min(1, note.fade + (now < note.until ? dt / 0.25 : -dt / 0.5)))
   uniforms.uNoteOn.value = ease(note.fade)
+  assistFade = Math.max(0, Math.min(1, assistFade + (settings.assist ? dt / 0.2 : -dt / 0.4)))
+  uniforms.uAssistOn.value = ease(assistFade)
+  uniforms.uAssistPlace.value.set(assistCanvas.width / (ASSIST.across * DEG) * sheetScale(), ASSIST.height * DEG, assistCanvas.width / 2, 70)
   uniforms.uDark.value += ((settings.scanning && (GLASSES || SPECTATOR) ? 1 : 0) - uniforms.uDark.value) * Math.min(1, dt / 0.08) // see DARK
   uniforms.uNotePlace.value.set(noteCanvas.width / (NOTE.across * DEG) * sheetScale(), NOTE.height * DEG, noteCanvas.width / 2, noteCanvas.height / 2)
   uniforms.uClockOn.value = ease(clock.fade)
+  // `lowest` is how low the camera picture would reach at this tilt of the head. The camera is opened 5 degrees
+  // before that reaches the look-down window, to be ready in time, and closed 2 s after it is 8 degrees clear.
+  const camAspect = phoneCam?.video?.videoWidth ? phoneCam.video.videoHeight / phoneCam.video.videoWidth : 0.5625
+  const lowest = (gazeOf(head).pitch - Math.atan(Math.tan(settings.camFov * DEG / 2) * camAspect)) / DEG + settings.camShiftY // (shifted down, it reaches lower)
   if (!SPECTATOR) { // the spectator must not open the PC's own webcam (a headset on a cable takes it for its own)
-    // `lowest` is how low the camera picture would reach at this tilt of the head. The camera is opened 5 degrees
-    // before that reaches the look-down window, to be ready in time, and closed 2 s after it is 8 degrees clear.
-    const aspect = phoneCam?.video?.videoWidth ? phoneCam.video.videoHeight / phoneCam.video.videoWidth : 0.5625
-    const lowest = (gazeOf(head).pitch - Math.atan(Math.tan(settings.camFov * DEG / 2) * aspect)) / DEG
     const wanted = (settings.sixDof && sensorSeen && !GLASSES) || settings.passthrough || (settings.camBelow > 0 && lowest < -settings.camBelow + (phoneCam?.track ? 8 : 5))
     if (wanted) {
       unseenSince = undefined
       openCamera()
     } else if (phoneCam?.track && !settings.camKeep && Date.now() - (unseenSince ??= Date.now()) > 2000) closeCamera() // camKeep: no closing, so no new permission question
   }
-  const shown = (settings.passthrough || settings.camBelow > 0) && phoneCam?.video?.videoWidth ? phoneCam : null
+  // Its picture is given to the shader only while it can be in view: a camera kept open (`camKeep`, or for the head
+  // movement) would else have every one of its pictures, 1920 x 1080, put on the graphics card for nothing.
+  const shown = (settings.passthrough || (settings.camBelow > 0 && lowest < -settings.camBelow + 8)) && phoneCam?.video?.videoWidth ? phoneCam : null
   const tan = shown ? Math.tan(settings.camFov * DEG / 2) : 0
   uniforms.uCamBelow.value = settings.passthrough ? 2 : Math.sin(-settings.camBelow * DEG)
   uniforms.uCamShift.value.set(Math.tan(settings.camShiftX * DEG), Math.tan(settings.camShiftY * DEG))
@@ -871,7 +949,7 @@ renderer.setAnimationLoop(now => {
 const mouse = { x: 0.5, y: 0.5 } // where the system's pointer is on the phone screen, 0..1 from the top left
 const ROOM = 0.08 // the top and the bottom of the phone screen left out, of its height (as the frame around windows once was)
 let orders = [], sendingOrders = false, pointedAt, pressedIn, wheelRest = 0, clickedAt = 0
-const working = () => tapped && !SPECTATOR && !sensorOnly() && !settings.edit
+const working = () => tapped && !SPECTATOR && !sensorOnly() && !settings.edit && !settings.assistOn
 const windowLooked = () => working() && !GLASSES && settings.monitors[looked]?.window ? settings.monitors[looked] : undefined // (on a cable: inside it, see glassesPointer)
 const only = (what, ...keys) => Object.keys(what).every(key => keys.includes(key))
 function order(what) { // a movement replaces a movement that still waits; presses and the wheel are never dropped
@@ -944,7 +1022,7 @@ function point(dt) { // every frame: the list of applications, or our pointer on
   } else uniforms.uPointer.value.set(target ? looked : -1, at ? at.x / target.crop[2] : 0, at ? 1 - at.y / target.crop[3] : 0)
   // Our pointer as a dot in the view: over the list, and while arranging. A headset on a cable: wherever it is not
   // inside a monitor or window.
-  uniforms.uRayOn.value = (cabled() ? phonePointer.x < 0 : menu.open || settings.edit) ? 1 : 0
+  uniforms.uRayOn.value = (cabled() ? phonePointer.x < 0 : menu.open || settings.edit || settings.assistOn) ? 1 : 0
   uniforms.uRay.value.copy(aim())
   if (target) {
     uniforms.uPointerPx.value.set(target.crop[2], target.crop[3])
@@ -971,7 +1049,7 @@ function glassesPointer() {
   const i = inside ? settings.monitors.findIndex(m => m.id === inside.id) : -1, m = settings.monitors[i]
   uniforms.uPointer.value.set(i, inside?.u ?? 0, 1 - (inside?.v ?? 0))
   if (m) uniforms.uPointerPx.value.set(...(m.crop ? m.crop.slice(2) : [screens[i].video.videoWidth || 1920, screens[i].video.videoHeight || 1080]))
-  const over = inside ? i : !settings.edit && !menu.open ? pointed.i : -1, panel = settings.monitors[over], now = performance.now()
+  const over = inside ? i : !settings.edit && !menu.open && !settings.assistOn ? pointed.i : -1, panel = settings.monitors[over], now = performance.now()
   if (!panel || now - askedAt < 50) return
   askedAt = now
   // inside: only the corners, u -1 (never taken for going in: the extension may have come out before we know it).
@@ -1022,6 +1100,7 @@ function press(e, down) {
   if (!tapped || !settings || SPECTATOR || sensorOnly()) return
   clickedAt = performance.now()
   const left = e.pointerType !== 'mouse' || e.button === 0 // a drag with the button held reaches the page as a finger: the left button
+  if (settings.assistOn) return markPress(e, down, left)
   if (settings.edit) return editPress(e, down, left)
   if (menu.open) return menuPress(e, down, left)
   const target = down ? windowLooked() : pressedIn // a button is let go in the window it was pressed in, also when the gaze has left it
@@ -1153,7 +1232,9 @@ function glow() {
   settings.monitors.forEach((m, i) => {
     let [sides, strength] = settings.focusGlow && m.focused ? [ALL, 0.7] : [null, 0]
     const busy = held || resizing
-    if (!settings.edit) {
+    if (settings.assistOn) {
+      if (pointed.i === i) [sides, strength] = [ALL, 0.55] // the helper's mode: the panel a mark would go on
+    } else if (!settings.edit) {
       // only the keyboard's window
     } else if (resizing?.i === i) [sides, strength] = [resizing.edge, 1]
     else if (held?.i === i) [sides, strength] = [ALL, 1]
@@ -1186,7 +1267,7 @@ const BUTTONS = ['record', 'lean', 'set', 'off']
 // 'call' (the key then gets the time), else a switch. While a slider is held, nothing but its row is drawn and the
 // view is not darkened: what it does is to be seen, not the settings.
 const BLOCKS = [
-  { title: 'Картинка', rows: [['sharpen', 'Резкость текста, %'], ['focusGlow', 'Подсветка окна с клавиатурой'], ['hideMonitors', 'Только окна, без мониторов']] },
+  { title: 'Картинка', rows: [['sharpen', 'Резкость текста, %'], ['renderScale', 'Разрешение отрисовки, %'], ['focusGlow', 'Подсветка окна с клавиатурой'], ['hideMonitors', 'Только окна, без мониторов']] },
   { title: 'Движение головы', rows: [['sixDof', 'Движение по камере'], ['leanGain', 'Сила приближения, ×'], ['scanCall', 'Осмотреться заново', 'call']] },
   { title: 'Камера телефона', foot: () => settings.camLabel ? `Камера: ${settings.camLabel}` : '', rows: [['passthrough', 'Камера как фон'], ['camBelow', 'Камера при взгляде вниз, °'],
     ['camKeep', 'Не закрывать камеру'], ['camFov', 'Угол обзора её картинки, °'], ['camShiftX', 'Сдвиг картинки вправо / влево, °'], ['camShiftY', 'Сдвиг картинки вверх / вниз, °']] },
@@ -1298,7 +1379,7 @@ function closeMenu() {
 }
 // The Super key in the headset (the extension, instead of GNOME's overview) opens and closes the list: the PC's
 // mouse is held for it meanwhile, its left button arriving as `grab` (as in the arranging mode).
-let menuCallSeen, grabSeen, wheelMenu
+let menuCallSeen, grabSeen, grab2Seen, assistWas, wheelMenu
 function byKeys(p) {
   if (SPECTATOR || sensorOnly()) return // the spectator shows the phone's list; a phone that only senses has none
   if (menuCallSeen !== undefined && p.menuCall !== menuCallSeen) {
@@ -1315,12 +1396,22 @@ function byKeys(p) {
   // The PC's left button does what the phone mouse's does, with our pointer in the middle of the view, so the gaze
   // points. Arranging: a panel is carried, a side or corner of a window resizes the window. The list: what is looked
   // at is started, or carried into the field; its settings are switched, their sliders moved.
-  if (grabSeen !== undefined && p.grab !== grabSeen && (p.edit || menu.open)) {
+  // The helper's mode (Caps Lock): the list closes, the left button marks a window or frames a part of it, the
+  // right one (`grab2`) draws an arrow.
+  if (p.assistOn && !assistWas) {
+    if (menu.open) closeMenu()
+    if (!GLASSES) Object.assign(mouse, { x: 0.5, y: 0.5 })
+  }
+  assistWas = p.assistOn
+  if (grabSeen !== undefined && p.grab !== grabSeen && (p.edit || menu.open || p.assistOn)) {
     Object.assign(mouse, { x: 0.5, y: 0.5 })
-    if (p.edit) editPress({ type: 'grab' }, p.grab, true)
+    if (p.assistOn) markPress({ type: 'grab' }, p.grab, true)
+    else if (p.edit) editPress({ type: 'grab' }, p.grab, true)
     else menuPress({ type: 'grab' }, p.grab, true)
   }
+  if (grab2Seen !== undefined && p.grab2 !== grab2Seen && p.assistOn) markPress({ type: 'grab' }, p.grab2, false)
   grabSeen = p.grab
+  grab2Seen = p.grab2
 }
 // Puts application n into place k of the field (-1: out of it); places of uninstalled applications become free.
 function dropIcon(n, k) {
@@ -1376,11 +1467,11 @@ function menuPress(e, down, left) {
   }
   Object.assign(menu, { press: null, drag: -1 })
 }
-function twoLines(c, text, width) {
+function twoLines(c, text, width, most = 2) { // (or on `most` lines)
   const lines = ['']
   for (const word of text.split(' ')) {
     const longer = lines.at(-1) ? `${lines.at(-1)} ${word}` : word
-    if (!lines.at(-1) || c.measureText(longer).width <= width || lines.length === 2) lines[lines.length - 1] = longer
+    if (!lines.at(-1) || c.measureText(longer).width <= width || lines.length === most) lines[lines.length - 1] = longer
     else lines.push(word)
   }
   return lines.map(line => fitLine(c, line, width))
@@ -1589,6 +1680,109 @@ function setSlider({ key, x: x0, w }, x) {
   const [, min, max, step] = LAYOUT_SPEC[key], value = +(Math.round((min + Math.max(0, Math.min(1, (x - x0) / w)) * (max - min)) / step) * step).toFixed(4)
   if (value !== settings[key]) change(settings, { [key]: value })
 }
+// --- the helper: Claude, asked from inside the sphere (server.js and assist.js; Caps Lock on the PC). Its card
+// shows low in the view what goes on: listening, thinking, doing, the answer, a question. While its mode is on
+// (`assistOn`) the pointer is ours, as in the arranging, and marks what Claude is to look at: a click on a panel is
+// all of it, the left button dragged a frame around a part, the right button dragged an arrow. Each mark gets a
+// number and its picture goes to the server at once: the frame's part alone, for an arrow the part around it with
+// the arrow drawn in. Nothing else of the screen is sent. The marks stay drawn until Claude has answered.
+const ASSIST = { across: 40, height: -21 } // the card's width and the height of its second line, degrees: it grows down from there
+const STATES = { listen: ['Режим Claude', '#3ec9c1'], think: ['Думаю', '#f0b23c'], do: ['Делаю', '#f0b23c'], done: ['Готово', '#57c97a'], ask: ['Вопрос', '#ff5533'], fail: ['Claude', '#9fb0c2'] }
+let assistSeen, assistFade = 0
+function assistFrom(card) { // from the settings: { n, state, text }, or null
+  if (card?.n === assistSeen) return
+  assistSeen = card?.n
+  if (!card) return // the last one stays drawn while it fades
+  const c = assistCanvas.getContext('2d'), { width: W, height: H } = assistCanvas, [word, colour] = STATES[card.state] ?? STATES.fail
+  c.font = '400 30px system-ui, sans-serif'
+  const lines = twoLines(c, card.text.replace(/\s+/g, ' ').trim(), W - 80, 5).filter(Boolean) // the card is as tall as its words, from its top down
+  c.clearRect(0, 0, W, H)
+  c.fillStyle = 'rgba(16, 20, 28, 0.92)'
+  c.beginPath()
+  c.roundRect(0, 0, W, 78 + lines.length * 38 + (lines.length ? 12 : 0), 36)
+  c.fill()
+  c.fillStyle = colour
+  c.beginPath()
+  c.arc(52, 44, 13, 0, 7)
+  c.fill()
+  Object.assign(c, { textAlign: 'left', textBaseline: 'top', fillStyle: '#fff', font: '700 32px system-ui, sans-serif' })
+  c.fillText(word, 80, 26)
+  Object.assign(c, { fillStyle: '#d8e2ec', font: '400 30px system-ui, sans-serif' })
+  lines.forEach((line, i) => c.fillText(line, 40, 78 + i * 38))
+  toSheets(assistCanvas, SHEETS.assist)
+}
+let marking      // the mark being drawn: { i: the panel, arrow, from: [u, v] from its top left, to }
+let myMarks = [] // made on this page and not yet told back by the server: { kind, id, rect }; numbered on from the server's
+const boxed = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]
+function markPress(e, down, left) {
+  if (e.type === 'pointercancel') return
+  if (down) {
+    if (!marking && pointed.i >= 0 && (settings.marks?.length ?? 0) + myMarks.length < MARKS) marking = { i: pointed.i, arrow: !left, from: [pointed.u, pointed.v], to: [pointed.u, pointed.v] }
+    return
+  }
+  if (!marking || left === marking.arrow) return // the other button
+  const { i, arrow, from, to } = marking, id = settings.monitors[i]?.id, far = Math.hypot((to[0] - from[0]) * spans[i], (to[1] - from[1]) * spans[i] * aspects[i]) // degrees
+  marking = undefined
+  if (!id || (arrow && far < 1)) return // an arrow of no length points at nothing
+  const kind = arrow ? 'arrow' : far < 0.7 ? 'window' : 'frame'
+  const rect = kind === 'window' ? [0, 0, 1, 1] : kind === 'frame' ? boxed(from, to) : [...from, ...to]
+  const [x0, y0, x1, y1] = boxed(from, to), cut = kind === 'arrow' ? [Math.max(0, x0 - 0.12), Math.max(0, y0 - 0.12), Math.min(1, x1 + 0.12), Math.min(1, y1 + 0.12)] : rect
+  const mark = { kind, id, rect: rect.map(n => +n.toFixed(4)) }, drop = () => { myMarks = myMarks.filter(m => m !== mark) } // not taken by the server: not drawn on
+  myMarks.push(mark)
+  cutOut(i, cut, kind === 'arrow' ? rect : null)
+    .then(picture => fetch(`/assist/mark?kind=${kind}&id=${id}&rect=${mark.rect}`, { method: 'POST', body: picture })).then(answer => answer.ok || drop(), drop)
+}
+// A part of a panel's picture as a PNG: [u0, v0, u1, v1] from its top left, in the picture's own pixels (the longer
+// side 1568 at most: more Claude does not take in); `arrow`: drawn into it, [tail, tip] on the panel. Read back
+// from the graphics card: both kinds of pictures are there, a video's and those that come as they are (whose memory
+// here is taken away while the next one is read).
+const cutScene = new THREE.Scene(), cutMaterial = new THREE.ShaderMaterial({ uniforms: { map: { value: null }, box: { value: new THREE.Vector4() } },
+  vertexShader: 'uniform vec4 box; varying vec2 at; void main() { at = box.xy + uv * box.zw; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: 'uniform sampler2D map; varying vec2 at; void main() { gl_FragColor = vec4(texture2D(map, at).rgb, 1.0); }' })
+cutScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), cutMaterial))
+function cutOut(i, [u0, v0, u1, v1], arrow) {
+  const screen = screens[i], { videoWidth: W, videoHeight: H } = screen.video, [left, top, wide, high] = settings.monitors[i].crop ?? [0, 0, W, H]
+  if (!W || !H) return Promise.reject(new Error('no picture yet'))
+  const x = Math.max(0, Math.round(left + u0 * wide)), y = Math.max(0, Math.round(top + v0 * high))
+  const w = Math.max(1, Math.min(W - x, Math.round((u1 - u0) * wide))), h = Math.max(1, Math.min(H - y, Math.round((v1 - v0) * high))), small = Math.min(1, 1568 / Math.max(w, h))
+  const out = Object.assign(document.createElement('canvas'), { width: Math.max(1, Math.round(w * small)), height: Math.max(1, Math.round(h * small)) }), c = out.getContext('2d')
+  const target = new THREE.WebGLRenderTarget(out.width, out.height), bytes = new Uint8Array(out.width * out.height * 4), picture = c.createImageData(out.width, out.height)
+  cutMaterial.uniforms.map.value = screen.texture
+  cutMaterial.uniforms.box.value.set(x / W, 1 - (y + h) / H, w / W, h / H) // the picture's v runs up
+  renderer.setRenderTarget(target)
+  renderer.render(cutScene, camera)
+  renderer.setRenderTarget(null)
+  renderer.readRenderTargetPixels(target, 0, 0, out.width, out.height, bytes)
+  target.dispose()
+  for (let row = 0; row < out.height; row++) picture.data.set(bytes.subarray((out.height - 1 - row) * out.width * 4, (out.height - row) * out.width * 4), row * out.width * 4) // read from the bottom up
+  c.putImageData(picture, 0, 0)
+  if (arrow) {
+    const at = (u, v) => [(u - u0) / (u1 - u0) * out.width, (v - v0) / (v1 - v0) * out.height], [ax, ay] = at(arrow[0], arrow[1]), [bx, by] = at(arrow[2], arrow[3])
+    const turn = Math.atan2(by - ay, bx - ax), head = Math.max(14, out.width / 40)
+    Object.assign(c, { strokeStyle: '#ff3b1f', lineWidth: Math.max(3, out.width / 200), lineCap: 'round', lineJoin: 'round' })
+    c.beginPath()
+    c.moveTo(ax, ay)
+    c.lineTo(bx, by)
+    c.moveTo(bx - head * Math.cos(turn - 0.5), by - head * Math.sin(turn - 0.5))
+    c.lineTo(bx, by)
+    c.lineTo(bx - head * Math.cos(turn + 0.5), by - head * Math.sin(turn + 0.5))
+    c.stroke()
+  }
+  return new Promise(done => out.toBlob(done, 'image/png'))
+}
+function showMarks() { // every frame: the marks for the shader, the one being drawn among them
+  const told = settings.marks ?? [], same = (a, b) => a.id === b.id && a.kind === b.kind && a.rect.every((n, k) => Math.abs(n - b.rect[k]) < 1e-3)
+  if (!settings.assistOn) marking = undefined
+  myMarks = settings.assistOn || told.length ? myMarks.filter(m => !told.some(t => same(t, m))) : [] // told back; or sent and answered, or given up
+  const drawn = marking && { id: settings.monitors[marking.i]?.id, kind: marking.arrow ? 'arrow' : 'frame', rect: marking.arrow ? [...marking.from, ...marking.to] : boxed(marking.from, marking.to) }
+  const all = [...told, ...[...myMarks, ...(drawn ? [drawn] : [])].map((m, k) => ({ ...m, n: told.length + k + 1 }))]
+  for (let k = 0; k < MARKS; k++) {
+    const mark = all.find(m => m.n === k + 1), i = mark ? settings.monitors.findIndex(m => m.id === mark.id) : -1, across = spans[i] > 0 ? spans[i] : 0
+    uniforms.uMarkOf.value[k].set(across ? i : -1, mark?.kind === 'arrow' ? 1 : 0, 0.22 / (across || 1), 1.1 / (across || 1))
+    if (mark) uniforms.uMark.value[k].set(...mark.rect)
+  }
+}
+
 // --- a notification of the PC (GNOME's banner), shown for a few seconds above the middle of the view, fixed to the
 // head: who is in the headset would not see it on the PC. As the PC shows banners: not in "Do Not Disturb".
 const NOTE = { across: 40, height: 17, shown: 6000 } // its width and the height of its middle, degrees; ms on view
@@ -1818,7 +2012,7 @@ function startStreams() { // called after the tap and after every change of sett
   screens.forEach((screen, i) => {
     // No pictures for a phone that is only the sensor of a headset on a cable (it still plays the sound), and none of
     // the monitor that shows that headset's picture.
-    if (sensorOnly() || settings.monitors[i].self) {
+    if (sensorOnly() || settings.monitors[i].self || screen.rest) { // rest: far out of view (the drawing loop)
       screen.stop?.()
       screen.stop = null
     } else screen.stop ??= screen.asIs ? receivePlain(screen, settings.monitors[i].id) : receive(settings.monitors[i].id, 'video', screen.video)

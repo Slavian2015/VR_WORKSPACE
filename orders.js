@@ -35,6 +35,16 @@ export function passKey(order, source, focused, held) {
 // hour is refused for the rest of that hour, key or no key. refused: Map address -> { count, since }, kept by the caller.
 // HOME: addresses of the home network and of this PC (IPv4 private and link-local; IPv6 loopback, unique local, link-local).
 export const HOME = /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)|^(::1$|f[cd][0-9a-f]{2}:|fe80:)/i
+// Whether a request comes from a page of another site, open in a browser on this PC or in the home: a browser sends
+// a plain POST anywhere, and what comes from this PC needs no key, so such a page could change the settings, press
+// keys in the windows and ask the helper. A browser names the page's site in `Origin`: it must be the address the
+// request was sent to. And what comes from this PC must have been sent to this PC by its own name: a site's name
+// that is made to point here (DNS rebinding) is not ours. Programs (the extension, curl, the tools) send no Origin.
+export function foreign(origin, host, local) {
+  if (local && !/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host ?? '')) return true
+  if (origin === undefined) return false
+  try { return new URL(origin).host !== host } catch { return true } // "null": a page with no site of its own
+}
 export function blocked(refused, from, now = Date.now()) {
   const wrong = HOME.test(from) ? null : refused.get(from)
   return wrong?.count >= 10 && now - wrong.since < 3600e3

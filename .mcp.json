@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "sphere": { "command": "node", "args": ["assist-tools.js"] }
+  }
+}

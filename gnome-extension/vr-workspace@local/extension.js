@@ -68,6 +68,7 @@ export default class VrWorkspace extends Extension {
     Main.layoutManager.connectObject('monitors-changed', () => this._keepPointerOn(), this)
     this._keymap = Clutter.get_default_backend().get_default_seat().get_keymap()
     this._numLock = this._keymap.get_num_lock_state() // only a change counts: Num Lock may be on already at login
+    this._capsLock = this._keymap.get_caps_lock_state()
     this._keymapChanged = this._keymap.connect('state-changed', () => this._onKeymap())
     // The pointer's shape (an arrow, a hand, a text cursor), for the pointer the headset draws over a window: GNOME
     // leaves the pointer out of a window's recording, so the server gets its picture whenever it changes.
@@ -104,6 +105,9 @@ export default class VrWorkspace extends Extension {
   }
 
   disable() {
+    if (this._assisting) this._assistOff()
+    if (this._capsTimer) GLib.source_remove(this._capsTimer)
+    this._capsTimer = 0
     this._leave()
     this._out()
     global.display.disconnect(this._windowCreated)
@@ -206,7 +210,7 @@ export default class VrWorkspace extends Extension {
       // popups: where the menus copied into it lie, from the window's top left (they may reach out of it)
       const popups = [...this._copies.values()].filter(c => c.window === w).map(({ popup }) => popup.get_frame_rect())
         .filter(r => r.width > 0 && r.height > 0).slice(-3).map(r => [r.x - frame.x, r.y - frame.y, r.width, r.height])
-      return { id: w.get_id(), title: w.get_title() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
+      return { id: w.get_id(), title: w.get_title() ?? '', app: Shell.WindowTracker.get_default().get_window_app(w)?.get_name() ?? '', w: frame.width, h: frame.height, left: frame.x - buffer.x, top: frame.y - buffer.y,
         parent: w.get_transient_for()?.get_id() ?? 0, type: w.get_window_type(), popups }
     })
     // fullscreen: a film, say, so the headset can go dark around it; not the glasses' own picture. With every report:
@@ -234,6 +238,9 @@ export default class VrWorkspace extends Extension {
         this._recordAsked = Date.now()
         recording().then(now => { this._recordingNow = now })
       }
+      if (answer?.assistOn && !this._assisting) this._assistOn()
+      else if (this._assisting && !answer?.assistOn) this._assistOff()
+      else if (this._assisting) this._hold()
       if (this._menuSince && answer?.menuOpen) this._hold()
       else if (this._menuSince && Date.now() - this._menuSince > 2000) this._leave() // the page has closed it (or is gone)
       // Windows came into the headset (the pointer may have changed while none was there), or the server started anew
@@ -615,15 +622,64 @@ export default class VrWorkspace extends Extension {
   // The PC's Num Lock pressed for the phone's keyboard (its F12: an iPhone gives a page no Num Lock), so that the
   // arranging mode stays one thing, whichever keyboard switches it
   _pressNumLock() {
+    this._pressKey(69) // Linux's KEY_NUMLOCK
+  }
+
+  _pressKey(code) { // a key pressed and let go by us
     this._keyboard ??= Clutter.get_default_backend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE)
     const now = GLib.get_monotonic_time()
-    this._keyboard.notify_key(now, 69, Clutter.KeyState.PRESSED) // Linux's KEY_NUMLOCK
-    this._keyboard.notify_key(now, 69, Clutter.KeyState.RELEASED)
+    this._keyboard.notify_key(now, code, Clutter.KeyState.PRESSED)
+    this._keyboard.notify_key(now, code, Clutter.KeyState.RELEASED)
+  }
+
+  // Caps Lock while the headset is in use (a phone connected, or the picture of a headset on a cable): the key of
+  // the helper in the sphere (Claude; the server's assist.js), and no capitals: the lock is switched back by a
+  // press of our own, which brings the state remembered here back and so counts as nothing. That press comes a
+  // quarter of a second later, when the finger is off the key (pressed at once, under the finger, it left the
+  // capitals on: the stand, 2026-11-22), and again if it did not take; a lock that will not go back is the one
+  // remembered from then on. Otherwise Caps Lock is the ordinary key. Only presses are known this way, not how long
+  // the key is held.
+  _onCapsLock(caps) {
+    if (this._capsTimer) return // our own press is on its way
+    if (!this._http || !(this._phoneOnline || this._glassesWindow())) return void (this._capsLock = caps)
+    let tries = 0
+    this._capsTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+      if (this._keymap.get_caps_lock_state() !== this._capsLock && tries++ < 4) return (this._pressKey(58), GLib.SOURCE_CONTINUE) // Linux's KEY_CAPSLOCK
+      this._capsLock = this._keymap.get_caps_lock_state()
+      this._capsTimer = 0
+      return GLib.SOURCE_REMOVE
+    })
+    this._talk({ assistKey: 1 }, () => this._http && this._tellWindows()) // the answer to that report says whether its mode is on now
+  }
+
+  // The helper's mode: the mouse is held for its marks, as for the list (with a headset on a cable its picture has
+  // the mouse itself), the right button draws arrows, and Escape gives the mode up. On while the server says so.
+  _assistOn() {
+    this._assisting = true
+    this._menuSince = 0 // the list, if it was open, closes on the page; its mouse is the helper's now
+    if (this._glassesWindow()) this._out()
+    else if (!this._catcher) this._takeMouse()
+    const action = global.display.grab_accelerator('Escape', Meta.KeyBindingFlags.NONE)
+    if (action === Meta.KeyBindingAction.NONE) return
+    Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.ALL)
+    this._hotkeys.set(this._assistEscape = action, () => talk(this._http, '/assist/cancel', {}))
+  }
+
+  _assistOff() {
+    this._assisting = false
+    if (this._assistEscape) {
+      global.display.ungrab_accelerator(this._assistEscape)
+      this._hotkeys.delete(this._assistEscape)
+      this._assistEscape = 0
+    }
+    if (!this._editing) this._leave() // (the arranging mode, switched on meanwhile, keeps the mouse)
   }
 
   _onKeymap() {
+    const caps = this._keymap.get_caps_lock_state()
+    if (caps !== this._capsLock) return this._onCapsLock(caps)
     const on = this._keymap.get_num_lock_state()
-    if (on === this._numLock) return // it was Caps Lock
+    if (on === this._numLock) return // our own Caps Lock press, bringing its state back
     this._numLock = on
     if (!on) return this._leave()
     // Num Lock is an ordinary key too: the mouse is taken only while a phone is actually connected.
@@ -720,6 +776,7 @@ export default class VrWorkspace extends Extension {
 
   _button(event, pressed) {
     if (event.get_button() === Clutter.BUTTON_PRIMARY) this._talk({ grab: pressed })
+    else if (event.get_button() === Clutter.BUTTON_SECONDARY && this._assisting) this._talk({ grab2: pressed }) // an arrow of the helper's mode
     else if (event.get_button() === Clutter.BUTTON_SECONDARY && pressed && this._menuSince) this._talk({ menuCall: Date.now() }) // closes our list
     return Clutter.EVENT_STOP
   }

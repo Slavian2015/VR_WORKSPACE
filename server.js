@@ -10,7 +10,8 @@ import { spawn, spawnSync, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LAYOUT_SPEC, MONITOR_SPEC, LENS_SPEC, complete } from './app/params.js'
-import { cleanOrder, HOME, blocked, passKey, wrongKey } from './orders.js'
+import { cleanOrder, HOME, blocked, foreign, passKey, wrongKey } from './orders.js'
+import { ask, settingsPatch, settingsTold } from './assist.js'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PARAMS_FILE = path.join(ROOT, 'params.json')
@@ -53,7 +54,7 @@ let pose = 'null', spectatorSeen = 0
 let picturePose = { text: 'null', at: 0 } // the same from the picture of a headset on a cable, while there is one and somebody watches
 // State that is not a setting, so it is not saved: fullscreen is reported by the GNOME extension, passthrough (the
 // phone camera as the background) is switched by POST /toggle/passthrough, which a keyboard shortcut can call.
-const live = { fullscreen: false, recording: false, passthrough: false, grab: false, scanning: false, roomReady: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 } // recording: record.mjs runs, as the extension tells
+const live = { fullscreen: false, recording: false, passthrough: false, grab: false, grab2: false, assistOn: false, scanning: false, roomReady: false, wheelSize: 0, wheelCurve: 0, wheelDist: 0 } // recording: record.mjs runs, as the extension tells
 // Arranging monitors with the mouse: whoever holds the mouse (the GNOME extension on Num Lock, or the control page)
 // says `edit: true` every second, sends the left button as `grab` and wheel steps as `wheel...: +1 / -1`, which are
 // added up here for the phone to read. A holder that died stops saying `edit`, and the mode ends.
@@ -119,6 +120,109 @@ let focusedWindow = 0           // the window that gets the keyboard on the PC, 
 let resizeWish = null, resizeAt = 0 // { id, w, h, edge }: a size the headset asked for a window, until the extension has taken it
 let cursor = { n: 0 }           // the PC's pointer, as the extension last told: { n: its pictures so far, png (empty: hidden), hot: [x, y] }
 let note = null, notes = 0      // the PC's latest notification, for 10 s: { n, app, title, body, icon: its file }; how many so far
+// --- the helper (assist.js): Claude asked from inside the sphere. Its key (Caps Lock, told by the extension) switches
+// its mode: while it is on (live.assistOn) the microphone is listened to and the mouse marks places on the panels
+// (the pages do that and send each mark's picture here), and at the next press what was said and marked goes to
+// Claude. A press while Claude works stops it; a press while it asks "yes or no" is the yes. What goes on shows as a
+// card on every page (`assist`), the words as they are heard among it.
+let assist = null               // the card: { n, state: listen | think | do | done | ask | fail, text }
+let assistN = 0, cardTimer, asking = null, confirming = null, pages = null
+let marking = false             // marks are taken: from the mode's start until the request leaves (a mark made just before the second press is still on its way then)
+let marks = []                  // { n, kind: window | frame | arrow, id: the panel, rect: [u0, v0, u1, v1] from its top left, about, png }
+const exchanges = []            // the last few: { at, said, answer }, so that "a bit more" is understood
+// The helper's ears (listen.py): speech into text on this PC, once ./setup-speech.sh has made .speech/. Started with
+// the first use of the mode and kept, its model loaded. heard: who waits for the words of a recording that has ended.
+const EARS = path.join(ROOT, '.speech/venv/bin/python')
+let ears = null, heard = null
+process.on('exit', () => ears?.kill())
+function earsTold(word) { // start, stop or cancel; false: there are no ears
+  if (!fs.existsSync(EARS)) return false
+  if (!ears) {
+    const mine = ears = spawn(EARS, [path.join(ROOT, 'listen.py')], { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'] })
+    const gone = () => { if (ears === mine) { ears = null; heard?.('') } }
+    mine.on('exit', gone)
+    mine.on('error', gone)
+    mine.stdin.on('error', () => {})
+    mine.stdout.setEncoding('utf8') // whole letters: a Cyrillic one may be cut in two between two pieces
+    let rest = ''
+    mine.stdout.on('data', text => {
+      const lines = (rest + text).split('\n')
+      rest = lines.pop()
+      for (const line of lines.filter(Boolean)) {
+        let told
+        try { told = JSON.parse(line) } catch { continue }
+        if (told.partial && live.assistOn) card('listen', `«${told.partial}»`)
+        if (typeof told.text === 'string') heard?.(told.text.slice(0, 1000))
+        if (told.error) console.log('the helper cannot hear:', told.error)
+      }
+    })
+  }
+  ears.stdin.write(word + '\n')
+  return true
+}
+function card(state, text = '', ms = 0) {
+  assist = { n: ++assistN, state, text: String(text).slice(0, 400) }
+  clearTimeout(cardTimer)
+  if (ms) cardTimer = setTimeout(() => { assist = null }, ms)
+}
+// Settings changed: kept in the file. Written aside and renamed: a rename is atomic, so a crash never leaves half a
+// file (all settings would be lost), and capture.py never reads one.
+function keep(patch) {
+  for (const [key, value] of Object.entries(patch)) value === null ? delete params[key] : params[key] = value
+  fs.writeFileSync(PARAMS_FILE + '.tmp', JSON.stringify(params, null, 2))
+  fs.renameSync(PARAMS_FILE + '.tmp', PARAMS_FILE)
+}
+function assistEnd() { // the mode off, nothing sent
+  live.assistOn = live.grab2 = marking = false
+  marks = []
+  heard = null
+  if (ears) earsTold('cancel')
+}
+function request(said) { // to Claude: the words and what is marked
+  live.assistOn = live.grab2 = marking = false
+  if (/^(стоп|отмена|отбой|хватит)[.! ]*$/i.test(said)) return (marks = [], card('fail', 'Отменено', 2500))
+  if (!said && !marks.length) return card('fail', fs.existsSync(EARS) ? 'Ничего не сказано и не помечено' : 'Ничего не помечено. Речь не подключена: ./setup-speech.sh', 4000)
+  card('think', said || 'Смотрю помеченное')
+  const before = exchanges.filter(e => Date.now() - e.at < 600000).slice(-3)
+  const model = /^claude-[a-z0-9-]+$/.test(params.assistModel) ? params.assistModel : undefined // the setting `assistModel`; else the usual one (assist.js)
+  const mine = asking = ask({ said, marks: marks.length, before, model, server: `http://127.0.0.1:${pages.address().port}`, tools: path.join(ROOT, 'assist-tools.js') }, doing => asking === mine && card('do', doing))
+  mine.done.then(answer => {
+    exchanges.push({ at: Date.now(), said: said || '(пометил место)', answer })
+    if (exchanges.length > 6) exchanges.shift()
+    if (asking === mine) card('done', answer, Math.min(20000, 4000 + 70 * answer.length))
+  }, e => asking === mine && card('fail', e.message, 5000)).finally(() => { if (asking === mine) { asking = null; marks = [] } })
+}
+function assistKey() {
+  if (confirming) return confirming(true)
+  if (heard) return // the words of the recording just ended are on their way
+  if (asking) {
+    asking.stop()
+    asking = null
+    marks = []
+    return card('fail', 'Остановлено', 2500)
+  }
+  if (live.assistOn) { // the mode ends: what was said and what is marked goes to Claude
+    live.assistOn = live.grab2 = false
+    const listened = earsTold('stop'), timer = setTimeout(() => heard?.(''), listened ? 20000 : 400) // without ears: a moment for the last mark to come
+    if (listened) card('think', 'Распознаю речь')
+    heard = said => { clearTimeout(timer); heard = null; request(said.trim()) }
+    return
+  }
+  if (Date.now() - editSeen < 2500) return card('fail', 'Сначала выйдите из расстановки окон (Num Lock)', 3500)
+  live.assistOn = marking = true
+  marks = []
+  card('listen', earsTold('start') ? 'Говорите и помечайте мышью. Caps Lock: отправить, Esc: отмена'
+    : 'Пометьте место мышью: щелчок, рамка, правой кнопкой стрелка. Caps Lock: отправить. Речь не подключена: ./setup-speech.sh')
+}
+// "Yes or no" in the headset before something that cannot be taken back: the helper's key is the yes, ten seconds of nothing the no
+function confirmed(question) {
+  confirming?.(false) // one question at a time: an earlier one is a no
+  return new Promise(resolve => {
+    const timer = setTimeout(() => confirming(false), 10000)
+    confirming = yes => { clearTimeout(timer); confirming = null; card(asking ? 'do' : 'fail', yes ? 'Да' : 'Не подтверждено', asking ? 0 : 2500); resolve(yes) }
+    card('ask', `${question} Да: Caps Lock. Нет: подождите`)
+  })
+}
 let windowsModule               // the windows.py process, started when first needed
 // The headset's own list of applications: the extension tells which are installed (name and icon file), the headset
 // shows them and names one to start, and the extension starts it and shows its window.
@@ -127,7 +231,7 @@ let launch = null // the application the headset asked for, until the extension 
 // In the order the windows came into the headset: it draws the later ones on top, as a dialog over its window.
 // A dialog's panel names the panel of its window (`over`).
 const windowPanels = () => [...wantedWindows].map(([id, slot]) => [openWindows.find(w => w.id === id), slot]).filter(([w]) => w)
-  .map(([w, slot]) => ({ id: slot, name: w.title, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups,
+  .map(([w, slot]) => ({ id: slot, name: w.title, app: w.app, window: true, crop: [w.left, w.top, w.w, w.h], source: w.id, over: wantedWindows.get(w.parent || adopted.get(w.id)), popups: w.popups,
     focused: w.id === focusedWindow }))
 function tellWindows(order) {
   if (!windowsModule) {
@@ -187,6 +291,7 @@ async function handle(req, res) {
   // An address from the internet (not of the home network) that gave 10 wrong keys within an hour is not answered for
   // the rest of that hour, and the journal tells of it, as of every opening of the link from the internet.
   const from = req.socket.remoteAddress, local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(from), home = HOME.test(from)
+  if (foreign(req.headers.origin, req.headers.host, local)) return res.writeHead(403).end('asked by a page of another site') // orders.js
   // Without the key: the CA certificate (to be installed first), and what Android fetches for a home screen icon
   // without cookies (the manifest and its icons). Nothing in them is private.
   if (!local && !['/ca.crt', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'].includes(url)) {
@@ -226,7 +331,7 @@ async function handle(req, res) {
     if (Array.isArray(told?.open)) {
       const before = new Set(openWindows.map(w => w.id))
       openWindows = told.open.filter(w => [w?.id, w?.left, w?.top].every(Number.isFinite) && w.w > 0 && w.h > 0)
-        .map(w => ({ id: w.id, title: String(w.title).slice(0, 80), w: w.w, h: w.h, left: w.left, top: w.top, parent: Number.isFinite(w.parent) ? w.parent : 0, type: w.type,
+        .map(w => ({ id: w.id, title: String(w.title).slice(0, 80), app: String(w.app ?? '').slice(0, 60), w: w.w, h: w.h, left: w.left, top: w.top, parent: Number.isFinite(w.parent) ? w.parent : 0, type: w.type,
           popups: (Array.isArray(w.popups) ? w.popups : []).filter(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > 0 && r[3] > 0).slice(0, 3) }))
       opened = windowsTold ? openWindows.filter(w => !before.has(w.id)) : []
       windowsTold = true
@@ -265,6 +370,7 @@ async function handle(req, res) {
       numLock: params.numLock ?? 0, // F12 on the phone's keyboard: the extension presses the PC's Num Lock
       record: params.recordCall ?? 0, // the record button in the headset's list: the extension starts or stops the recording
       off: params.offCall ?? 0, // the off button there: the extension switches VR Workspace off
+      assistOn: live.assistOn, // the helper's mode: the extension holds the mouse for its marks
       connectors: Object.values(connectors), // GNOME's names of the monitors in the headset: the extension says which shows the picture
       enter: glassesOn() && Date.now() - enter.at < 400 ? enter : null } // the monitor or window the PC's mouse is to go into
     launch = resizeWish = null
@@ -410,11 +516,15 @@ async function handle(req, res) {
     const patch = JSON.parse(await readBody(req))
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new SyntaxError('object expected')
     if ('edit' in patch) editSeen = patch.edit === true ? Date.now() : 0
+    if (patch.edit === true && live.assistOn) { assistEnd(); assist = null } // the arranging takes the mouse: the helper's mode gives way
     if ('trackSeen' in patch) { // how the phone's camera serves for finding the head: into the journal, not a setting
       console.log('head from the camera:', JSON.stringify(patch.trackSeen).slice(0, 300))
       delete patch.trackSeen
     }
     if ('menuOpen' in patch) menuOpenAt = patch.menuOpen === true ? Date.now() : 0
+    if ('assistKey' in patch && local) assistKey() // Caps Lock, from the extension
+    delete patch.assistKey
+    delete patch.assistOn // its mode is switched by its key only, not as the other live values are
     const e = patch.enter
     if (e && Date.now() > enterQuiet && /^[mw]\d+$/.test(e.id) && Number.isInteger(e.source) && typeof e.connector === 'string' && [e.u, e.v].every(Number.isFinite)
       && Array.isArray(e.corners) && e.corners.length === 4 && e.corners.every(c => Array.isArray(c) && c.length === 2 && c.every(Number.isFinite)))
@@ -435,13 +545,7 @@ async function handle(req, res) {
       if (Number.isFinite(sent) && typeof live[key] === 'number') live[key] += sent
       delete patch[key]
     }
-    if (Object.keys(patch).length) {
-      for (const [key, value] of Object.entries(patch)) value === null ? delete params[key] : params[key] = value
-      // Written aside and renamed: a rename is atomic, so a crash never leaves half a file (all settings would be
-      // lost), and capture.py never reads one.
-      fs.writeFileSync(PARAMS_FILE + '.tmp', JSON.stringify(params, null, 2))
-      fs.renameSync(PARAMS_FILE + '.tmp', PARAMS_FILE)
-    }
+    if (Object.keys(patch).length) keep(patch)
     // capture.py reads the number and the sizes of the virtual monitors when MediaMTX starts it again
     if ('virtual' in patch || 'virtualSize' in patch || Object.keys(patch).some(key => /^m\d\.size$/.test(key))) {
       readMonitors()
@@ -462,7 +566,73 @@ async function handle(req, res) {
     return res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(searchParams.has('full') ? { ...complete(answer), outside: local ? OUTSIDE_URL : '' }
         : { ...answer, cursor: cursor.n ? [cursor.n, ...cursor.hot, cursor.png.length ? 1 : 0] : null, // the pointer: its picture's number, hot spot, whether shown
-          note: note && [note.n, note.app, note.title, note.body, note.icon ? 1 : 0] }))
+          note: note && [note.n, note.app, note.title, note.body, note.icon ? 1 : 0],
+          assist, marks: marks.map(({ n, kind, id, rect }) => ({ n, kind, id, rect })) }))
+  }
+  // --- the helper. From the pages: a mark with its picture (PNG), and the mode given up (nothing is sent).
+  if (url === '/assist/mark' && req.method === 'POST') {
+    const parts = []
+    let size = 0
+    for await (const chunk of req) {
+      if ((size += chunk.length) > 8e6) throw new Error('body too large')
+      parts.push(chunk)
+    }
+    const png = Buffer.concat(parts), kind = searchParams.get('kind'), id = searchParams.get('id'), rect = (searchParams.get('rect') ?? '').split(',').map(Number)
+    const panel = [...CAPTURE.monitors, ...windowPanels()].find(m => m.id === id)
+    if (!marking || marks.length >= 6 || !panel || !['window', 'frame', 'arrow'].includes(kind) || rect.length !== 4 || !rect.every(n => n >= 0 && n <= 1) || png.length < 8 || png.readUInt32BE(0) !== 0x89504e47) throw new SyntaxError('a mark expected')
+    const on = panel.window ? `the window "${panel.name}"${panel.app ? ` of the program ${panel.app}` : ''}` : `the monitor ${panel.name ?? id}`, pc = n => Math.round(n * 100)
+    const about = kind === 'window' ? `the whole of ${on}.`
+      : kind === 'frame' ? `a frame around a part of ${on}: from ${pc(rect[0])} to ${pc(rect[2])} % of its width and from ${pc(rect[1])} to ${pc(rect[3])} % of its height, counted from its top left. The picture is that part alone.`
+        : `an arrow drawn on ${on}, pointing from ${pc(rect[0])} %, ${pc(rect[1])} % to ${pc(rect[2])} %, ${pc(rect[3])} % (across, down from its top left). The picture is the part of it around the arrow, with the arrow in red: it points at its tip.`
+    marks.push({ n: marks.length + 1, kind, id, rect, about, png })
+    return res.writeHead(204).end()
+  }
+  if (url === '/assist/cancel' && req.method === 'POST') {
+    confirming?.(false)
+    if (asking) asking.stop()
+    asking = null
+    assistEnd()
+    assist = null
+    return res.writeHead(204).end()
+  }
+  // From this PC only: the key as the extension presses it and words as if spoken (both for trying it out), and what
+  // the tools ask (assist-tools.js).
+  if (url === '/assist/key' && req.method === 'POST' && local) return (assistKey(), res.writeHead(204).end())
+  if (url === '/assist' && req.method === 'POST' && local) {
+    const said = String(JSON.parse(await readBody(req))?.text ?? '').trim().slice(0, 1000)
+    if (confirming) confirming(/^(да|ага|давай|yes)(?![а-яёa-z])/i.test(said))
+    else if (!asking && !heard) request(said)
+    return res.writeHead(204).end()
+  }
+  if (url === '/assist/marks' && local) {
+    return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(marks.map(m => ({ n: m.n, about: m.about, png: m.png.toString('base64') }))))
+  }
+  if (url === '/assist/settings' && local) {
+    const told = () => ({ ...settingsTold(complete({ ...params, ...CAPTURE, monitors: [], ...live }), backgrounds().map(f => 'bg/' + f)), recording: live.recording })
+    if (req.method !== 'POST') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(told()))
+    let patch
+    try { patch = settingsPatch(JSON.parse(await readBody(req))?.changes, backgrounds().map(f => 'bg/' + f)) } catch (e) { return res.writeHead(400).end(e.message) }
+    if ('passthrough' in patch) { live.passthrough = patch.passthrough; delete patch.passthrough } // not kept in the file
+    if (Object.keys(patch).length) keep(patch)
+    return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ now: Object.fromEntries(told().settings.map(s => [s.key, s.value])) }))
+  }
+  if (url === '/assist/do' && req.method === 'POST' && local) {
+    const { action, on } = JSON.parse(await readBody(req)) ?? {}, done = what => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(what))
+    if (action === 'record') {
+      if (typeof on !== 'boolean') return res.writeHead(400).end('"record" takes `on`: true or false')
+      if (live.recording !== on) keep({ recordCall: Date.now() })
+      return done({ recording: on })
+    }
+    if (action === 'recenter') return (keep({ recenter: Date.now() }), done({ done: true }))
+    if (action === 'look_around') {
+      if (params.sixDof === false) return res.writeHead(400).end('The head movement is switched off: set "sixDof" to true first')
+      return (keep({ scanCall: Date.now() }), done({ done: true, note: 'the user now looks around the room for 15 seconds' }))
+    }
+    if (action === 'switch_off') {
+      if (!await confirmed('Выключить VR Workspace?')) return done({ done: false, why: 'the user did not confirm it' })
+      return (keep({ offCall: Date.now() }), done({ done: true }))
+    }
+    return res.writeHead(400).end('The actions: record, recenter, look_around, switch_off')
   }
   // What only this PC may know, for the GNOME settings window: the links for the phone (with the key) and the
   // ranges of the settings.
@@ -540,7 +710,7 @@ const PHONE_URL = `https://${LAN}:8443/?k=${TOKEN}`, CA_URL = `http://${LAN}:808
 const OUTSIDE_URL = OUTSIDE && `https://${OUTSIDE}:8443/?k=${TOKEN}`
 let mtx
 if (SETTINGS_ONLY) {
-  http.createServer(listener).listen(8080, '127.0.0.1')
+  pages = http.createServer(listener).listen(8080, '127.0.0.1')
   console.log('Settings only, for the GNOME settings window: nothing is streamed')
 } else {
   // cwd: mediamtx.yml runs ./capture.py. The address on the internet: a place more where the phone may find the video.
@@ -559,7 +729,7 @@ if (SETTINGS_ONLY) {
     })
   }
 
-  http.createServer(listener).listen(8080)
+  pages = http.createServer(listener).listen(8080)
   https.createServer(tls, listener).listen(8443)
   console.log('PC:    http://localhost:8080/control.html (settings)   http://localhost:8080/ (preview)')
   console.log(`Phone: ${PHONE_URL}   (once before that: ${CA_URL})`)

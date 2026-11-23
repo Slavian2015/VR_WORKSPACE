@@ -191,7 +191,7 @@ a mouse connected to the phone.
    is switched off.
 
    **Settings** shows, in place of the icons, four blocks side by side, all in view at once and always at the same
-   size: **Картинка** (text sharpness, the light around the window that gets the keyboard, hiding the monitors),
+   size: **Картинка** (text sharpness, the drawing's resolution, the light around the window that gets the keyboard, hiding the monitors),
    **Движение головы** (on or off, the strength of the lean, "look around again"), **Камера телефона** (the camera
    as the background, below which angle it shows, keeping it open, the angle and the shift of its picture) and
    **Фон**: the backgrounds as round pictures, nine a page (a click shows one at once; the arrows under them or the
@@ -238,6 +238,13 @@ What to know:
   off: Home, End, Page Up and Down, the arrows. To monitors the phone's keyboard goes nowhere yet.
 - Settings → Headset → Picture → **Text sharpness** (40 % at first) makes letters crisper through the lenses; too much draws
   bright edges around them.
+- **A phone that gets hot.** Three things spare it. A monitor or window far behind you (or hidden) is not taken
+  from the PC at all after three seconds, and taken again as you turn toward it; its last picture stands for the
+  second that takes. The phone camera's picture is used only while you look down to where it shows. And
+  **Разрешение отрисовки** (the drawing's resolution, in the Картинка block of the settings in the sphere, and on
+  the settings page) draws fewer pixels: at 70 % the graphics chip has half the work. The screen shows about 13
+  pixels a degree through the lenses and the eye tells them apart, so text gets softer with it: try how far you
+  can go.
 - A still window takes little Wi-Fi (about 0.4 Mbit/s); one that changes, up to 12.
 
 ## Sound
@@ -403,6 +410,61 @@ head turns sees them grow, and turning right by 17° was told as leaning 21 cm i
 showed that, and showed this way holding the head within 1 to 2 cm through the same turns, with the leans in them
 still found. The tests (`node --test`) now have a room with a near wall and a desk, not one wall.
 
+## The helper: Claude in the sphere (a first version)
+
+Claude can be asked from inside the sphere, by voice: it changes the sphere's own settings and looks at what you
+mark with the mouse. The plan and what is done so far: `ASSISTANT-PLAN.md`.
+
+**Caps Lock** is its key while the headset is in use (a phone connected, or the picture of a headset on a cable);
+it types no capitals then. The first press switches its mode on: a card low in the view says so. Speak (the words
+show in the card as they are heard), and mark with the mouse what Claude is to look at:
+
+- a click on a window or monitor: all of it;
+- the left button dragged: a frame around a part of it;
+- the right button dragged: an arrow, from its tail to what it points at.
+
+Each mark gets a number, up to six. The next press of Caps Lock sends the words and the marks, and Claude answers in
+the card. **Esc** gives the mode up and wipes the marks, and so does saying nothing but "стоп" or "отмена"; Caps
+Lock while Claude works stops it. With a mouse connected to the PC the
+gaze points and the buttons mark (as in the arranging mode); with a headset on a cable its picture has the mouse.
+Not while arranging (Num Lock).
+
+**Only what you marked leaves the PC**: the picture of that window, of the framed part alone, or of the part around
+an arrow, with the window's title and its program. Never the whole desktop.
+
+**Speech** is turned into text on this PC and never leaves it. Set it up once, without sudo:
+
+```bash
+./setup-speech.sh        # makes .speech/ here: the recognizer (faster-whisper) and its model, 0.9 GB
+```
+
+Then restart VR Workspace. The microphone is the system's own: the phone's while "the phone's microphone" is on,
+else the PC's. A short phrase is recognized in about a second, at most a minute is listened to, and the words are
+taken for Russian. `./setup-speech.sh medium` gets a larger, more exact and slower model (then
+`VR_SPEECH_MODEL=medium` in the server's environment). Without the setup the mode still marks, and words can be
+given as text: `curl -X POST http://127.0.0.1:8080/assist -d '{"text": "сделай фон темнее"}'`.
+
+It can change every setting of the blocks over the list of applications (the picture, the head movement, the phone
+camera, the background), start and stop the recording, centre the sphere, start a look around the room, and switch
+VR Workspace off. Before that last one it asks in the card: Caps Lock is the yes, ten seconds of nothing the no.
+It keeps the last few exchanges in mind for ten minutes ("a bit more").
+
+**From the chat in VS Code.** The same tools are offered to Claude Code in this project (`.mcp.json`; VS Code asks
+once whether to allow the server `sphere`). Ask the chat to read or change the sphere's settings, or to look at
+what you have marked.
+
+**How it runs.** The server starts Claude Code without its window for each request (`claude -p`, the program that
+came with the VS Code extension, or `claude` if it is installed; `VR_CLAUDE` names another), under your own
+sign-in: no key, no package. It is given no tools of its own, neither files nor a shell, only the sphere's
+(`assist-tools.js`). The model is `claude-sonnet-5-5` at low effort: three to four seconds for a change of a
+setting, two of them the program starting. `claude-opus-5-5` is more careful with pictures and vague requests and
+took five to six seconds for the same; `claude-haiku-5-5` about four (measured 2026-11-22). Another one is the
+setting `assistModel`:
+
+```bash
+curl -X POST http://127.0.0.1:8080/params -d '{"assistModel": "claude-opus-5-5"}'
+```
+
 ## Recording what you see
 
 Three ways, all the same switch: top bar menu → **Record Video**; the **Scroll Lock** key from anywhere; and in the
@@ -471,7 +533,9 @@ systemctl --user start vr-workspace      # or the service the menu uses (stop: t
 
 Anyone on the network who has the link with the key can watch your desktop and change the settings, and click and
 type in the windows shown in the headset (a keyboard connected to the phone): a terminal shown there runs what is
-typed. Keys go only into the window that has the PC's keyboard, and never Alt+F2 (GNOME's "run a command"). The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
+typed. The helper (Claude) is asked from this PC only; what it gets to see is what was marked for it, and that
+goes to Anthropic, as everything you show Claude does. A page of another site, open in a browser on this PC or in
+the home, is not answered: requests from this PC need no key, and a browser lets any page send one. Keys go only into the window that has the PC's keyboard, and never Alt+F2 (GNOME's "run a command"). The key is in `certs/token`; delete it and run `./setup.sh` to get a new one
 (then open the codes on the phone again). The server does not start with a key that is missing or shorter than 12
 characters (an empty one would let anyone in); `./setup.sh` makes a new one then. Never commit `certs/`.
 
@@ -509,6 +573,9 @@ GNOME screencast of each monitor → H.264 on the GPU → RTMP ┐
 - `server.js` — static files, HTTPS, the WHEP handshake proxy, live settings, previews of the backgrounds, the
   list of monitors; starts MediaMTX.
 - `app/track.js` — where the head is, from the phone camera's pictures (leaning toward a window).
+- `assist.js` — the helper: runs Claude for a request and tells what it may change; `assist-tools.js` — its tools
+  as Claude takes them (also for the chat in VS Code, `.mcp.json`); `listen.py` — its ears, speech into text
+  (`setup-speech.sh` installs what it needs into `.speech/`); the server keeps its card and the marks.
 - `app/main.js` — the phone page. One shader turns each pixel into a view ray through the lens,
   so stereo and lens correction are done in a single pass and text is sampled once.
 - `gnome-extension/` — the top bar menu (`extension.js`), the settings window (`prefs.js`) and `install.sh`.

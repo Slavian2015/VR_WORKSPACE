@@ -3,9 +3,13 @@ import assert from 'node:assert/strict'
 import { Euler, Matrix3, Matrix4, Quaternion, Vector3 } from 'three'
 import { deviceQuaternion, gazeInLayout, gazeOf, monitorFrame } from './app/orient.js'
 import { checkBytes, qr } from './gnome-extension/vr-workspace@local/qr.js'
-import { blocked, cleanOrder, passKey, wrongKey } from './orders.js'
+import { blocked, cleanOrder, foreign, passKey, wrongKey } from './orders.js'
 import { KEYCODES, placeIcon, resizeWindow, snapPanel } from './app/params.js'
 import { space } from './app/track.js'
+import http from 'node:http'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { claudeProgram, settingsPatch, settingsTold } from './assist.js'
 
 const RAD = Math.PI / 180
 const near = (v, x, y, z) => assert.ok(v.distanceTo(new Vector3(x, y, z)) < 1e-6, `${v.toArray()} is not ${[x, y, z]}`)
@@ -144,6 +148,18 @@ test('an address from the internet that keeps giving wrong keys is refused for t
   assert.equal(blocked(refused, '::ffff:100.64.0.1', t), true)
 })
 
+test('a page of another site is not answered, also when its name is made to point at this PC; programs and our own pages are', () => {
+  assert.equal(foreign(undefined, '127.0.0.1:8080', true), false) // the extension, curl, the helper's tools
+  assert.equal(foreign('http://localhost:8080', 'localhost:8080', true), false) // the settings page on this PC
+  assert.equal(foreign('https://192.168.1.5:8443', '192.168.1.5:8443', false), false) // the phone's page
+  assert.equal(foreign('https://evil.example', '127.0.0.1:8080', true), true) // another site's page in a browser here
+  assert.equal(foreign('https://evil.example', '192.168.1.5:8443', false), true) // and in a browser of the home
+  assert.equal(foreign('null', '127.0.0.1:8080', true), true) // a page with no site of its own
+  assert.equal(foreign('http://evil.example:8080', 'evil.example:8080', true), true) // its name pointed at this PC
+  assert.equal(foreign(undefined, 'evil.example:8080', true), true)
+  assert.equal(foreign(undefined, undefined, true), true)
+})
+
 test('the phone keyboard\'s keys get the Linux key codes', () => {
   assert.deepEqual([KEYCODES.Escape, KEYCODES.Digit0, KEYCODES.KeyA, KEYCODES.KeyM, KEYCODES.Space, KEYCODES.F10, KEYCODES.NumLock, KEYCODES.NumpadDecimal],
     [1, 11, 30, 50, 57, 68, 69, 83])
@@ -253,4 +269,62 @@ test('where the scan never looked the head stays as last found, and is found aga
   let held = false
   for (let i = 40; i >= 0; i--) held = show([0, 0, -0.05], 2.5 * i, 0)
   assert.ok(held && size(sub3(room.head, leaned)) < 0.02, `back, the head told ${room.head}, before ${leaned}`)
+})
+
+test('the helper may change only the sphere\'s own settings, numbers brought into their range and onto their step', () => {
+  const backgrounds = ['bg/a.jpg', 'bg/b.jpg']
+  assert.deepEqual(settingsPatch({ bgDim: 43, focusGlow: false, bg: 'bg/b.jpg', camShiftX: 99 }, backgrounds), { bgDim: 45, focusGlow: false, bg: 'bg/b.jpg', camShiftX: 20 })
+  assert.throws(() => settingsPatch({ publicHost: 'x' }, backgrounds), /no setting "publicHost"/)
+  assert.throws(() => settingsPatch({ bgDim: 'dark' }, backgrounds), /a number from 0 to 90/)
+  assert.throws(() => settingsPatch({ bg: '../secret' }, backgrounds), /one of: bg\/a.jpg/)
+  assert.throws(() => settingsPatch({ sixDof: 1 }, backgrounds), /true or false/)
+  assert.throws(() => settingsPatch({}, backgrounds), /must be an object/)
+  const told = settingsTold({ bgDim: 30, sixDof: true }, backgrounds).settings
+  assert.deepEqual(told.find(s => s.key === 'bgDim'), { key: 'bgDim', about: 'Darkening of the background, %', value: 30, min: 0, max: 90, step: 5 })
+  assert.equal(told.find(s => s.key === 'sixDof').value, true)
+})
+
+test('the Claude program: the one named, else the newest that came with VS Code, else none', () => {
+  assert.equal(claudeProgram({ VR_CLAUDE: '/x/claude', PATH: '' }, '/nowhere'), '/x/claude')
+  assert.equal(claudeProgram({ PATH: '/nowhere/bin' }, '/nowhere'), null)
+})
+
+test('the helper\'s tools answer Claude\'s requests and pass them on to the server', async () => {
+  const asked = [], png = Buffer.from('fake picture').toString('base64')
+  const server = http.createServer(async (req, res) => {
+    let body = ''
+    for await (const chunk of req) body += chunk
+    asked.push([req.method, req.url, body])
+    if (req.url === '/assist/marks') return res.end(JSON.stringify([{ n: 1, about: 'the whole of the window "Site".', png }]))
+    if (req.url === '/assist/do') return res.writeHead(400).end('The actions: record, recenter, look_around, switch_off')
+    res.end(JSON.stringify({ now: { bgDim: 40 } }))
+  }).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const tools = spawn(process.execPath, ['assist-tools.js'], { env: { ...process.env, VR_SERVER: `http://127.0.0.1:${server.address().port}` }, stdio: ['pipe', 'pipe', 'inherit'] })
+  let text = ''
+  tools.stdout.on('data', chunk => { text += chunk })
+  const ask = async (id, method, params) => {
+    tools.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+    for (;;) {
+      const line = text.split('\n').slice(0, -1).map(l => JSON.parse(l)).find(m => m.id === id)
+      if (line) return line
+      await once(tools.stdout, 'data')
+    }
+  }
+  try {
+    assert.equal((await ask(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'vr-sphere')
+    tools.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n') // a notice gets no answer
+    assert.deepEqual((await ask(2, 'tools/list')).result.tools.map(t => t.name), ['sphere_settings', 'sphere_set', 'sphere_do', 'sphere_marks'])
+    assert.deepEqual((await ask(3, 'tools/call', { name: 'sphere_set', arguments: { changes: { bgDim: 40 } } })).result.content, [{ type: 'text', text: '{"now":{"bgDim":40}}' }])
+    assert.deepEqual(asked.at(-1), ['POST', '/assist/settings', '{"changes":{"bgDim":40}}'])
+    assert.deepEqual((await ask(4, 'tools/call', { name: 'sphere_marks', arguments: {} })).result.content,
+      [{ type: 'text', text: 'Mark 1: the whole of the window "Site".' }, { type: 'image', data: png, mimeType: 'image/png' }])
+    const refused = (await ask(5, 'tools/call', { name: 'sphere_do', arguments: { action: 'dance' } })).result // the server's refusal reaches Claude as words
+    assert.equal(refused.isError, true)
+    assert.match(refused.content[0].text, /The actions: record/)
+    assert.equal((await ask(6, 'resources/list')).error.code, -32601)
+  } finally {
+    tools.kill()
+    server.close()
+  }
 })
